@@ -3,6 +3,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 from pathlib import Path
 
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
@@ -20,7 +21,8 @@ def validate(entry):
         raise ValueError("UTC timestamp required")
     if not isinstance(entry["summary"], str) or not entry["summary"].strip() or "\n" in entry["summary"] or len(entry["summary"]) > 240:
         raise ValueError("short one-line summary required")
-    if not isinstance(entry["refs"], list) or not all(isinstance(x, str) and x and "\n" not in x for x in entry["refs"]):
+    if not isinstance(entry["refs"], list) or len(entry["refs"]) > 16 or not all(
+            isinstance(x, str) and x and "\n" not in x and len(x) <= 240 for x in entry["refs"]):
         raise ValueError("invalid evidence references")
     return entry
 
@@ -47,19 +49,23 @@ def append(root, entry):
     if root.is_symlink():
         raise ValueError("history root must not be a symlink")
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if stat.S_IMODE(root.stat().st_mode) & 0o077:
+        raise ValueError("history root must be private (0700)")
     path = root / f"{entry['task_id']}.jsonl"
     if path.is_symlink() or (root / f"{entry['task_id']}.lock").is_symlink():
         raise ValueError("history files must not be symlinks")
-    with open(root / f"{entry['task_id']}.lock", "a") as lock:
+    lock_path = root / f"{entry['task_id']}.lock"
+    with os.fdopen(os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         prior = [row for row in read(root, entry["task_id"]) if row["event_id"] == entry["event_id"]]
         if prior:
             if prior[0] != entry:
                 raise ValueError("history event id reused with different content")
             return "duplicate"
-        with open(path, "a", encoding="utf-8") as output:
+        if path.exists() and stat.S_IMODE(path.stat().st_mode) & 0o077:
+            raise ValueError("history file must be private (0600)")
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a", encoding="utf-8") as output:
             output.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
             output.flush()
             os.fsync(output.fileno())
-        os.chmod(path, 0o600)
         return "appended"

@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -52,6 +54,7 @@ class SourceHistoryCloseoutTests(unittest.TestCase):
                    "at": "2026-10-02T00:00:00Z", "kind": "decision",
                    "summary": "Approved local implementation", "refs": ["chat:123"]}
             self.assertEqual(append(tmp, row), "appended")
+            self.assertEqual(stat.S_IMODE((Path(tmp) / "task-1.jsonl").stat().st_mode), 0o600)
             self.assertEqual(append(tmp, row), "duplicate")
             self.assertEqual(read(tmp, "task-1"), [row])
             with self.assertRaises(ValueError):
@@ -60,6 +63,9 @@ class SourceHistoryCloseoutTests(unittest.TestCase):
                 read(tmp, "../escape")
             with self.assertRaises(ValueError):
                 append(tmp, {**row, "summary": "different"})
+            os.chmod(tmp, 0o755)
+            with self.assertRaises(ValueError):
+                append(tmp, {**row, "event_id": "e3"})
 
     def test_handoff_completion_and_cleanup_gate(self):
         value = sample()
