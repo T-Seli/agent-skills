@@ -119,3 +119,7 @@ Then merge settings by hand: `settings.snippet.json` into `~/.claude/settings.js
 - Changing a parsed token (contracts.md § Task log, including the `/monitor` args in scheduled prompts): readers accept both the old and the new form for one `Monitor window`, so logs and scheduled tasks written before the change still parse. No version marker.
 - Budgets: global `CLAUDE.md` ≤ 600 words, `skills/workflow-contracts/contracts.md` ≤ 90 lines, project `CLAUDE.md` ≤ 1,000 words, output style ≤ 25 lines, scout ≤ 25 lines, each `SKILL.md` ≤ 100 lines, each `references/` file ≤ 80 lines, skill description ≤ 300 chars. Check with `wc -w` / `wc -l`.
 - No project, tenant, company, stack, vendor, person, machine or model names in any file here; point to project facts by section ("the command in `CLAUDE.md` § Run & test").
+
+## Source and task-history readiness draft
+
+The offline [source, history and closeout contract](agent_skills/SOURCE-HISTORY-ROLLOUT.md) adds read-only source/version checks, a private append-only task timeline, and handoff/completion/cleanup eligibility checks. It has no source transfer, cloud activation, installation, or deletion side effects. Run the tests with `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_source_history_closeout`.
