@@ -1,0 +1,29 @@
+{
+  "outputStyle": "Orchestrator",
+  "permissions": {
+    "allow": [
+      "Read(~/.claude/skills/workflow-contracts/**)"
+    ]
+  },
+  "skillOverrides": {
+    "code-review": "user-invocable-only",
+    "code-review:code-review": "user-invocable-only",
+    "security-review": "user-invocable-only",
+    "simplify": "user-invocable-only",
+    "loop": "user-invocable-only"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/session-start.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

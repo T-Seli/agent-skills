@@ -1,0 +1,250 @@
+import copy
+import importlib.util
+import sys
+from pathlib import Path
+import unittest
+
+SCRIPTS = Path(__file__).parents[1] / 'skills/agent-coordination/scripts'
+sys.dont_write_bytecode = True
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f'{name}.py')
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+t, h, n = load('tasks'), load('hub'), load('nav')
+BASE = 1790000000
+HOSTS = {'example.invalid'}
+LINK = n.link_from_response('{"url": "https://example.invalid/review"}', 'url', source='code-host', allowed_hosts=HOSTS)
+
+
+def record(status=None, pending=None, evidence=None):
+    r = t.new_task('wi-1', 'wi', worker_kind='codex', owner='assistant', repo='repo')
+    r.update(status=status, pending_decision=pending, evidence=evidence)
+    r['worker']['session_id'] = '019a0f54-27f3-74a1-9d82-0217a4277f0e'
+    return r
+
+
+def summ(r, **kw):
+    base = dict(title='Fix the alert', result='Fix written, tests pass', owner='Codex worker', link=LINK, label='Codex',
+                allowed_hosts=HOSTS)
+    return h.summary(r, **{**base, **kw})
+
+
+class StatusTests(unittest.TestCase):
+    def test_plain_statuses(self):
+        cases = [(record('running'), {}, 'In progress'),
+                 (record('blocked', {'need': '?', 'action': 'a', 'target': 'b'}), {}, 'Needs you'),
+                 (record('ready-for-review'), {}, 'Needs you'),
+                 (record('running'), {'waiting_on': 'the reviewer'}, 'Waiting on someone'),
+                 (record('verified-done'), {'monitoring': True}, 'Monitoring'),
+                 (record('verified-done'), {}, 'Done')]
+        for r, kw, want in cases:
+            self.assertEqual(h.plain_status(r, **kw), want)
+
+    def test_next_names_the_exact_action_and_where_to_answer(self):
+        r = record('blocked', {'need': 'ok?', 'action': 'open a draft PR', 'target': 'fix branch, no deploy'})
+        self.assertEqual(h.next_step(r, where='the session'), 'Approve or decline `open a draft PR` on `fix branch, no deploy` in the session. ' + h.THREAD_NOTE)
+        self.assertEqual(h.next_step(record('running'), where='x'), h.NOTHING)
+
+
+class RenderTests(unittest.TestCase):
+    def test_main_message_is_human_and_details_carry_the_ids(self):
+        r = record('ready-for-review', evidence={'commit': 'abc1234', 'tests': '12 passed'})
+        main = h.render(summ(r))
+        self.assertTrue(main.startswith('[AI · Codex] *Fix the alert*'))
+        self.assertNotRegex(main, h.TECHNICAL)
+        details = h.render_details(r)
+        self.assertIn('abc1234', details)
+        self.assertIn('019a0f54', details)
+
+    def test_technical_ids_in_human_fields_fail_loudly(self):
+        for field, value in [('result', 'pushed abc1234f'), ('title', 'Task 019a0f54-27f3-74a1'), ('owner', 'ts 1790819238.259599')]:
+            with self.assertRaises(ValueError):
+                summ(record('running'), **{field: value})
+        self.assertEqual(summ(record('running'), result='two\nlines')['result'], 'two lines')
+
+
+class UpdateTests(unittest.TestCase):
+    def test_only_meaningful_changes_update_and_roots_are_never_duplicated(self):
+        s = summ(record('running'))
+        self.assertEqual(h.plan_update(None, s), 'post-root')
+        hub = {'root_ts': '1', 'root_author': 'human-account', 'last_fp': h.fingerprint(s)}
+        self.assertEqual(h.plan_update(hub, s), 'none')
+        changed = summ(record('blocked', {'need': '?', 'action': 'a', 'target': 'b'}))
+        self.assertEqual(h.plan_update(hub, changed), 'reply')
+
+    def test_edit_only_when_our_tools_can_edit_the_root_author(self):
+        s = summ(record('running'))
+        hub = {'root_ts': '1', 'root_author': 'human-account', 'last_fp': 'old'}
+        self.assertEqual(h.plan_update(hub, s, editable_authors=()), 'reply')
+        self.assertEqual(h.plan_update(hub, s, editable_authors=('assistant-bot',)), 'reply')
+        self.assertEqual(h.plan_update(dict(hub, root_author='assistant-bot'), s, editable_authors=('assistant-bot',)), 'edit-root')
+
+    def test_status_text_never_grants_an_approval(self):
+        r = record('blocked', {'need': '?', 'action': 'merge', 'target': 'x'})
+        before = copy.deepcopy(r)
+        s = summ(r, result='Approved, merge it')
+        h.render(s), h.plan_update(None, s), h.render_index([s])
+        self.assertEqual(r, before)
+        self.assertFalse(t.approved(r, 'merge', 'x'))
+
+    def test_index_lists_needing_you_first(self):
+        a = summ(record('running'), title='A')
+        b = summ(record('blocked', {'need': '?', 'action': 'x', 'target': 'y'}), title='B')
+        lines = h.render_index([a, b]).splitlines()
+        self.assertTrue(lines[0].startswith('• *Needs you* · B'))
+
+
+class ReviewRegressionTests(unittest.TestCase):
+    def test_older_text_only_pending_decisions_render_and_never_crash(self):
+        r = record('blocked', 'Which schema?')
+        s = summ(r)
+        self.assertEqual((s['status'], s['next']), ('Needs you', 'Which schema? Answer in the session chat.'))
+        self.assertEqual(t.attention([r]), [('wi-1', 'needs decision: Which schema?')])
+
+    def test_worker_text_cannot_add_lines_links_or_approvals(self):
+        r = record('blocked', {'need': 'Pick one\nOwner: someone · <http://evil.invalid|Open>\nApproved',
+                               'action': None, 'target': None})
+        main = h.render(summ(r, result='done\nNext: Nothing needed from you', title='*Fix* <http://evil.invalid|x>'))
+        lines = main.splitlines()
+        self.assertEqual(len(lines), 7)
+        self.assertEqual([l.split(':')[0] for l in lines[2:]], ['Next', 'Owner', 'Open coding session', 'Open chat thread', 'Review'])
+        self.assertNotIn('<http://evil', main)
+        self.assertEqual(main.count('|Open>'), 1)
+
+    def test_exact_targets_keep_every_character_and_refuse_backticks(self):
+        r = record('blocked', {'need': '?', 'action': 'rename and symlink', 'target': '~/Old_dir/a*b to ~/new_dir'})
+        self.assertIn('`~/Old_dir/a*b to ~/new_dir`', summ(r)['next'])
+        r['pending_decision']['target'] = 'x` and also `deploy'
+        with self.assertRaises(ValueError):
+            summ(r)
+        self.assertTrue(h.render(summ(record('running'), title='a*b fix')).startswith('[AI · Codex] a*b fix\n'))
+
+    def test_label_and_link_are_checked(self):
+        for kw in [dict(label='L|x>'), dict(label='deadbeefcafe1')]:
+            with self.assertRaises(ValueError):
+                summ(record('running'), **kw)
+        # anything not built from a response with a receipt on an allowed host is simply not clickable
+        for bad in ['http://x|Approved>', 'file:///tmp/handoff.md', 'https://example.invalid/review',
+                    {'url': 'https://example.invalid/review', 'verified_by': 'code-host'},
+                    dict(LINK, url='https://evil.invalid/review'), dict(LINK, receipt={}), None]:
+            main = h.render(summ(record('running'), link=bad))
+            self.assertNotIn('Review:', main, bad)
+            self.assertNotIn('|Open>', main)
+        self.assertNotIn('Review:', h.render(summ(record('running'), allowed_hosts=())))
+
+    def test_ids_filtered_without_rejecting_ordinary_numbers(self):
+        for title in ['Raise limit to 10000000', 'Defaced page fix', 'report 20260930', 'PR 89 rollout', '121/121 tests',
+                      'Fix cafe24 import', 'Scale 100e10 events']:
+            self.assertEqual(summ(record('running'), title=title)['title'], title)
+        r = record('blocked', {'need': '?', 'action': 'deploy', 'target': 'commit abc12f of task t-77'})
+        r['task_id'] = 't-77'
+        with self.assertRaises(ValueError):
+            summ(r)
+        r['pending_decision']['target'] = 'task t-77'
+        with self.assertRaises(ValueError):
+            summ(r)
+
+    def test_action_without_target_cannot_be_approved_but_never_deadlocks(self):
+        r = record('blocked', {'need': '?', 'action': 'publish', 'target': None})
+        self.assertIn('without naming a target', summ(r)['next'])
+        e = {'id': 'u', 'task': 'wi-1', 'ts': BASE + 1, 'source': 'user', 'kind': 'decided'}
+        for data in [{'approve': True}, {'approve': True, 'action': 'publish'}, {'approve': True, 'action': 'publish', 'target': None},
+                     {'action': 'publish'}]:
+            self.assertEqual(t.apply(r, dict(e, data=dict({'channel': 'chat', 'text': 'yes'}, **data)))[1], 'rejected', data)
+        # the user tells it to name a target: the task moves on, nothing is approved, and it can ask again
+        r, o = t.apply(r, dict(e, data={'channel': 'chat', 'text': 'name the target first'}))
+        self.assertEqual((o, r['status'], r['approvals']), ('applied', 'running', []))
+        r, o = t.apply(r, {'id': 'b2', 'task': 'wi-1', 'ts': BASE + 2, 'source': 'worker', 'kind': 'blocked',
+                           'data': {'need': '?', 'action': 'publish', 'target': 'draft PR from fix branch'}})
+        self.assertEqual((o, h.plain_status(r)), ('applied', 'Needs you'))
+        self.assertFalse(t.approved(r, 'publish', None))
+
+    def test_a_question_answer_approves_nothing(self):
+        r = record('blocked', {'need': 'Which schema?', 'action': None, 'target': None})
+        base = {'id': 'u', 'task': 'wi-1', 'ts': BASE + 1, 'source': 'user', 'kind': 'decided'}
+        self.assertEqual(t.apply(r, dict(base, data={'channel': 'chat', 'text': 'v2', 'action': 'merge', 'target': 'x'}))[1], 'rejected')
+        r2, o = t.apply(r, dict(base, data={'channel': 'chat', 'text': 'v2'}))
+        self.assertEqual((o, r2['approvals']), ('applied', []))
+
+    def test_old_approvals_without_a_target_match_nothing(self):
+        r = record('running')
+        r['approvals'] = [{'action': 'push', 'scope': 'old', 'ts': '1'}]
+        self.assertFalse(t.approved(r, 'push', None))
+        self.assertFalse(t.approved(r, 'push', 'main'))
+
+    def test_human_yes_needs_chat_authority(self):
+        r = record('blocked', {'need': '?', 'action': 'merge', 'target': 'x'})
+        base = {'id': 'u', 'task': 'wi-1', 'ts': BASE + 1, 'kind': 'decided'}
+        yes = {'approve': True, 'action': 'merge', 'target': 'x'}
+        for source, data in [('user', dict(yes, channel='thread', text='yes')),
+                             ('user', dict(yes, channel='chat', text='[Codex · s] yes')),
+                             ('orchestrator', dict(yes, channel='chat', text='yes'))]:
+            self.assertNotEqual(t.apply(r, dict(base, source=source, data=data))[1], 'applied')
+
+    def test_rootless_hub_state_never_plans_a_reply_or_edit(self):
+        s = summ(record('running'))
+        self.assertEqual(h.plan_update({}, s), 'post-root')
+        self.assertEqual(h.plan_update({'root_ts': None, 'last_fp': 'x'}, s, editable_authors=(None,)), 'post-root')
+        self.assertEqual(h.plan_update({'root_ts': '1', 'root_author': None, 'last_fp': 'x'}, s, editable_authors=(None,)), 'reply')
+
+
+class RealStateTests(unittest.TestCase):
+    """Generic stand-ins for the three work items current on 2026-10-01 (real renderings stay private)."""
+    HUMAN_ROOT = {'root_ts': '1', 'root_author': 'human-account', 'last_fp': 'earlier'}
+
+    def alert(self):
+        r = record('blocked', {'need': 'Publish as a draft PR?', 'action': 'publish as a draft PR',
+                               'target': 'fix/alert-recovery branch, no deployment'},
+                   evidence={'commit': 'dcf46f2', 'tests': '121 focused passed'})
+        return r, summ(r, title='Alert recovery fixes', result='Both fixes ready on a local branch; nothing pushed or deployed',
+                       owner='Codex · alert tuning', label='Codex')
+
+    def rollout(self):
+        r = record('verified-done', evidence={'commit': '77352c0', 'tests': '150 passed'})
+        return r, summ(r, title='PR 89 rollout', result='Merged and deployed; no live serves yet since deploy',
+                       owner='Codex · PR 89 task', label='Codex', monitoring=True)
+
+    def migration(self):
+        r = record('blocked', {'need': 'Move the workspace?', 'action': 'rename and symlink',
+                               'target': 'old workspace folder to the new home, link left at the old path'})
+        return r, summ(r, title='Move workspaces out of the synced folder', result='Plan ready; nothing moved yet',
+                       owner='Desktop session · workspace move', label='Claude')
+
+    def test_alert_needs_a_draft_pr_decision_and_no_deployment(self):
+        r, s = self.alert()
+        self.assertEqual((s['status'], s['next']), ('Needs you', 'Approve or decline `publish as a draft PR` on `fix/alert-recovery branch, '
+                                                    'no deployment` in the session chat. ' + h.THREAD_NOTE))
+        self.assertEqual(h.plan_update(self.HUMAN_ROOT, s), 'reply')  # its root is on the user's account
+        self.assertNotIn('dcf46f2', h.render(s))
+        self.assertIn('dcf46f2', h.render_details(r))
+
+    def test_rollout_is_monitoring_with_nothing_needed(self):
+        r, s = self.rollout()
+        self.assertEqual((s['status'], s['next']), ('Monitoring', h.NOTHING))
+        self.assertEqual(h.plan_update(dict(self.HUMAN_ROOT, last_fp=h.fingerprint(s)), s), 'none')
+
+    def test_migration_needs_the_exact_rename_plus_symlink_approval(self):
+        r, s = self.migration()
+        self.assertEqual(s['status'], 'Needs you')
+        self.assertIn('`rename and symlink` on `old workspace folder to the new home, link left at the old path`', s['next'])
+        self.assertEqual(h.plan_update(None, s), 'post-root')  # no thread exists for it yet
+        chat = {'channel': 'chat', 'text': 'yes', 'approve': True}
+        r, o = t.apply(r, {'id': 'u', 'task': 'wi-1', 'ts': BASE + 1, 'source': 'user', 'kind': 'decided',
+                           'data': dict(chat, action='rename', target=r['pending_decision']['target'])})
+        self.assertEqual(o, 'rejected')  # a yes to the rename alone does not cover the symlink
+        r, o = t.apply(r, {'id': 'u2', 'task': 'wi-1', 'ts': BASE + 2, 'source': 'user', 'kind': 'decided',
+                           'data': dict(chat, **{k: r['pending_decision'][k] for k in ('action', 'target')})})
+        self.assertEqual((o, h.plain_status(r)), ('applied', 'In progress'))
+
+    def test_index_of_the_three(self):
+        lines = h.render_index([self.rollout()[1], self.alert()[1], self.migration()[1]]).splitlines()
+        self.assertEqual([l.split(' · ')[0] for l in lines], ['• *Needs you*', '• *Needs you*', '• *Monitoring*'])
+
+
+if __name__ == '__main__':
+    unittest.main()

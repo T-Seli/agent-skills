@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "adapters": {
+    "claude-code": {"role": "worker", "native_skill_root": ".claude/skills within a project; user root ~/.claude/skills remains untested", "native_invocation": "/<skill-name>", "native_loading": "isolated project-local explicit and implicit loading observed on CLI 2.1.287 on 2026-10-02; active profile untested", "name_collisions": "host-owned; fail before export rather than assume precedence", "authority_fields": "not generated", "verification": "CLI init listed qualified skill; implicit run invoked Skill tool and read package references; --restricted did not expose project skill"},
+    "codex": {"role": "worker", "native_skill_root": ".agents/skills within a repository; user root ~/.agents/skills remains untested", "native_invocation": "$<skill-name>", "native_loading": "isolated project-local explicit and implicit loading observed on CLI 0.149.0 on 2026-10-02; active profile untested", "name_collisions": "host-owned; fail before export rather than assume merging", "authority_fields": "not generated", "verification": "CLI trace opened qualified SKILL.md and references during an implicit read-only synthetic bug investigation"},
+    "dot": {"role": "dot", "native_skill_root": null, "native_invocation": null, "native_loading": "unsupported", "name_collisions": "unknown", "authority_fields": "not generated", "verification": "no supported native installation interface verified"}
+  }
+}

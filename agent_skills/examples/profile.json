@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "id": "example-profile",
+  "scope": "team",
+  "model_tiers": {"small": "fast", "medium": "balanced", "large": "deep"},
+  "note": "Aliases are hints. A supported adapter must resolve them using its current model catalog."
+}

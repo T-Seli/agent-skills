@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "id": "example-personal-profile",
+  "scope": "personal",
+  "model_tiers": {"small": "fast", "medium": "balanced", "large": "deep"},
+  "note": "Sample only. Keep preferences and private channels outside the shared catalog."
+}

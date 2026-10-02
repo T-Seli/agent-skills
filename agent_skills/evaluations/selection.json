@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "cases": [
+    {"name": "worker review", "task": "review change before release", "role": "worker", "expected": "company.test-review"},
+    {"name": "orchestrate", "task": "coordinate task dependencies", "role": "dot", "expected": "company.agent-coordination"},
+    {"name": "handoff", "task": "handoff task with evidence", "role": "worker", "expected": "company.handoff"},
+    {"name": "meta improvement", "task": "improve skill after feedback", "role": "dot", "expected": "meta.skill-steward"}
+  ]
+}

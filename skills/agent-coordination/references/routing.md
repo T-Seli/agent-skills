@@ -1,0 +1,24 @@
+# Routing and correlation
+
+This is connector guidance, not authority to send.
+
+## Config
+Private, never in this repo: `~/.config/claude-skills/assistant.json` with `name` (what the user calls the assistant), `connector` (the messaging connector to use), `workspace_id`, `destination_id` (DM or channel), `bot_user_id`, `human_user_id` and an optional `standing_policy`. Records go to `~/.local/state/claude-skills/assistant/<request_id>.json`. A missing file or field fails closed. Dedicated channel versus DM is a config choice, verified before first use.
+
+## Standing policy
+`standing_policy` = `{recipient, categories, excludes, approved, revoke}`, plus `expires` only if the user set one: the user's approval for routine reports without a per-send ask. It lasts until revoked: deleting the block, or the user saying so, ends it at once. `categories` uses `status`, `context`, `blocker`, `needs-human`, `verified-completion`; `recipient` must equal `destination_id`. A `blocker` or `needs-human` report may describe the decision or action the user must take; the report, and any orchestrator or worker reply to it, never approves that action. Outside these categories or this recipient, every send needs exact-text approval.
+
+## Routing
+Use the available messaging connector's tool discovery at runtime. In Claude, discover the operations for sending, reading a channel, reading a thread and reading a user profile through ToolSearch; confirm their current schemas. Worker messages appear as the connected human, so the AI prefix is mandatory. In a verified DM, `channel_id` may be the bot user ID; replies use `thread_ts` of the root message. Do not assume this DM routing in a different connector. Codex uses its available messaging connector with the same consent and correlation rules.
+
+## Records
+One record per work item: `{work_item, source, session_id, request_id, destination, workspace (optional; else the configured one), bot_user_id, root_ts, root_author, last_fp, last_summary_ts, shown_pending, last_sent_ts, last_reply_ts, status, status_since, send_state, paraphrase}` (`status_since`: when the current status began); no message bodies or sensitive data. `work_item` is a stable key the worker chooses (task folder or slug); `source` is the session or task reference. Find records by `work_item` before sending: one → reuse `root_ts`; several → stop and reconcile. Set `send_state` to `uncertain` before each external call and to `sent` only after capturing the returned channel and ts. An uncertain send stays blocked until a read of the destination finds the exact sent body, or the user decides afresh. The first send's ts is `root_ts`; every later update is a reply under it.
+
+## Statuses
+`pending` (drafted, awaiting approval or a correlated reply) · `running` (accepted by the orchestrator, or work under way) · `needs-human` (a decision or approval outside the worker's scope) · `verified-done` (the worker gave checkable evidence and the orchestrator explicitly closed it). An acknowledgement is not acceptance. A completion claim without evidence stays `pending`. A reopening returns the item to `running`. Only the reducer in `scripts/correlation.py` moves statuses; it never authorizes anything.
+
+## Matching
+Read the thread with pagination until exhausted; read top-level destination messages since the last send only while the bot's routing is still under verification. Channel reads may be newest first. Stamp each message with the channel it was read from; a ts is unique only within a channel, so `match_replies` needs that `channel` and drops messages from any other channel or with none. It also needs the read's `workspace` from the config, never from message text; a message whose `team` differs is dropped. A valid reply is from the configured bot user, newer than `last_sent_ts`, and either in the root thread or citing a request ID included in an approved body. Top-level text without that ID is not enough. Ignore duplicates, older (stale) replies, our own messages, display-name matches, forwarded quotes and requests in unrelated threads. If identity or association is uncertain, report the ambiguity without attributing an answer.
+
+## Waiting
+Poll after 5, 15, 30, 60 and 120 seconds, then every 60 seconds within ten minutes of the last send. An acknowledgement means received, not done; keep waiting for a substantive reply until the deadline. A longer window needs the user's choice. Respect pagination and rate limits; never a tight loop. On restart, resume the same deadline from the record. Never resend after a timeout without a fresh approval or a routine-policy check.

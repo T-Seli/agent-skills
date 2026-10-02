@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "id": "example-project",
+  "facts": "CLAUDE.md",
+  "skills": [
+    {
+      "id": "project.example-check",
+      "layer": "project",
+      "summary": "Check a project's own documented run and test facts.",
+      "phrases": ["check project setup"],
+      "roles": ["worker"],
+      "body": "agent_skills/examples/project-check.md",
+      "requires": ["CLAUDE.md"]
+    }
+  ]
+}

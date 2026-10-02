@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Agent Skills Architecture</title>
+  <style>
+    :root { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #202b43; background: #f5f7fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { width: min(calc(100% - 36px), 940px); margin: 0 auto; padding: 54px 0 70px; }
+    h1, h2, h3, p { margin: 0; }
+    .eyebrow { color: #596c90; font-size: 12px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+    h1 { margin-top: 10px; font-size: clamp(32px, 5vw, 49px); line-height: 1.1; letter-spacing: -.04em; }
+    .intro { max-width: 590px; margin-top: 13px; color: #60708a; font-size: 16px; line-height: 1.55; }
+    .diagram { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(220px, 1fr); gap: 26px; margin-top: 31px; padding: 35px; border: 1px solid #e0e6ef; border-radius: 22px; background: #fff; box-shadow: 0 16px 48px #2b40570b; }
+    .node { border: 1px solid #dce4ef; border-radius: 16px; padding: 21px 23px; background: #fff; }
+    .node h2, .node h3 { font-size: 21px; letter-spacing: -.025em; }
+    .node p { margin-top: 5px; color: #64738b; font-size: 14px; line-height: 1.45; }
+    .label { display: block; margin-bottom: 8px; color: #71819a; font-size: 11px; font-weight: 760; letter-spacing: .12em; text-transform: uppercase; }
+    .path { display: grid; gap: 7px; }
+    .human { border-color: #aabde3; background: #f0f4fd; }
+    .human h2 { color: #263f72; }
+    .human .label { color: #5270a9; }
+    .path-arrow { color: #92a4c0; text-align: center; font-size: 23px; line-height: 1; }
+    .path-arrow span { display: block; margin-top: 2px; font-size: 11px; font-weight: 700; }
+    .dot { border-color: #c6c6eb; background: #f7f6ff; }
+    .dot h3 { color: #514b9b; }
+    .worker { border-color: #a9d6cc; background: #f1faf7; }
+    .worker h3 { color: #226d5e; }
+    .subagents { margin-top: 16px; padding: 13px 15px; border: 1px dashed #b8d8cf; border-radius: 13px; background: #f7fcfa; text-align: left; }
+    .subagents strong { font-size: 14px; color: #2b7566; }
+    .subagents span { display: block; margin-top: 3px; color: #71877f; font-size: 12px; }
+    .side { display: flex; flex-direction: column; justify-content: center; gap: 17px; }
+    .direct { padding: 15px 18px; border: 1px solid #dce4ef; border-left: 4px solid #9cb6df; border-radius: 13px; color: #506381; background: #f8fafd; text-align: left; font-size: 13px; }
+    .direct strong { display: block; color: #344b70; font-size: 19px; }
+    .direct span { display: block; margin-top: 3px; }
+    .skills { border-color: #bfd5e4; background: #eef6fb; }
+    .skills h3 { color: #2d6482; }
+    .skills .label { color: #4885a4; }
+    .skills-use { margin-top: 11px; color: #2d6482; font-size: 12px; font-weight: 720; }
+    .detail { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 23px; align-items: center; color: #60708a; font-size: 13px; }
+    .detail strong { margin-right: 3px; color: #3c4d68; }
+    .chip { padding: 7px 10px; border: 1px solid #dce5ee; border-radius: 7px; background: #fff; }
+    .note { margin-top: 22px; color: #748198; font-size: 12px; line-height: 1.5; }
+    @media (max-width: 620px) {
+      main { width: min(calc(100% - 24px), 940px); padding: 32px 0 48px; }
+      .diagram { grid-template-columns: 1fr; gap: 18px; padding: 20px; border-radius: 17px; }
+      .node { padding: 17px; }
+      .node h2, .node h3 { font-size: 19px; }
+      .side { gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">Agent skills · simple architecture</p>
+    <h1>People lead. Agents work together.</h1>
+    <p class="intro">One shared set of skills guides dot and the workers. Conversations and decisions stay direct.</p>
+  </header>
+  <section class="diagram" aria-label="Human, dot, workers, subagents and shared skills">
+    <div class="path">
+      <div class="node human">
+        <span class="label">Decision maker</span>
+        <h2>Human</h2>
+        <p>Sets direction · approves consequential actions</p>
+      </div>
+      <div class="path-arrow" aria-label="Human and dot speak both ways">↕</div>
+      <div class="node dot">
+        <span class="label">Orchestrator</span>
+        <h3>Dot</h3>
+        <p>Organizes, delegates and keeps work aligned.</p>
+      </div>
+      <div class="path-arrow" aria-label="Dot and workers delegate and report directly">↕<span>delegate · report</span></div>
+      <div class="node worker">
+        <span class="label">Workers</span>
+        <h3>Claude Code + Codex</h3>
+        <p>Build, test and report evidence.</p>
+        <div class="subagents"><strong>Worker-owned subagents</strong><span>Focused work · report to their worker</span></div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="direct"><strong>Human ↔ workers</strong><span>Direct conversation and final decisions stay open throughout the work.</span></div>
+      <div class="node skills">
+        <span class="label">Shared guidance</span>
+        <h3>Agent skills repository</h3>
+        <p>Useful behavior and context, adapted through evaluated, reviewed changes.</p>
+        <div class="skills-use">Dot + workers ↔ skills</div>
+      </div>
+    </div>
+  </section>
+  <div class="detail" aria-label="Skill layers"><strong>Skill layers</strong><span class="chip">Meta · choose and improve</span><span class="chip">Company · shared methods</span><span class="chip">Project · local expertise</span></div>
+  <p class="note">Roles, personal workflows and tool adapters remain separate. Start with a small catalog, load details when needed, and keep decisions and evidence for the next handoff.</p>
+</main>
+</body>
+</html>

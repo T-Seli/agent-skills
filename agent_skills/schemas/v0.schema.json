@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "layer", "summary", "phrases", "roles", "body", "requires"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^(meta|company|project)\\.[a-z][a-z0-9-]*$"},
+        "layer": {"enum": ["meta", "company", "project"]},
+        "summary": {"type": "string", "minLength": 1},
+        "phrases": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "roles": {"type": "array", "minItems": 1, "items": {"enum": ["dot", "worker"]}},
+        "body": {"type": "string", "minLength": 1},
+        "requires": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "catalog": {
+      "type": "object", "additionalProperties": false, "required": ["version", "skills"],
+      "properties": {"version": {"const": 1}, "skills": {"type": "array", "items": {"$ref": "#/$defs/entry"}}}
+    },
+    "project": {
+      "type": "object", "additionalProperties": false, "required": ["version", "id", "facts", "skills"],
+      "properties": {
+        "version": {"const": 1}, "id": {"type": "string"}, "facts": {"type": "string"},
+        "skills": {"type": "array", "items": {"$ref": "#/$defs/entry"}}
+      }
+    },
+    "profile": {
+      "type": "object", "additionalProperties": false, "required": ["version", "id", "scope", "model_tiers"],
+      "properties": {
+        "version": {"const": 1}, "id": {"type": "string"}, "scope": {"enum": ["personal", "team"]},
+        "model_tiers": {
+          "type": "object", "additionalProperties": false, "required": ["small", "medium", "large"],
+          "properties": {"small": {"type": "string"}, "medium": {"type": "string"}, "large": {"type": "string"}}
+        },
+        "note": {"type": "string"}
+      }
+    },
+    "handoff": {
+      "type": "object", "additionalProperties": false,
+      "required": ["work_item", "from_role", "to_role", "skill_id", "source_hashes", "evidence_refs", "next_step", "human_decision", "delivery"],
+      "properties": {
+        "work_item": {"type": "string"}, "from_role": {"enum": ["dot", "worker"]},
+        "to_role": {"enum": ["dot", "worker"]}, "skill_id": {"type": "string"},
+        "source_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}},
+        "next_step": {"type": "string"}, "human_decision": {"type": "string"}, "delivery": {"const": "not sent"}
+      }
+    },
+    "change_proposal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["skill_id", "body_sha256", "observation", "expected", "evidence_refs", "fixture", "state"],
+      "properties": {
+        "skill_id": {"type": "string"}, "body_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "observation": {"type": "string"}, "expected": {"type": "string"},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}},
+        "fixture": {"type": "string"}, "state": {"const": "proposed"}
+      }
+    }
+  }
+}
