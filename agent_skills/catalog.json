@@ -5,46 +5,108 @@
       "id": "meta.skill-steward",
       "layer": "meta",
       "summary": "Select, evaluate and improve skills through reviewed evidence.",
-      "phrases": ["improve skill", "skill feedback", "review skill change"],
-      "roles": ["dot", "worker"],
+      "phrases": [
+        "improve skill",
+        "skill feedback",
+        "review skill change"
+      ],
+      "roles": [
+        "dot",
+        "worker"
+      ],
       "body": "skills/skill-steward/SKILL.md",
-      "requires": ["skills/workflow-contracts/contracts.md"]
+      "requires": [
+        "skills/workflow-contracts/contracts.md"
+      ]
     },
     {
       "id": "company.agent-coordination",
       "layer": "company",
       "summary": "Coordinate owned work, decisions and verified completion.",
-      "phrases": ["coordinate task", "delegate task", "cross-task status"],
-      "roles": ["dot", "worker"],
+      "phrases": [
+        "coordinate task",
+        "delegate task",
+        "cross-task status"
+      ],
+      "roles": [
+        "dot",
+        "worker"
+      ],
       "body": "skills/agent-coordination/SKILL.md",
-      "requires": ["skills/workflow-contracts/contracts.md", "skills/agent-coordination/references/routing.md", "skills/agent-coordination/references/tasks.md"]
+      "requires": [
+        "skills/workflow-contracts/contracts.md",
+        "skills/agent-coordination/references/routing.md",
+        "skills/agent-coordination/references/tasks.md"
+      ]
     },
     {
       "id": "company.blueprint",
       "layer": "company",
       "summary": "Investigate and plan a change before implementation.",
-      "phrases": ["plan implementation", "investigate bug", "design change"],
-      "roles": ["worker"],
+      "phrases": [
+        "plan implementation",
+        "investigate bug",
+        "design change"
+      ],
+      "roles": [
+        "worker"
+      ],
       "body": "skills/blueprint/SKILL.md",
-      "requires": ["skills/workflow-contracts/contracts.md"]
+      "requires": [
+        "skills/workflow-contracts/contracts.md"
+      ]
     },
     {
       "id": "company.test-review",
       "layer": "company",
       "summary": "Review test evidence and readiness for a change.",
-      "phrases": ["review change", "ready to deploy", "test review"],
-      "roles": ["worker"],
+      "phrases": [
+        "review change",
+        "ready to deploy",
+        "test review"
+      ],
+      "roles": [
+        "worker"
+      ],
       "body": "skills/test-review/SKILL.md",
-      "requires": ["skills/workflow-contracts/contracts.md"]
+      "requires": [
+        "skills/workflow-contracts/contracts.md"
+      ]
     },
     {
       "id": "company.handoff",
       "layer": "company",
       "summary": "Carry decisions, evidence and next steps to a new owner.",
-      "phrases": ["handoff task", "handoff work", "transfer context"],
-      "roles": ["dot", "worker"],
+      "phrases": [
+        "handoff task",
+        "handoff work",
+        "transfer context"
+      ],
+      "roles": [
+        "dot",
+        "worker"
+      ],
       "body": "skills/handoff/SKILL.md",
-      "requires": ["skills/workflow-contracts/contracts.md"]
+      "requires": [
+        "skills/workflow-contracts/contracts.md"
+      ]
+    },
+    {
+      "id": "company.task-history",
+      "layer": "company",
+      "summary": "Record and retrieve sanitized central task evidence for an approved pilot.",
+      "phrases": [
+        "record task history",
+        "resume task from evidence",
+        "audit task evidence"
+      ],
+      "roles": [
+        "worker"
+      ],
+      "body": "skills/task-history/SKILL.md",
+      "requires": [
+        "skills/workflow-contracts/contracts.md"
+      ]
     }
   ]
 }

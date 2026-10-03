@@ -65,3 +65,5 @@ Next: <one action> — Done when: <observable check> | awaiting user: <deploy | 
 Guardrails (max 5, from CLAUDE.md and this session; the user's words verbatim):
 - <constraint the next step could break>
 ```
+
+Central history: when a private task-history checkout is configured, follow `/task-history` for sanitized milestone evidence and handoff. Preserve the project log and existing approval/review gates.
