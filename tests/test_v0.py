@@ -66,6 +66,14 @@ class V0Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             make_handoff(catalog, forged, work_item="review-1", target_role="dot", next_step="Review")
 
+    def test_task_history_pilot_catalog_loads_complete_package(self):
+        catalog = Catalog(ROOT)
+        bundle = catalog.load("company.task-history", role="worker")
+        paths = {source["path"] for source in bundle["sources"]}
+        self.assertIn("skills/task-history/SKILL.md", paths)
+        self.assertIn("core:skills/task-history/SKILL.md", bundle["package_hashes"])
+        self.assertTrue(catalog.fresh(bundle))
+
     def test_stale_hash_and_path_escape_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -73,7 +81,8 @@ class V0Tests(unittest.TestCase):
                          "skills/workflow-contracts/contracts.md", "skills/skill-steward/SKILL.md",
                          "skills/agent-coordination/SKILL.md", "skills/agent-coordination/references/tasks.md",
                          "skills/agent-coordination/references/routing.md",
-                         "skills/blueprint/SKILL.md", "skills/handoff/SKILL.md"):
+                         "skills/blueprint/SKILL.md", "skills/handoff/SKILL.md",
+                         "skills/task-history/SKILL.md"):
                 (root / path).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / path, root / path)
             catalog = Catalog(root)

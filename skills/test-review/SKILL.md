@@ -69,3 +69,5 @@ Print it in full before any other action (the log entry, a deploy the user alrea
 Then write the log entry, then follow contracts.md § Chain: YES → deploy if a go-ahead was given, else ask once; NO → the implement loop.
 
 Use a fenced, paste-ready block only when the user asks for one (e.g. to post as a PR comment).
+
+Central history: when a private task-history checkout is configured, follow `/task-history` for sanitized milestone evidence and handoff. Preserve the project log and existing approval/review gates.

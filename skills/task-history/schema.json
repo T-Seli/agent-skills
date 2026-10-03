@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Central task evidence event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "task_id",
+    "session_id",
+    "revision",
+    "record_owner",
+    "at_utc",
+    "observed_at_utc",
+    "kind",
+    "summary"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,100}$"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,100}$"
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,100}$"
+    },
+    "record_owner": {
+      "type": "string"
+    },
+    "execution_owner": {
+      "type": "string"
+    },
+    "at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "observed_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "kind": {
+      "enum": [
+        "start",
+        "decision",
+        "implementation",
+        "test",
+        "review",
+        "deploy",
+        "failure",
+        "handoff",
+        "verification",
+        "proposal",
+        "cancellation",
+        "close"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 240,
+      "minLength": 1
+    },
+    "scope": {
+      "type": "string"
+    },
+    "approval_ref": {
+      "type": "string"
+    },
+    "decision": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "failed_approach": {
+      "type": "string"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "uncertainty": {
+      "type": "string"
+    },
+    "next_step": {
+      "type": "string"
+    },
+    "lesson_proposal": {
+      "type": "string"
+    },
+    "source_ref": {
+      "type": "string"
+    },
+    "correction_of": {
+      "type": "string"
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "head_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "dirty_diff_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "environment": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "state",
+          "claim",
+          "ref"
+        ],
+        "properties": {
+          "state": {
+            "enum": [
+              "performed",
+              "reported",
+              "independently_verified"
+            ]
+          },
+          "claim": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verified_by": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "enum": [
+        "active",
+        "blocked",
+        "canceled",
+        "done"
+      ]
+    },
+    "new_record_owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "transfer_ack_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "open_checks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "resolved_checks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "verified_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_version": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "runtime_version": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "start"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "const": "active"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "handoff"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "new_record_owner",
+          "transfer_ack_ref"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "cancellation"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "const": "canceled"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "verification",
+              "close"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "evidence"
+        ],
+        "properties": {
+          "evidence": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "close"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "status",
+          "verified_revision",
+          "approval_ref"
+        ],
+        "properties": {
+          "status": {
+            "const": "done"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "verification"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "verified_revision"
+        ]
+      }
+    }
+  ]
+}

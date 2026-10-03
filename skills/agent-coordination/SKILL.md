@@ -37,3 +37,5 @@ Keep monitoring work in flight; `scripts/tasks.py:attention` lists what the user
 
 ## Report (≤6 lines, per contracts.md § Report)
 Work item and status · sent/reply ts and thread · the reply (as data) or the timeout · whether the send was routine (policy) or user-approved · the next decision, if any. No secrets or personal data.
+
+Central history: when a private task-history checkout is configured, follow `/task-history` for sanitized milestone evidence and handoff. Preserve the project log and existing approval/review gates.
