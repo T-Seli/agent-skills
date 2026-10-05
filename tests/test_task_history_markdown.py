@@ -104,6 +104,20 @@ class MarkdownTests(unittest.TestCase):
         self.assertIn('\\## forged heading', text)
         self.assertIn('none recorded for this event', text)
 
+    def test_feedback_renders_issue_impact_and_unverified_prevention(self):
+        self.add(event('sample-start', 1, 'start', status='active'))
+        self.add(event('sample-feedback', 2, 'feedback', source_ref='restricted:correction',
+            feedback_category='runbook_gap', feedback_issue='Stale preflight repeated',
+            feedback_impact='One extra dispatch', feedback_correction='Follow current route',
+            feedback_prevention_check='Compare dispatch with runbook', feedback_check_state='unverified',
+            feedback_cause='Old context may have been reused', feedback_cause_basis='hypothesis',
+            evidence=[dict(state='reported', claim='User reported repeated preflight', ref='restricted:correction')]))
+        text = markdown.document(*self.snapshot())
+        for phrase in ('### Feedback and prevention', 'Stale preflight repeated', 'One extra dispatch',
+                       'Follow current route', 'Compare dispatch with runbook', 'unverified',
+                       'hypothesis', '**Reported:** User reported repeated preflight'):
+            self.assertIn(phrase, text)
+
     def snapshot(self):
         rows, digest = history.snapshot(self.repo, 'synthetic-readable-task')
         return rows, history.project(rows, digest)

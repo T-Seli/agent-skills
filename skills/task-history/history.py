@@ -18,10 +18,13 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 REMOTE = re.compile(r"^(?:https://github\.com/|git@github\.com:)T-Seli/agent-task-history(?:\.git)?$")
 SECRET = re.compile(r"(?i)(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*\S+|\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,})\b)")
 PRIVATE_PATH = re.compile(r"(?:^|[ /])(?:\.codex/sessions|\.claude/projects)(?:[/ ]|$)")
-KINDS = {"start", "decision", "implementation", "test", "review", "deploy", "failure", "handoff", "verification", "proposal", "cancellation", "close"}
+KINDS = {"start", "decision", "implementation", "test", "review", "deploy", "failure", "handoff", "verification", "proposal", "feedback", "cancellation", "close"}
+FEEDBACK_CATEGORIES = {"user_correction", "confusion", "clarification", "scope_drift", "runbook_gap", "dispatch_failure", "repeated_blocker", "other"}
+FEEDBACK_CHECK_STATES = {"unverified", "verified_pass", "verified_fail"}
+FEEDBACK_CAUSE_BASES = {"observed", "hypothesis"}
 STATES = {"performed", "reported", "independently_verified"}
 STATUS = {"active", "blocked", "canceled", "done"}
-FIELDS = {"schema_version", "event_id", "task_id", "session_id", "revision", "record_owner", "execution_owner", "at_utc", "observed_at_utc", "kind", "summary", "status", "scope", "approval_ref", "decision", "reason", "failed_approach", "files", "evidence", "uncertainty", "next_step", "open_checks", "resolved_checks", "lesson_proposal", "source_ref", "correction_of", "base_sha", "head_sha", "dirty_diff_digest", "environment", "new_record_owner", "transfer_ack_ref", "verified_revision", "source_version", "runtime_version", "context", "implementation", "validation", "outcomes", "monitoring", "excluded_scope", "module_changes", "repo_ref", "branch_ref", "clear_next_step"}
+FIELDS = {"schema_version", "event_id", "task_id", "session_id", "revision", "record_owner", "execution_owner", "at_utc", "observed_at_utc", "kind", "summary", "status", "scope", "approval_ref", "decision", "reason", "failed_approach", "files", "evidence", "uncertainty", "next_step", "open_checks", "resolved_checks", "lesson_proposal", "source_ref", "correction_of", "base_sha", "head_sha", "dirty_diff_digest", "environment", "new_record_owner", "transfer_ack_ref", "verified_revision", "source_version", "runtime_version", "context", "implementation", "validation", "outcomes", "monitoring", "excluded_scope", "module_changes", "repo_ref", "branch_ref", "clear_next_step", "feedback_category", "feedback_issue", "feedback_impact", "feedback_correction", "feedback_prevention_check", "feedback_check_state", "feedback_check_ref", "feedback_cause", "feedback_cause_basis"}
 REQUIRED = {"schema_version", "event_id", "task_id", "session_id", "revision", "record_owner", "at_utc", "observed_at_utc", "kind", "summary"}
 EVIDENCE_FIELDS = {"state", "claim", "ref", "sha", "environment", "command", "outcome", "verified_by"}
 
@@ -62,6 +65,25 @@ def validate(data):
         timestamp(data[key], key)
     if data["kind"] not in KINDS or ("status" in data and data["status"] not in STATUS):
         fail("invalid kind or status")
+    feedback_fields = {"feedback_category", "feedback_issue", "feedback_impact", "feedback_correction", "feedback_prevention_check", "feedback_check_state", "feedback_check_ref", "feedback_cause", "feedback_cause_basis"}
+    if data["kind"] == "feedback":
+        required_feedback = {"source_ref", "feedback_category", "feedback_issue", "feedback_impact", "feedback_correction", "feedback_prevention_check", "feedback_check_state"}
+        if not required_feedback <= data.keys() or not data.get("evidence"):
+            fail("feedback needs source, issue, impact, correction, prevention check and evidence")
+        if (not isinstance(data["feedback_category"], str) or data["feedback_category"] not in FEEDBACK_CATEGORIES
+                or not isinstance(data["feedback_check_state"], str) or data["feedback_check_state"] not in FEEDBACK_CHECK_STATES):
+            fail("invalid feedback category or check state")
+        if ("feedback_cause" in data) != ("feedback_cause_basis" in data):
+            fail("feedback cause needs an observed or hypothesis basis")
+        if "feedback_cause_basis" in data and (not isinstance(data["feedback_cause_basis"], str)
+                                               or data["feedback_cause_basis"] not in FEEDBACK_CAUSE_BASES):
+            fail("invalid feedback cause basis")
+        if data["feedback_check_state"] != "unverified" and not data.get("feedback_check_ref"):
+            fail("verified prevention check needs a reference")
+        if data["feedback_check_state"] == "unverified" and data.get("feedback_check_ref"):
+            fail("unverified prevention check cannot claim a verification reference")
+    elif feedback_fields & data.keys():
+        fail("feedback fields only allowed on feedback events")
     allowed_status = {"start": {"active"}, "decision": {"active", "blocked"},
                       "failure": {"blocked"}, "cancellation": {"canceled"}, "close": {"done"}}
     if "status" in data and data["status"] not in allowed_status.get(data["kind"], set()):

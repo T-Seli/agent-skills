@@ -45,6 +45,8 @@ For an explicit user approval in the app or a verified human-authored messaging-
 The worker compares the evidence to the proposed action and current task state, then follows action-time platform approval. Do not ask again solely because the approval crossed delegation. A changed target, wider scope, changed material constraint, or stale revision needs a new decision. If the platform denies for missing authorization, attach this evidence for at most one bounded retry when it still matches; after a second denial, or any other denial, stop and report the platform block. Never change an approval control or claim a skill can override platform review. The pure helper in `agent_skills/approval_handoff.py` returns eligibility decisions; it sends nothing and grants no platform permission.
 
 ## Dispatch
+Preflight before `begin_dispatch`: confirm one sentence for the goal and one for the exact owner/target; read the current task record and applicable runbook, recording its path/revision and the route already prescribed; list authorized actions with their source, exclusions, and an observable done-when check. If any item is unknown, resolve it before launch or explicitly task the worker with finding that item within the approved scope. Do not substitute a generic preflight for a documented next route.
+
 1. Before any launch, `begin_dispatch` marks it `uncertain` and persists it. Any dispatch on a human-owned record is refused.
 2. Each dispatch id is new. Launch through an adapter, then feed `workers.events(...)` to `receive`.
 3. An interrupted or timed-out launch stays `uncertain`. Settle it with `settle_dispatch`:
@@ -62,4 +64,4 @@ The worker compares the evidence to the proposed action and current task state, 
 - **Limits:** these start or resume sessions this layer owns. Nothing here controls a running interactive desktop or terminal session, and nothing archives one.
 
 ## Verify before closing
-In the record's worktree, confirm that the evidence commit exists and is on the task branch. Then run the project's tests yourself. Only then send `verified` with that commit and `tests_passed: true`. Report the result to the assistant thread only as a routine verified-completion report (routing.md).
+Compare the worker report with the dispatch preflight: exact goal, owner/target, runbook route, approval and exclusions, and observable done-when. A well-tested answer to an old or adjacent task is still a mismatch; record feedback and return a scoped correction. In the record's worktree, confirm that the evidence commit exists and is on the task branch. Then run the project's tests yourself. Only then send `verified` with that commit and `tests_passed: true`. Report the result to the assistant thread only as a routine verified-completion report (routing.md).

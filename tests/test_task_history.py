@@ -83,6 +83,45 @@ class HistoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'match'): history.validate(row)
         row['evidence'][0]['sha'] = 'a'*40; history.validate(row)
 
+    def test_feedback_requires_provenance_correction_and_check_state(self):
+        self.add(packet())
+        feedback = packet('event-002', 2, 'feedback')
+        feedback.update(source_ref='restricted:user-correction', feedback_category='scope_drift',
+                        feedback_issue='Worker answered an adjacent task',
+                        feedback_impact='One re-dispatch was needed',
+                        feedback_correction='Return to the assigned task',
+                        feedback_prevention_check='Compare returned answer with dispatch goal',
+                        feedback_check_state='unverified',
+                        evidence=[dict(state='reported', claim='User corrected the scope', ref='restricted:user-correction')])
+        history.validate(feedback)
+        self.add(feedback)
+        self.assertEqual(history.overview(self.repo, 'task-001')['status'], 'active')
+        for changes, error in (({'source_ref': None}, 'feedback needs'),
+                               ({'feedback_cause': 'Maybe stale context'}, 'cause needs'),
+                               ({'feedback_check_state': 'verified_pass'}, 'needs a reference'),
+                               ({'feedback_check_ref': 'restricted:test'}, 'cannot claim'),
+                               ({'feedback_category': []}, 'invalid feedback category'),
+                               ({'status': 'blocked'}, 'status is not allowed'),
+                               ({'resolved_checks': ['review']}, 'checks may be resolved')):
+            bad = dict(feedback, **changes)
+            if changes.get('source_ref') is None and 'source_ref' in changes: bad.pop('source_ref')
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, error):
+                history.validate(bad)
+        checked = packet('event-003', 3, 'feedback')
+        checked.update({**{k: v for k, v in feedback.items() if k.startswith('feedback_')},
+                        'source_ref': 'restricted:check', 'correction_of': 'event-002',
+                        'feedback_check_state': 'verified_pass', 'feedback_check_ref': 'restricted:check',
+                        'feedback_cause': 'Dispatch omitted target', 'feedback_cause_basis': 'hypothesis',
+                        'evidence': [dict(state='performed', claim='Scoped return check passed', ref='restricted:check')]})
+        self.add(checked)
+        self.assertEqual(len(history.events(self.repo, 'task-001')), 3)
+        bad = packet('event-004', 4, 'decision'); bad['feedback_issue'] = 'wrong kind'
+        with self.assertRaisesRegex(ValueError, 'only allowed'): history.validate(bad)
+
+    def test_feedback_example_packet_is_valid(self):
+        path = MODULE.parent / 'examples/feedback-event.json'
+        history.validate(json.loads(path.read_text()))
+
     def test_corrupt_replay_and_identity(self):
         self.add(packet())
         with self.path.open('a') as out: out.write('{bad')

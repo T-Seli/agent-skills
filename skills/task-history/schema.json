@@ -54,6 +54,7 @@
         "handoff",
         "verification",
         "proposal",
+        "feedback",
         "cancellation",
         "close"
       ]
@@ -279,6 +280,61 @@
     },
     "clear_next_step": {
       "const": true
+    },
+    "feedback_category": {
+      "enum": [
+        "user_correction",
+        "confusion",
+        "clarification",
+        "scope_drift",
+        "runbook_gap",
+        "dispatch_failure",
+        "repeated_blocker",
+        "other"
+      ]
+    },
+    "feedback_issue": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "feedback_impact": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "feedback_correction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "feedback_prevention_check": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "feedback_check_state": {
+      "enum": [
+        "unverified",
+        "verified_pass",
+        "verified_fail"
+      ]
+    },
+    "feedback_check_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "feedback_cause": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "feedback_cause_basis": {
+      "enum": [
+        "observed",
+        "hypothesis"
+      ]
     }
   },
   "allOf": [
