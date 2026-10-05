@@ -15,6 +15,7 @@ from nav import checked as checked_session, session_details, session_line, threa
 
 PLAIN = ("Needs you", "In progress", "Monitoring", "Waiting on someone", "Done")
 NOTHING = "Nothing needed from you"
+PROGRESS_STATES = {"reported", "performed", "independently_verified", "unverified"}
 # Shas (7+ hex mixing letters and digits, git's shortest default), uuids and message timestamps belong
 # in the details reply. Shorter fragments and other tasks' ids can't be told from words here.
 # Plain numbers ("Raise limit to 10000000") and hex-looking words ("Defaced") are ordinary text.
@@ -28,6 +29,33 @@ def clean(text):
     """One line, characters kept: line breaks can't add a line, and escaped '<', '>' can't add a link."""
     text = re.sub(r"\s+", " ", str(text or "")).strip()
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def material_status(*, progress, progress_state, next_action, next_owner, need_kind,
+                    need_from_user, approval_already_valid=False):
+    """Render a material user-facing update without implying unverified progress or a missing ask.
+
+    The caller checks the evidence, existing approvals and action scope before supplying these fields.
+    This pure formatter sends nothing and grants no permission.
+    """
+    if progress_state not in PROGRESS_STATES:
+        raise ValueError("progress state must describe the evidence")
+    if need_kind not in {"none", "decision", "approval", "action"}:
+        raise ValueError("user need must be classified")
+    fields = {k: clean(v) for k, v in dict(progress=progress, next_action=next_action,
+                                           next_owner=next_owner, need_from_user=need_from_user).items()}
+    if not all(fields.values()):
+        raise ValueError("material status needs progress, next action, owner and user need")
+    is_none = fields["need_from_user"].lower() in {"none", "nothing needed from you"}
+    if (need_kind == "none") != is_none:
+        raise ValueError("user need classification and text disagree")
+    if need_kind == "approval" and approval_already_valid:
+        raise ValueError("do not repeat an existing valid approval request")
+    if is_none:
+        fields["need_from_user"] = "None"
+    return (f"Progress ({progress_state}): {fields['progress']}\n"
+            f"Next: {fields['next_action']} · Owner: {fields['next_owner']}\n"
+            f"Need from Thomas: {fields['need_from_user']}")
 
 
 def exact(text):

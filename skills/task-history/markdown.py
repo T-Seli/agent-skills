@@ -76,6 +76,13 @@ def render(rows, state):
         out.append(section("Implementation", implementation))
         decisions = field("Decision", row.get("decision")) + field("Why", row.get("reason")) + field("Failed approach", row.get("failed_approach"))
         out.append(section("Decisions and alternatives", decisions))
+        if row["kind"] == "feedback":
+            feedback = (field("Category", row["feedback_category"]) + field("Observed issue", row["feedback_issue"])
+                        + field("Impact or rework", row["feedback_impact"]) + field("Correction", row["feedback_correction"])
+                        + field("Prevention check", row["feedback_prevention_check"])
+                        + field("Check state", row["feedback_check_state"]) + field("Check reference", row.get("feedback_check_ref"))
+                        + field("Cause basis", row.get("feedback_cause_basis")) + field("Cause", row.get("feedback_cause")))
+            out.append(section("Feedback and prevention", feedback))
         validation = ("**Event-authored validation narrative (not independent verification):** " + safe(row["validation"]) + "\n\n" if row.get("validation") else "")
         evidence = row.get("evidence", [])
         if evidence:

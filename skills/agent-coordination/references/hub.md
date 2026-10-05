@@ -2,6 +2,8 @@
 
 The assistant thread doubles as the user's task hub: one thread per work item, readable at a glance. The local task record stays the source of truth. `scripts/hub.py` renders and plans; the caller sends, through the normal consent rules (routing.md).
 
+For a material status outside the compact hub summary, use `hub.material_status` and verify its inputs first. Set `need_kind` to `none`, `decision`, `approval`, or `action`; use literal `None` for the first. Its three lines must state progress with the evidence level, the concrete next action and owner, and the exact decision/approval/action needed from Thomas or `None`. A reported worker result is not verified progress. Before naming a user approval as needed, reconcile exact existing approval, scope, target, and current task revision; pass `approval_already_valid=True` only when all match. The formatter rejects another approval request in that case. If the assistant can perform the next authorized action, name the assistant as owner and say `None`. Tool cancellation with an uncertain receipt calls for readback by the orchestrator, not a guessed root cause or a reflexive new approval request.
+
 ## Summary message
 ```
 [AI · Codex] *Alert recovery fixes*

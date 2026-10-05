@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "event_id": "example-feedback-002",
+  "task_id": "example-task-001",
+  "session_id": "example-session-001",
+  "revision": 2,
+  "record_owner": "example-owner",
+  "at_utc": "2026-10-05T18:00:00Z",
+  "observed_at_utc": "2026-10-05T18:00:00Z",
+  "kind": "feedback",
+  "summary": "A worker answered an earlier task",
+  "source_ref": "restricted:exact-user-correction",
+  "feedback_category": "scope_drift",
+  "feedback_issue": "The answer addressed an earlier task instead of the current target.",
+  "feedback_impact": "The current task needed a scoped re-dispatch.",
+  "feedback_correction": "Restate the current target and completion criteria before re-dispatch.",
+  "feedback_prevention_check": "Compare the next worker answer with the current dispatch goal and target.",
+  "feedback_check_state": "unverified",
+  "evidence": [
+    {
+      "state": "reported",
+      "claim": "The user reported the task mismatch.",
+      "ref": "restricted:exact-user-correction"
+    }
+  ]
+}
