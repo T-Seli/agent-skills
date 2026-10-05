@@ -21,7 +21,7 @@ PRIVATE_PATH = re.compile(r"(?:^|[ /])(?:\.codex/sessions|\.claude/projects)(?:[
 KINDS = {"start", "decision", "implementation", "test", "review", "deploy", "failure", "handoff", "verification", "proposal", "cancellation", "close"}
 STATES = {"performed", "reported", "independently_verified"}
 STATUS = {"active", "blocked", "canceled", "done"}
-FIELDS = {"schema_version", "event_id", "task_id", "session_id", "revision", "record_owner", "execution_owner", "at_utc", "observed_at_utc", "kind", "summary", "status", "scope", "approval_ref", "decision", "reason", "failed_approach", "files", "evidence", "uncertainty", "next_step", "open_checks", "resolved_checks", "lesson_proposal", "source_ref", "correction_of", "base_sha", "head_sha", "dirty_diff_digest", "environment", "new_record_owner", "transfer_ack_ref", "verified_revision", "source_version", "runtime_version"}
+FIELDS = {"schema_version", "event_id", "task_id", "session_id", "revision", "record_owner", "execution_owner", "at_utc", "observed_at_utc", "kind", "summary", "status", "scope", "approval_ref", "decision", "reason", "failed_approach", "files", "evidence", "uncertainty", "next_step", "open_checks", "resolved_checks", "lesson_proposal", "source_ref", "correction_of", "base_sha", "head_sha", "dirty_diff_digest", "environment", "new_record_owner", "transfer_ack_ref", "verified_revision", "source_version", "runtime_version", "context", "implementation", "validation", "outcomes", "monitoring", "excluded_scope", "module_changes", "repo_ref", "branch_ref", "clear_next_step"}
 REQUIRED = {"schema_version", "event_id", "task_id", "session_id", "revision", "record_owner", "at_utc", "observed_at_utc", "kind", "summary"}
 EVIDENCE_FIELDS = {"state", "claim", "ref", "sha", "environment", "command", "outcome", "verified_by"}
 
@@ -54,6 +54,8 @@ def validate(data):
     for key in ("event_id", "task_id", "session_id"):
         if not isinstance(data[key], str) or not ID.fullmatch(data[key]):
             fail("invalid " + key)
+    if "clear_next_step" in data and (data["clear_next_step"] is not True or "next_step" in data):
+        fail("clear_next_step must be true and cannot accompany next_step")
     for key in ("record_owner", "summary"):
         string(data[key], key, 240)
     for key in ("at_utc", "observed_at_utc"):
@@ -82,12 +84,20 @@ def validate(data):
         fail("handoff needs new owner and acknowledgment reference")
     if data["kind"] != "handoff" and ("new_record_owner" in data or "transfer_ack_ref" in data):
         fail("owner transfer fields only allowed at handoff")
-    for key in FIELDS - REQUIRED - {"files", "evidence", "open_checks", "resolved_checks", "revision", "schema_version", "status", "verified_revision"}:
+    for key in FIELDS - REQUIRED - {"files", "module_changes", "evidence", "open_checks", "resolved_checks", "revision", "schema_version", "status", "verified_revision", "clear_next_step"}:
         if key in data:
             string(data[key], key)
     for key in ("base_sha", "head_sha", "dirty_diff_digest"):
         if key in data and not SHA.fullmatch(data[key]):
             fail("invalid " + key)
+    changes = data.get("module_changes", [])
+    if not isinstance(changes, list) or len(changes) > 30:
+        fail("invalid module changes")
+    for change in changes:
+        if not isinstance(change, dict) or set(change) != {"path", "what", "why"}:
+            fail("module changes need path, what and why")
+        for key, value in change.items():
+            string(value, key)
     for key in ("files", "open_checks", "resolved_checks"):
         if key in data and (not isinstance(data[key], list) or len(data[key]) > 100 or any(not isinstance(x, str) or not x.strip() or len(x) > 240 for x in data[key])):
             fail("invalid " + key)
@@ -296,14 +306,33 @@ def append(repo, data, expected):
         return "appended", digest(path)
 
 
-def overview(repo, task):
-    path = path_for(repo, task)
-    rows, observed_digest = snapshot(repo, task)
+def current_next_step(rows):
+    step = None
+    terminal = False
+    for row in rows:
+        if terminal:
+            continue
+        if row.get("clear_next_step"):
+            step = None
+        elif "next_step" in row:
+            step = row["next_step"]
+        if row.get("status") in {"canceled", "done"}:
+            step = None
+            terminal = True
+    return step
+
+
+def project(rows, observed_digest):
     if not rows:
         fail("task not found")
     state = next((r for r in reversed(rows) if "status" in r), rows[0])
     open_checks = unresolved(rows)
-    return {"task_id": task, "record_owner": owner(rows), "current": state["summary"], "status": state["status"], "state_revision": state["revision"], "last_event": rows[-1]["event_id"], "last_at_utc": rows[-1]["at_utc"], "next_step": (None if state["status"] in {"canceled", "done"} else next((r["next_step"] for r in reversed(rows) if r.get("next_step")), None)), "open_checks": open_checks, "events": len(rows), "digest": observed_digest}
+    return {"task_id": rows[0]["task_id"], "record_owner": owner(rows), "current": state["summary"], "latest_activity": rows[-1]["summary"], "status": state["status"], "state_revision": state["revision"], "last_event": rows[-1]["event_id"], "last_at_utc": rows[-1]["at_utc"], "next_step": current_next_step(rows), "open_checks": open_checks, "events": len(rows), "digest": observed_digest}
+
+
+def overview(repo, task):
+    rows, observed_digest = snapshot(repo, task)
+    return project(rows, observed_digest)
 
 
 def initialize(repo):

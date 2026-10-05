@@ -206,6 +206,79 @@
     "runtime_version": {
       "type": "string",
       "minLength": 1
+    },
+    "context": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "implementation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "validation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "outcomes": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "monitoring": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "excluded_scope": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "module_changes": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "what",
+          "why"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "what": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      }
+    },
+    "repo_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "branch_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "clear_next_step": {
+      "const": true
     }
   },
   "allOf": [
@@ -316,6 +389,14 @@
       "then": {
         "required": [
           "verified_revision"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "next_step",
+          "clear_next_step"
         ]
       }
     }
