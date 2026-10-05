@@ -96,6 +96,11 @@ class HistoryTests(unittest.TestCase):
         history.validate(feedback)
         self.add(feedback)
         self.assertEqual(history.overview(self.repo, 'task-001')['status'], 'active')
+        for missing in ('source_ref', 'feedback_issue', 'feedback_correction', 'evidence'):
+            incomplete = dict(feedback)
+            incomplete.pop(missing)
+            with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, 'feedback needs'):
+                history.validate(incomplete)
         for changes, error in (({'source_ref': None}, 'feedback needs'),
                                ({'feedback_cause': 'Maybe stale context'}, 'cause needs'),
                                ({'feedback_check_state': 'verified_pass'}, 'needs a reference'),
@@ -109,12 +114,27 @@ class HistoryTests(unittest.TestCase):
             if changes.get('source_ref') is None and 'source_ref' in changes: bad.pop('source_ref')
             with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, error):
                 history.validate(bad)
+        reported_check = dict(feedback, feedback_check_state='verified_pass',
+                              feedback_check_ref='restricted:check',
+                              evidence=[dict(state='reported', claim='Worker says check passed',
+                                             ref='restricted:check', outcome='pass')])
+        with self.assertRaisesRegex(ValueError, 'performed evidence'):
+            history.validate(reported_check)
+        wrong_ref = dict(reported_check, evidence=[dict(state='performed', claim='Check ran',
+            ref='restricted:other-check', outcome='pass')])
+        with self.assertRaisesRegex(ValueError, 'performed evidence'):
+            history.validate(wrong_ref)
+        wrong_outcome = dict(reported_check, evidence=[dict(state='performed', claim='Check failed',
+            ref='restricted:check', outcome='fail')])
+        with self.assertRaisesRegex(ValueError, 'performed evidence'):
+            history.validate(wrong_outcome)
         checked = packet('event-003', 3, 'feedback')
         checked.update({**{k: v for k, v in feedback.items() if k.startswith('feedback_')},
                         'source_ref': 'restricted:check', 'correction_of': 'event-002',
                         'feedback_check_state': 'verified_pass', 'feedback_check_ref': 'restricted:check',
                         'feedback_cause': 'Dispatch omitted target', 'feedback_cause_basis': 'hypothesis',
-                        'evidence': [dict(state='performed', claim='Scoped return check passed', ref='restricted:check')]})
+                        'evidence': [dict(state='performed', claim='Scoped return check passed',
+                                          ref='restricted:check', outcome='pass')]})
         self.add(checked)
         self.assertEqual(len(history.events(self.repo, 'task-001')), 3)
         bad = packet('event-004', 4, 'decision'); bad['feedback_issue'] = 'wrong kind'
@@ -123,6 +143,31 @@ class HistoryTests(unittest.TestCase):
     def test_feedback_example_packet_is_valid(self):
         path = MODULE.parent / 'examples/feedback-event.json'
         history.validate(json.loads(path.read_text()))
+
+    def test_schema_requires_feedback_fields_and_performed_check_evidence(self):
+        schema = json.loads((MODULE.parent / 'schema.json').read_text())
+        feedback_rule = next(x['then'] for x in schema['allOf'] if
+            x.get('if', {}).get('properties', {}).get('kind', {}).get('const') == 'feedback'
+            and 'feedback_check_state' not in x['if']['properties'])
+        self.assertTrue({'source_ref', 'feedback_issue', 'feedback_correction', 'evidence'}
+                        <= set(feedback_rule['required']))
+        self.assertEqual(feedback_rule['properties']['evidence']['minItems'], 1)
+        if importlib.util.find_spec('jsonschema') is None:
+            return
+        import jsonschema
+        valid = json.loads((MODULE.parent / 'examples/feedback-event.json').read_text())
+        jsonschema.Draft202012Validator.check_schema(schema)
+        jsonschema.validate(valid, schema)
+        for missing in ('source_ref', 'feedback_issue', 'feedback_correction', 'evidence'):
+            bad = dict(valid); bad.pop(missing)
+            with self.subTest(missing=missing), self.assertRaises(jsonschema.ValidationError):
+                jsonschema.validate(bad, schema)
+        reported = dict(valid, feedback_check_state='verified_pass', feedback_check_ref='restricted:check',
+                        evidence=[dict(state='reported', claim='Claimed pass', ref='restricted:check', outcome='pass')])
+        with self.assertRaises(jsonschema.ValidationError): jsonschema.validate(reported, schema)
+        performed = dict(reported, evidence=[dict(state='performed', claim='Check passed',
+                                                  ref='restricted:check', outcome='pass')])
+        jsonschema.validate(performed, schema)
 
     def test_corrupt_replay_and_identity(self):
         self.add(packet())

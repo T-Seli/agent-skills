@@ -86,6 +86,12 @@ def validate(data):
             fail("verified prevention check needs a reference")
         if data["feedback_check_state"] == "unverified" and data.get("feedback_check_ref"):
             fail("unverified prevention check cannot claim a verification reference")
+        if data["feedback_check_state"] != "unverified":
+            expected_outcome = "pass" if data["feedback_check_state"] == "verified_pass" else "fail"
+            if not any(isinstance(item, dict) and item.get("state") in {"performed", "independently_verified"}
+                       and item.get("ref") == data["feedback_check_ref"] and item.get("outcome") == expected_outcome
+                       for item in data["evidence"]):
+                fail("verified prevention check needs performed evidence at its check reference and outcome")
     elif feedback_fields & data.keys():
         fail("feedback fields only allowed on feedback events")
     allowed_status = {"start": {"active"}, "decision": {"active", "blocked"},

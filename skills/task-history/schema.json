@@ -455,6 +455,228 @@
           "clear_next_step"
         ]
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "feedback"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "source_ref",
+          "feedback_category",
+          "feedback_issue",
+          "feedback_impact",
+          "feedback_correction",
+          "feedback_prevention_check",
+          "feedback_check_state",
+          "evidence"
+        ],
+        "properties": {
+          "evidence": {
+            "minItems": 1
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "feedback_category"
+              ]
+            },
+            {
+              "required": [
+                "feedback_issue"
+              ]
+            },
+            {
+              "required": [
+                "feedback_impact"
+              ]
+            },
+            {
+              "required": [
+                "feedback_correction"
+              ]
+            },
+            {
+              "required": [
+                "feedback_prevention_check"
+              ]
+            },
+            {
+              "required": [
+                "feedback_check_state"
+              ]
+            },
+            {
+              "required": [
+                "feedback_check_ref"
+              ]
+            },
+            {
+              "required": [
+                "feedback_cause"
+              ]
+            },
+            {
+              "required": [
+                "feedback_cause_basis"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "feedback"
+          },
+          "feedback_check_state": {
+            "const": "verified_pass"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "feedback_check_ref"
+        ],
+        "properties": {
+          "evidence": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "state",
+                "ref",
+                "outcome"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "performed",
+                    "independently_verified"
+                  ]
+                },
+                "outcome": {
+                  "const": "pass"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "feedback"
+          },
+          "feedback_check_state": {
+            "const": "verified_fail"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "feedback_check_ref"
+        ],
+        "properties": {
+          "evidence": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "state",
+                "ref",
+                "outcome"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "performed",
+                    "independently_verified"
+                  ]
+                },
+                "outcome": {
+                  "const": "fail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "feedback"
+          },
+          "feedback_check_state": {
+            "const": "unverified"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "feedback_check_ref"
+          ]
+        }
+      }
+    },
+    {
+      "dependentRequired": {
+        "feedback_cause": [
+          "feedback_cause_basis"
+        ],
+        "feedback_cause_basis": [
+          "feedback_cause"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "feedback"
+          },
+          "feedback_cause_basis": {
+            "const": "observed"
+          }
+        },
+        "required": [
+          "feedback_cause_basis"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "state"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "performed",
+                    "independently_verified"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
-  ]
+  ],
+  "$comment": "Python history.validate is authoritative for cross-field equality: performed check evidence ref must exactly equal feedback_check_ref."
 }
