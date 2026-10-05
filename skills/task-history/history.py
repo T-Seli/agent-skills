@@ -78,6 +78,10 @@ def validate(data):
         if "feedback_cause_basis" in data and (not isinstance(data["feedback_cause_basis"], str)
                                                or data["feedback_cause_basis"] not in FEEDBACK_CAUSE_BASES):
             fail("invalid feedback cause basis")
+        if data.get("feedback_cause_basis") == "observed" and not any(
+                isinstance(item, dict) and item.get("state") in {"performed", "independently_verified"}
+                for item in data["evidence"]):
+            fail("observed feedback cause needs performed or independently verified evidence")
         if data["feedback_check_state"] != "unverified" and not data.get("feedback_check_ref"):
             fail("verified prevention check needs a reference")
         if data["feedback_check_state"] == "unverified" and data.get("feedback_check_ref"):

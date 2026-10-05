@@ -35,6 +35,34 @@ def summ(r, **kw):
 
 
 class StatusTests(unittest.TestCase):
+    def test_unclear_blocker_update_requires_progress_action_owner_and_user_need(self):
+        status = h.material_status(progress='Dispatch receipt is uncertain; no task progress verified',
+            progress_state='unverified', next_action='Check the destination for an existing receipt',
+            next_owner='Orchestrator', need_kind='none', need_from_user='None')
+        self.assertEqual(status.splitlines(), [
+            'Progress (unverified): Dispatch receipt is uncertain; no task progress verified',
+            'Next: Check the destination for an existing receipt · Owner: Orchestrator',
+            'Need from Thomas: None'])
+        for changes in ({'next_action': ''}, {'next_owner': ''}, {'need_from_user': ''},
+                        {'progress_state': 'independently verified'},
+                        {'need_kind': 'approval'}):
+            fields=dict(progress='Receipt uncertain', progress_state='unverified',
+                next_action='Read back the destination', next_owner='Orchestrator',
+                need_kind='none', need_from_user='None')
+            fields.update(changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                h.material_status(**fields)
+
+    def test_valid_existing_approval_is_not_requested_again(self):
+        fields=dict(progress='Reviewed branch and tests passed', progress_state='performed',
+            next_action='Open the authorized draft PR', next_owner='Orchestrator',
+            need_kind='approval', need_from_user='Approve opening the draft PR',
+            approval_already_valid=True)
+        with self.assertRaisesRegex(ValueError, 'do not repeat'):
+            h.material_status(**fields)
+        fields.update(need_kind='none', need_from_user='None')
+        self.assertIn('Need from Thomas: None', h.material_status(**fields))
+
     def test_plain_statuses(self):
         cases = [(record('running'), {}, 'In progress'),
                  (record('blocked', {'need': '?', 'action': 'a', 'target': 'b'}), {}, 'Needs you'),

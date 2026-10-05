@@ -101,6 +101,8 @@ class HistoryTests(unittest.TestCase):
                                ({'feedback_check_state': 'verified_pass'}, 'needs a reference'),
                                ({'feedback_check_ref': 'restricted:test'}, 'cannot claim'),
                                ({'feedback_category': []}, 'invalid feedback category'),
+                               ({'feedback_cause': 'Canceled tool caused the delay', 'feedback_cause_basis': 'observed'},
+                                'observed feedback cause needs'),
                                ({'status': 'blocked'}, 'status is not allowed'),
                                ({'resolved_checks': ['review']}, 'checks may be resolved')):
             bad = dict(feedback, **changes)
