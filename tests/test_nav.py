@@ -146,7 +146,7 @@ class DestinationTests(unittest.TestCase):
         for changed in ({'session': n.session('codex', SID, 'release task', on_this_machine=True)},
                         {'session': n.session('codex', 'wrong', 'release task', on_this_machine=False, url=ref['url'])},
                         {'surface_link_receipt': ''},
-                        {'surface_link_receipt': {**args['surface_link_receipt'], 'surface': 'Slack'}},
+                        {'surface_link_receipt': {**args['surface_link_receipt'], 'surface': 'another app'}},
                         {'platform_terms': None},
                         {'platform_terms': {**platform_terms, 'parts': platform_terms['parts'][:1]}},
                         {'platform_terms': {**platform_terms, 'session_id': 'other'}},
@@ -161,7 +161,7 @@ class DestinationTests(unittest.TestCase):
         self.assertIn('Approve deployment of that commit to production?', result['body'])
         self.assertIn('reviewed commit only', result['body'])
         self.assertIn('https://code.example.invalid/code/session_1', result['body'])
-        self.assertNotIn('works in Slack', result['body'])
+        self.assertNotIn('works in another app', result['body'])
         self.assertEqual(h.direct_approval_handoff(**{**args, 'previous_fingerprint': result['fingerprint']})['decision'],
                          'already-routed')
         self.assertEqual(h.direct_approval_handoff(**{**args, 'route': 'stop-and-report-platform-denial'})['decision'],
