@@ -53,6 +53,8 @@ Preflight before `begin_dispatch`: confirm one sentence for the goal and one for
 
 When a task has a pinned acceptance packet, pass it as `acceptance_packet` to `new_task` at admission and set `worktree` to the artifact root. Use `bind_packet` for a revised packet; it clears prior evidence. For packet-backed work, the independent verifier opens the actual artifacts and supplies a packet-matched inspection report with the exact surface, fixture, environment, candidate and artifact hashes before `ready`; `tests_passed` alone cannot close it.
 
+On any material requirement change, keep the same task and owned session, mark the earlier result stale, and send the revised criteria with its revision. Before accepting another result, inspect a worker readback that names that task, revision, changed criteria and next action. Save only a sanitized reference to the readback; a packet hash, dispatch receipt or generic acknowledgement is insufficient. If the host cannot deliver to or read from that session, report the limit and hold readiness rather than inventing an acknowledgement.
+
 1. Before any launch, `begin_dispatch` marks it `uncertain` and persists it. Any dispatch on a human-owned record is refused.
 2. Each dispatch id is new. Launch through an adapter, then feed `workers.events(...)` to `receive`.
 3. An interrupted or timed-out launch stays `uncertain`. Settle it with `settle_dispatch`:
@@ -61,12 +63,13 @@ When a task has a pinned acceptance packet, pass it as `acceptance_packet` to `n
    - otherwise ask the user.
 
    Never relaunch blindly.
-4. A missing CLI returns `unavailable`; a non-zero exit, for example when it is not logged in, returns `failed`. For either, send an adapter `unavailable` note and tell the user: no status change and no retry.
+4. A missing CLI returns `unavailable`; a non-zero exit, for example when it is not logged in, returns `failed`. Classify the observed outcome as uncertain start, technical failure, permission denial or explicit stop using the tool receipt; do not infer a cause from cancellation alone. For `unavailable` or `failed`, send an adapter note and tell the user: no status change and no retry until its cause is resolved. A permission denial follows the approval handoff above, never an adapter workaround.
 
 ## Adapters
 - **Claude:** `claude -p --output-format json --json-schema <report> --permission-mode dontAsk --strict-mcp-config --mcp-config '{"mcpServers":{}}'`. This adapter supplies no preapproved tool grant or MCP server. These flags are not a process sandbox; do not assume they restrict every local capability. A fresh launch passes `--session-id <uuid>`, so `Claude.launched` can find the transcript later; a resume passes `--resume <id>`. The report comes back in `structured_output`.
 - **Codex:** `codex exec --json --ignore-user-config -C <dir> -s read-only --output-schema <file> [-m <model>]`. The user's config, with its connectors and plugins, is never inherited, and auth still works. Without `-m`, Codex's built-in default applies, not the user's choice, so pass a model verified with `codex debug models`; a resume uses `resume <thread_id> <prompt>`. The thread id is known only from the output, so an interrupted fresh launch stays uncertain. The experimental app-server is not used.
 - **Model and tool choices** come from private config, never from this repo.
+- **Release and capability check:** pin the reviewed source commit and tree before rollout. On a fresh or resumed worker, check the host's actual skill-load receipt and selected skill hash against that release; a source pin or install command alone is not adoption. Check the host's supported model and effort options, select compatible settings explicitly, and record the effective values only when the host reports them. Trial an independent reviewer on a synthetic task only when its adapter and model are available; report an unavailable capability without guessing.
 - **Limits:** these start or resume sessions this layer owns. Nothing here controls a running interactive desktop or terminal session, and nothing archives one.
 
 ## Verify before closing
