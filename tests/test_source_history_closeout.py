@@ -1,4 +1,7 @@
 import json
+import hashlib
+import struct
+import zlib
 import os
 import stat
 import subprocess
@@ -27,6 +30,44 @@ def sample():
 
 
 class SourceHistoryCloseoutTests(unittest.TestCase):
+    def test_bound_closeout_requires_current_independent_artifact_inspection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def chunk(kind, data):
+                return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+            image = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 3, 1, 8, 2, 0, 0, 0)) +
+                     chunk(b'IDAT', zlib.compress(b'\x00' + b'\x00\x00\x00' * 3)) + chunk(b'IEND', b''))
+            (root / 'timeline.png').write_bytes(image)
+            sha = hashlib.sha256((root / 'timeline.png').read_bytes()).hexdigest()
+            value = packet(task_id='task-1', revision=1, owner='worker-1', scope='timeline',
+                           exclusions=['deploy'], baseline='abc', deliverables=['timeline'],
+                           acceptance=[{'id': 'a1', 'check': 'whole timeline', 'evidence_binding': {
+                               'surface': 'whole timeline', 'fixture': 'synthetic call',
+                               'environment': 'local', 'candidate': 'b' * 40,
+                               'artifact_kinds': ['screenshot'], 'coverage_ids': ['lead', 'alert', 'drop']}}], context_refs=[],
+                           source_hashes={'core:SKILL.md': H}, package_hashes={'core:SKILL.md': H},
+                           stop_conditions=['scope change'], escalation_conditions=['blocked'])
+            envelope = {'task_id': 'task-1', 'revision': 1, 'packet_sha256': value['packet_sha256']}
+            report = {**envelope, 'criterion_evidence': {'a1': {
+                'reference': 'timeline.png', 'check_result': 'pass', 'commit': 'b' * 40,
+                'environment': 'local', 'surface': 'whole timeline', 'fixture': 'synthetic call',
+                'artifacts': {'screenshot': 'timeline.png'}, 'artifact_hashes': {'screenshot': sha}}}}
+            inspection = {**envelope, 'criterion_evidence': {'a1': {
+                'inspector': 'verifier-1', 'inspection_result': 'pass',
+                'surface': 'whole timeline', 'fixture': 'synthetic call', 'environment': 'local',
+                'candidate': 'b' * 40, 'artifact_hashes': {'screenshot': sha},
+                'artifacts': {'screenshot': 'timeline.png'},
+                'observed_coverage_ids': ['lead', 'alert', 'drop']}}}
+            self.assertEqual(completion_gate(value, report, owner_verified=True,
+                                             human_accepted=True, artifact_root=root)['decision'], 'hold')
+            self.assertEqual(completion_gate(value, report, verifier_report=inspection,
+                                             artifact_root=root, owner_verified=True,
+                                             human_accepted=True)['decision'], 'accepted')
+            (root / 'timeline.png').write_bytes(b'changed')
+            self.assertEqual(completion_gate(value, report, verifier_report=inspection,
+                                             artifact_root=root, owner_verified=True,
+                                             human_accepted=True)['decision'], 'hold')
+
     def test_source_receipt_and_links_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"

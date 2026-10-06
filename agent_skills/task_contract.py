@@ -1,7 +1,9 @@
 """Pure task packets and milestone checks; no dispatch, polling, or external writes."""
 import hashlib
+from pathlib import Path
 import json
 import re
+import struct
 
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 MILESTONES = {"blocker-cleared", "verified-commit", "verified-deploy",
@@ -18,6 +20,29 @@ def _words(values, name, *, nonempty=False):
         raise ValueError(f"{name} must be a short string list")
 
 
+def _binding(value):
+    if not isinstance(value, dict) or not {"surface", "fixture", "environment", "candidate", "artifact_kinds"} <= set(value) or not set(value) <= {
+            "surface", "fixture", "environment", "candidate", "artifact_kinds",
+            "production_reference_sha256", "coverage_ids"}:
+        return False
+    if not all(isinstance(value[k], str) and value[k].strip() for k in
+               ("surface", "fixture", "environment", "candidate")):
+        return False
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value["candidate"]):
+        return False
+    kinds = value["artifact_kinds"]
+    if not isinstance(kinds, list) or not kinds or not all(
+            isinstance(k, str) and k.strip() for k in kinds) or len(kinds) != len(set(kinds)):
+        return False
+    if "coverage_ids" in value:
+        ids = value["coverage_ids"]
+        if not isinstance(ids, list) or not ids or not all(isinstance(x, str) and x.strip() for x in ids) or len(ids) != len(set(ids)):
+            return False
+    return "production_reference_sha256" not in value or (
+        isinstance(value["production_reference_sha256"], str) and bool(re.fullmatch(
+            r"[0-9a-f]{64}", value["production_reference_sha256"])))
+
+
 def packet(*, task_id, revision, owner, scope, exclusions, baseline, deliverables,
            acceptance, context_refs, source_hashes, package_hashes,
            stop_conditions, escalation_conditions):
@@ -32,9 +57,10 @@ def packet(*, task_id, revision, owner, scope, exclusions, baseline, deliverable
                                    ("escalation_conditions", escalation_conditions, True)):
         _words(values, name, nonempty=required)
     if (not isinstance(acceptance, list) or not acceptance or
-            any(not isinstance(x, dict) or set(x) != {"id", "check"} or
+            any(not isinstance(x, dict) or set(x) not in ({"id", "check"}, {"id", "check", "evidence_binding"}) or
                 not isinstance(x["id"], str) or not ID.fullmatch(x["id"]) or
-                not isinstance(x["check"], str) or not x["check"].strip() for x in acceptance) or
+                not isinstance(x["check"], str) or not x["check"].strip() or
+                ("evidence_binding" in x and not _binding(x["evidence_binding"])) for x in acceptance) or
             len({x["id"] for x in acceptance}) != len(acceptance)):
         raise ValueError("unique acceptance criteria required")
     for hashes in (source_hashes, package_hashes):
@@ -121,20 +147,82 @@ def resume_check(value, saved, *, current_revision, sources_fresh, canceled=Fals
     return {"decision": "eligible-for-owner-review", "next_safe_action": saved["next_safe_action"]}
 
 
-def assess_completion(value, report):
+def _artifact_hash(root, reference):
+    if not isinstance(reference, str) or not reference or Path(reference).is_absolute() or '..' in Path(reference).parts:
+        return None
+    path = root / reference
+    if path.is_symlink() or not path.resolve(strict=False).is_relative_to(root) or not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _png_image(root, reference):
+    if _artifact_hash(root, reference) is None:
+        return False
+    data = (root / reference).read_bytes()
+    return (len(data) >= 33 and data[:8] == b'\x89PNG\r\n\x1a\n' and
+            data[12:16] == b'IHDR' and
+            all(n > 0 for n in struct.unpack('>II', data[16:24])) and
+            data[25] in (0, 2, 3, 4, 6) and data[26] == 0)
+
+
+def assess_completion(value, report, verifier_report=None, *, artifact_root=None):
     """Evidence complete is not human acceptance, deployment, or verified live behavior."""
     validate_packet(value)
+    if not isinstance(report, dict):
+        return {"status": "claimed-unverified", "missing": [c["id"] for c in value["acceptance"]]}
     if (report.get("task_id"), report.get("revision"), report.get("packet_sha256")) != (
             value["task_id"], value["revision"], value["packet_sha256"]):
         return {"status": "stale-or-foreign", "missing": []}
     evidence = report.get("criterion_evidence")
     if not isinstance(evidence, dict):
         evidence = {}
+    root = Path(artifact_root).resolve() if artifact_root is not None else None
     missing = []
     for criterion in value["acceptance"]:
         item = evidence.get(criterion["id"])
         if not isinstance(item, dict) or not all(item.get(k) for k in (
                 "reference", "check_result", "commit", "environment")) or item.get("check_result") != "pass":
+            missing.append(criterion["id"])
+            continue
+        binding = criterion.get("evidence_binding")
+        reviewed = verifier_report if isinstance(verifier_report, dict) else {}
+        verified = reviewed.get("criterion_evidence")
+        verified = verified.get(criterion["id"]) if isinstance(verified, dict) else None
+        hashes = item.get("artifact_hashes")
+        hashes = hashes if isinstance(hashes, dict) else {}
+        paths = item.get("artifacts")
+        paths = paths if isinstance(paths, dict) else {}
+        if binding and (root is None or
+                        any(_artifact_hash(root, paths.get(kind)) != hashes.get(kind)
+                            for kind in binding["artifact_kinds"]) or
+                        any("screenshot" in kind and not _png_image(root, paths.get(kind))
+                            for kind in binding["artifact_kinds"]) or
+                        ("production_reference_sha256" in binding and
+                         _artifact_hash(root, item.get("production_reference")) !=
+                         binding["production_reference_sha256"]) or
+                        not isinstance(verified, dict) or
+                        verified.get("inspection_result") != "pass" or
+                        not verified.get("inspector") or
+                        verified.get("artifact_hashes") != hashes or
+                        verified.get("artifacts") != paths or
+                        ("coverage_ids" in binding and verified.get("observed_coverage_ids") != binding["coverage_ids"]) or
+                        any(verified.get(key) != binding[key] for key in
+                            ("surface", "fixture", "environment")) or
+                        verified.get("candidate") != binding["candidate"] or
+                        ("production_reference_sha256" in binding and
+                         verified.get("production_reference_sha256") != binding["production_reference_sha256"]) or
+                        (reviewed.get("task_id"), reviewed.get("revision"),
+                         reviewed.get("packet_sha256")) !=
+                        (value["task_id"], value["revision"], value["packet_sha256"]) or any(item.get(key) != binding[key] for key in
+                            ("surface", "fixture", "environment")) or
+                        item.get("commit") != binding["candidate"] or
+                        any(hashes.get(kind) is None or
+                            not isinstance(hashes[kind], str) or
+                            not re.fullmatch(r"[0-9a-f]{64}", hashes[kind])
+                            for kind in binding["artifact_kinds"]) or
+                        ("production_reference_sha256" in binding and
+                         item.get("production_reference_sha256") != binding["production_reference_sha256"])):
             missing.append(criterion["id"])
     return {"status": "evidence-complete-awaiting-acceptance" if not missing else "claimed-unverified",
             "missing": missing, "unverified_limits": report.get("unverified_limits", [])}

@@ -7,6 +7,7 @@ One JSON file per task under `~/.local/state/claude-skills/assistant/tasks/` (ov
 - `task_id` (stable; letters, digits, `._-`) and `work_item` (the same key the assistant thread uses);
 - `worker` {kind, session_id, owner, state};
 - `repo`, `worktree`, `source_thread`;
+- optional pinned `acceptance_packet` and its criterion evidence assessment;
 - `status`, `evidence` {commit, tests, summary}, `pending_decision`, `approvals` [{action, scope, ts}];
 - `outbox` (dispatch receipts), `seen` (event ids), `last_change_ts`, `history` (outcomes only), `counts` (duplicate receipts, repeated asks).
 
@@ -47,6 +48,8 @@ The worker compares the evidence to the proposed action and current task state, 
 
 ## Dispatch
 Preflight before `begin_dispatch`: confirm one sentence for the goal and one for the exact owner/target; read the current task record and applicable runbook, recording its path/revision and the route already prescribed; list authorized actions with their source, exclusions, and an observable done-when check. If any item is unknown, resolve it before launch or explicitly task the worker with finding that item within the approved scope. Do not substitute a generic preflight for a documented next route.
+
+When a task has a pinned acceptance packet, pass it as `acceptance_packet` to `new_task` at admission and set `worktree` to the artifact root. Use `bind_packet` for a revised packet; it clears prior evidence. For packet-backed work, the independent verifier opens the actual artifacts and supplies a packet-matched inspection report with the exact surface, fixture, environment, candidate and artifact hashes before `ready`; `tests_passed` alone cannot close it.
 
 1. Before any launch, `begin_dispatch` marks it `uncertain` and persists it. Any dispatch on a human-owned record is refused.
 2. Each dispatch id is new. Launch through an adapter, then feed `workers.events(...)` to `receive`.

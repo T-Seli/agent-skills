@@ -14,6 +14,8 @@ from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
 
+from agent_skills.task_contract import assess_completion, digest, validate_packet
+
 STATUSES = ("delivered", "accepted", "running", "blocked", "awaiting-worker", "ready-for-review", "verified-done")
 # kind: (allowed sources, statuses it may leave, status it enters)
 MOVES = {
@@ -22,7 +24,7 @@ MOVES = {
     "running": ({"adapter", "worker"}, {"delivered", "accepted", "awaiting-worker"}, "running"),
     "blocked": ({"adapter", "worker"}, {"delivered", "accepted", "running", "awaiting-worker"}, "blocked"),
     "decided": ({"user"}, {"blocked"}, "awaiting-worker"),
-    "ready": ({"worker"}, {"delivered", "accepted", "running", "awaiting-worker"}, "ready-for-review"),
+    "ready": ({"worker", "verifier"}, {"delivered", "accepted", "running", "awaiting-worker"}, "ready-for-review"),
     "verified": ({"user", "verifier"}, {"ready-for-review"}, "verified-done"),
     "reopen": ({"user", "verifier"}, {"ready-for-review", "verified-done"}, "running"),
 }
@@ -35,15 +37,38 @@ AI_MARK = re.compile(r"(claude|codex|assistant|\bbot|\bai\b)", re.I)
 CLOCK_LEEWAY = 300  # seconds an event may be ahead of this machine's clock
 
 
-def new_task(task_id, work_item, *, worker_kind, owner, repo, worktree=None, source_thread=None):
+def new_task(task_id, work_item, *, worker_kind, owner, repo, worktree=None, source_thread=None, acceptance_packet=None):
     """A fresh record; `owner` is "assistant" (this layer started it) or "human" (never driven)."""
     if owner not in ("assistant", "human"):
         raise ValueError(f"owner must be assistant or human, got {owner!r}")
+    if acceptance_packet is not None:
+        validate_packet(acceptance_packet)
+        if acceptance_packet["task_id"] != task_id:
+            raise ValueError("acceptance packet belongs to another task")
     return {"task_id": task_id, "work_item": work_item, "status": None,
             "worker": {"kind": worker_kind, "session_id": None, "owner": owner, "state": "unknown"},
             "repo": repo, "worktree": worktree, "source_thread": source_thread,
-            "evidence": None, "pending_decision": None, "approvals": [], "outbox": [],
+            "evidence": None, "acceptance_packet": acceptance_packet, "pending_decision": None, "approvals": [], "outbox": [],
             "seen": [], "last_change_ts": None, "history": [], "counts": {"duplicates": 0, "unneeded_asks": 0}}
+
+
+def bind_packet(record, value):
+    """Attach a pinned acceptance envelope; a new revision invalidates old readiness."""
+    validate_packet(value)
+    if value["task_id"] != record["task_id"]:
+        raise ValueError("acceptance packet belongs to another task")
+    r = copy.deepcopy(record)
+    previous = r.get("acceptance_packet")
+    if previous and previous["packet_sha256"] != value["packet_sha256"]:
+        r["evidence"] = None
+        r["acceptance_assessment"] = None
+        r["acceptance_completion_report"] = None
+        r["acceptance_review_sha256"] = None
+        if r["status"] in ("ready-for-review", "verified-done"):
+            r["status"] = "awaiting-worker"
+            r["resume_after"] = len(r["outbox"])
+    r["acceptance_packet"] = value
+    return r
 
 
 def _from_user(data):
@@ -121,6 +146,16 @@ def _apply(r, kind, source, data, ts, event_id):
         for o in r["outbox"][r.get("resume_after", len(r["outbox"])):]
     ):
         return "unsupported"  # require this report's current resume receipt
+    packet = r.get("acceptance_packet")
+    if kind == "ready" and packet:
+        if source != "verifier" or not isinstance(data.get("completion_report"), dict) or not isinstance(data.get("verifier_report"), dict):
+            return "unsupported"
+        assessment = assess_completion(packet, data["completion_report"], data["verifier_report"],
+                                       artifact_root=r.get("worktree"))
+        if (assessment["status"] != "evidence-complete-awaiting-acceptance" or
+                any(c.get("evidence_binding") and c["evidence_binding"]["candidate"] != data.get("commit")
+                    for c in packet["acceptance"])):
+            return "unsupported"
     if kind == "ready" and not (data.get("commit") and data.get("tests")):
         return "unsupported"  # a completion claim without a commit and tests is not ready for review
     if kind == "decided":
@@ -131,6 +166,13 @@ def _apply(r, kind, source, data, ts, event_id):
                 return "rejected"
         elif data.get("action") or data.get("target"):
             return "rejected"  # an answer (a no, a redirect, "name the target first") names nothing to approve
+    if kind == "verified" and packet:
+        if (source != "verifier" or not isinstance(data.get("verifier_report"), dict) or
+                digest(data["verifier_report"]) != r.get("acceptance_review_sha256") or
+                (r.get("acceptance_assessment") or {}).get("status") != "evidence-complete-awaiting-acceptance" or
+                assess_completion(packet, r.get("acceptance_completion_report"), data["verifier_report"],
+                                  artifact_root=r.get("worktree"))["status"] != "evidence-complete-awaiting-acceptance"):
+            return "unsupported"
     if kind == "verified":
         ev = r["evidence"] or {}
         if data.get("commit") != ev.get("commit") or data.get("tests_passed") is not True:
@@ -151,10 +193,17 @@ def _apply(r, kind, source, data, ts, event_id):
                                    "scope": "the pending decision", "ts": str(ts)})
         r["pending_decision"] = None
         r["resume_after"] = len(r["outbox"])  # only a later resume receipt can prove new execution
+    if kind == "ready" and packet:
+        r["acceptance_assessment"] = assessment
+        r["acceptance_completion_report"] = data["completion_report"]
+        r["acceptance_review_sha256"] = digest(data["verifier_report"])
     if kind == "ready":
         r["evidence"] = {k: data.get(k) for k in ("commit", "tests", "summary")}
     if kind == "reopen":
         r["evidence"] = None
+        r["acceptance_assessment"] = None
+        r["acceptance_completion_report"] = None
+        r["acceptance_review_sha256"] = None
     r["status"], r["last_change_ts"] = enters, str(ts)
     return "applied"
 

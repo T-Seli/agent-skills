@@ -17,6 +17,7 @@ REPORT_SCHEMA = {
         "tests": {"type": "string"}, "need": {"type": "string"},
         # For a blocked report: the exact action and target the user would approve.
         "action": {"type": "string"}, "target": {"type": "string"},
+        "completion_report": {"type": "object"},
     },
 }
 
@@ -105,7 +106,7 @@ def events(task_id, dispatch_id, parsed, started, finished):
         out.append({"id": f"{dispatch_id}:no-report", "task": task_id, "ts": finished, "source": "adapter", "kind": "idle"})
         return out
     digest = hashlib.sha256(json.dumps(rep, sort_keys=True).encode()).hexdigest()[:16]
-    data = {k: rep.get(k) or None for k in ("commit", "tests", "summary", "need", "action", "target")}
+    data = {k: rep.get(k) or None for k in ("commit", "tests", "summary", "need", "action", "target", "completion_report")}
     out.append({"id": f"{dispatch_id}:{sid}:{digest}", "task": task_id, "ts": finished, "source": "worker",
                 "kind": rep["status"], "data": data})
     return out

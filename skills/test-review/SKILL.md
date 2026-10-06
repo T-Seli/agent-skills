@@ -37,7 +37,7 @@ Temp worktrees (contracts.md): first `git worktree prune` and remove leftovers. 
 Check each commit (skip record commits) against its intent and callers. Up to `Parallel sub-agents` `scout`s get the range, the intents and § Blockers verbatim, and return only blockers (≤150 words, `<short sha> <path:line> — what breaks, for whom — fix`, or "none"):
 - **Callers** (always): callers and consumers of every changed symbol, signature, return shape, table, field or config key; return those the change breaks and any second path for the same data it missed.
 - **Safety** (blockers 3–4) and **Scope** (blockers 2, 5, 6): for a range over `Review fan-out above`; smaller, check these yourself.
-Open each returned line; keep only listed blockers you can show.
+Open each returned line; keep only listed blockers you can show. For visual acceptance, inspect the exact fixture and whole requested surface against the production reference; metadata or an HTTP success is not artifact proof.
 
 ## Blockers
 Report only these: no nice-to-haves, style, refactor or dedupe suggestions, no "consider". Unsure whether it is a blocker? It is not: drop it. Greps run over `ADDED` = `git diff -U0 $BASE <head> -- ':(top,exclude)<tasks>' | grep '^+[^+]'`, minus test paths, docs and fixtures; a hit is a lead until you open the line.

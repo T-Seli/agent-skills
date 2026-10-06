@@ -10,8 +10,9 @@ def handoff_gate(packet, saved, *, current_revision, sources_fresh, canceled=Fal
                         sources_fresh=sources_fresh, canceled=canceled)
 
 
-def completion_gate(packet, report, *, owner_verified=False, human_accepted=False):
-    evidence = assess_completion(packet, report)
+def completion_gate(packet, report, *, verifier_report=None, artifact_root=None,
+                    owner_verified=False, human_accepted=False):
+    evidence = assess_completion(packet, report, verifier_report, artifact_root=artifact_root)
     if evidence["status"] != "evidence-complete-awaiting-acceptance":
         return {**evidence, "decision": "hold"}
     if not owner_verified or not human_accepted:

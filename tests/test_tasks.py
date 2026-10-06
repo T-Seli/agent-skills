@@ -1,4 +1,7 @@
 import importlib.util
+import hashlib
+import struct
+import zlib
 import json
 import subprocess
 import sys
@@ -407,3 +410,113 @@ class DispatchIdentityTests(unittest.TestCase):
         r = t.begin_dispatch(r, 'uncertain', resume=True)
         messages = [message for _, message in t.attention([r])]
         self.assertEqual(messages, ['dispatch uncertain: reconcile before resending'])
+
+class PacketBackedAcceptanceTests(unittest.TestCase):
+    @staticmethod
+    def png():
+        def chunk(kind, data):
+            return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+        return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 3, 1, 8, 2, 0, 0, 0)) +
+                chunk(b'IDAT', zlib.compress(b'\x00' + b'\x00\x00\x00' * 3)) + chunk(b'IEND', b''))
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        for name in ('timeline-screenshot', 'header-screenshot', 'baseline.png'):
+            (self.root / name).write_bytes(self.png())
+
+    def sha(self, name):
+        return hashlib.sha256((self.root / name).read_bytes()).hexdigest()
+
+    def packet(self):
+        from agent_skills.task_contract import packet
+        return packet(task_id=TASK, revision=2, owner='worker-1', scope='Dropped call timeline',
+            exclusions=['deployment'], baseline='production visual', deliverables=['timeline', 'header'],
+            acceptance=[{'id': key, 'check': key, 'evidence_binding': {
+                'surface': surface, 'fixture': 'call-42 dropped', 'environment': 'local',
+                'candidate': 'b' * 40, 'artifact_kinds': [kind],
+                **({'coverage_ids': ['lead', 'alert', 'drop']} if key == 'timeline' else {}),
+                **({'production_reference_sha256': self.sha('baseline.png')} if key == 'header' else {})}}
+                for key, surface, kind in [('timeline', 'lead-alert-drop rows', 'timeline-screenshot'),
+                                           ('header', 'timeline header', 'header-screenshot')]],
+            context_refs=[], source_hashes={'source': 'a' * 64}, package_hashes={'source': 'a' * 64},
+            stop_conditions=['changed'], escalation_conditions=['blocked'])
+
+    def reports(self, packet):
+        evidence = {}
+        inspected = {}
+        for criterion in packet['acceptance']:
+            b = criterion['evidence_binding']
+            hashes = {kind: self.sha(kind) for kind in b['artifact_kinds']}
+            evidence[criterion['id']] = {'reference': criterion['id'] + '.png',
+                'check_result': 'pass', 'commit': b['candidate'], 'environment': b['environment'],
+                'surface': b['surface'], 'fixture': b['fixture'], 'artifact_hashes': hashes,
+                'artifacts': {kind: kind for kind in b['artifact_kinds']},
+                **({'production_reference': 'baseline.png'} if criterion['id'] == 'header' else {}),
+                **({'production_reference_sha256': b['production_reference_sha256']}
+                   if 'production_reference_sha256' in b else {})}
+            inspected[criterion['id']] = {'inspector': 'verifier-1', 'inspection_result': 'pass',
+                                          'artifact_hashes': hashes, 'surface': b['surface'],
+                                          'artifacts': {kind: kind for kind in b['artifact_kinds']},
+                                          **({'observed_coverage_ids': b['coverage_ids']} if 'coverage_ids' in b else {}),
+                                          'fixture': b['fixture'], 'environment': b['environment'],
+                                          'candidate': b['candidate'],
+                                          **({'production_reference_sha256': b['production_reference_sha256']}
+                                             if 'production_reference_sha256' in b else {})}
+        envelope = {'task_id': packet['task_id'], 'revision': packet['revision'],
+                    'packet_sha256': packet['packet_sha256']}
+        return ({**envelope, 'criterion_evidence': evidence},
+                {**envelope, 'criterion_evidence': inspected})
+
+    def test_packet_readiness_needs_every_criterion_and_verifier_inspection(self):
+        value = self.packet()
+        r = t.new_task(TASK, 'demo', worker_kind='claude', owner='assistant', repo='repo',
+                       worktree=str(self.root), acceptance_packet=value)
+        r, _ = t.apply(r, ev('d', 1, 'adapter', 'dispatched'))
+        report, inspection = self.reports(value)
+        ready = ev('y', 2, 'worker', 'ready', **READY, completion_report=report)
+        self.assertEqual(t.apply(r, ready)[1], 'unsupported')
+        missing = {**report, 'criterion_evidence': {'timeline': report['criterion_evidence']['timeline']}}
+        self.assertEqual(t.apply(r, ev('v0', 2, 'verifier', 'ready', **{**READY, 'commit': 'b' * 40},
+                                      completion_report=missing,
+                                      verifier_report=inspection))[1], 'unsupported')
+        r, outcome = t.apply(r, ev('v1', 2, 'verifier', 'ready', **{**READY, 'commit': 'b' * 40},
+                                   completion_report=report,
+                                   verifier_report=inspection))
+        self.assertEqual((outcome, r['status'], r['acceptance_assessment']['status']),
+                         ('applied', 'ready-for-review', 'evidence-complete-awaiting-acceptance'))
+        self.assertEqual(t.apply(r, ev('shortcut', 3, 'verifier', 'verified',
+                                      commit='b' * 40, tests_passed=True))[1], 'unsupported')
+        (self.root / 'timeline-screenshot').write_bytes(b'changed after ready')
+        self.assertEqual(t.apply(r, ev('changed', 3, 'verifier', 'verified',
+                                      commit='b' * 40, tests_passed=True,
+                                      verifier_report=inspection))[1], 'unsupported')
+        (self.root / 'timeline-screenshot').write_bytes(self.png())
+        self.assertEqual(t.apply(r, ev('verified', 3, 'verifier', 'verified',
+                                      commit='b' * 40, tests_passed=True,
+                                      verifier_report=inspection))[1], 'applied')
+
+    def test_new_packet_revision_clears_old_evidence(self):
+        value = self.packet()
+        r = t.new_task(TASK, 'demo', worker_kind='claude', owner='assistant', repo='repo',
+                       worktree=str(self.root), acceptance_packet=value)
+        r['status'] = 'ready-for-review'
+        r['evidence'] = {'commit': 'b' * 40, 'tests': 'passed'}
+        r['acceptance_assessment'] = {'status': 'evidence-complete-awaiting-acceptance'}
+        newer = {**value, 'revision': 3}
+        from agent_skills.task_contract import packet
+        newer = packet(task_id=TASK, revision=3, owner='worker-1', scope='Dropped call timeline',
+            exclusions=['deployment'], baseline='production visual', deliverables=['timeline', 'header'],
+            acceptance=value['acceptance'], context_refs=[], source_hashes={'source': 'a' * 64},
+            package_hashes={'source': 'a' * 64}, stop_conditions=['changed'], escalation_conditions=['blocked'])
+        r = t.bind_packet(r, newer)
+        self.assertIsNone(r['evidence'])
+        self.assertIsNone(r['acceptance_assessment'])
+        self.assertNotEqual(r['status'], 'ready-for-review')
+        old_report, old_inspection = self.reports(value)
+        r['status'] = 'running'
+        self.assertEqual(t.apply(r, ev('old-envelope', 4, 'verifier', 'ready',
+                                      commit='b' * 40, tests='passed',
+                                      completion_report=old_report,
+                                      verifier_report=old_inspection))[1], 'unsupported')
