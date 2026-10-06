@@ -18,7 +18,7 @@ Decide one thing: is this ready to deploy? Strictly read-only: no code or test e
 - Branch flow, a branch or a PR: `BASE=$(git merge-base UP <head>)` (a PR: its own base in place of `<base>`).
 - Trunk flow (`HEAD` on `<base>`): `BASE` = the sha in the newest `deploy:` heading of any task or draft log; else `origin/<base>`; else the newest `Reviewed:` sha, so the range starts at the first commit after it; none: ask for a range and stop.
 
-Empty: say so and stop. Uncommitted changes are not reviewed. PR targets need the git host CLI from CLAUDE.md § Map (read the PR, fetch its head); no CLI: review the branch if it exists here.
+Empty committed range with no worktree changes: say so and stop. A worktree source candidate needs a complete manifest before review: run `python3 -m agent_skills.safeguard_cli manifest <repo> --include <each new source path> --exclude-private <each private untracked path>`. Resolve every untracked name explicitly; nonzero exit blocks review. Record its digest and rerun immediately before approval or release; any change invalidates review. A worktree review is provisional until the exact source is committed and reviewed. Never read private payloads into the manifest. PR targets need the git host CLI from CLAUDE.md § Map (read the PR, fetch its head); no CLI: review the branch if it exists here.
 Intent per commit: its action item in `TASK/action-items.md` (the log's `implement: <item>` entry names its sha); else the PR body; else the commit message. No approved plan: blocker 6 is skipped.
 
 **Tests mode** (`/test-review tests`): run **Tests** only, then reply with the report's Tests line. No commit review, verdict, log or chain.
