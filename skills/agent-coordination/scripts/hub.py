@@ -5,13 +5,15 @@ title, plain status, latest result, the next decision, owner and a link. Ids, co
 in a details reply. Status text grants nothing: approvals come only through tasks.apply.
 """
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from tasks import approved, pending  # noqa: E402
+from tasks import approved, approved_parts, pending  # noqa: E402
 from nav import checked as checked_session, session_details, session_line, thread_line, trusted  # noqa: E402
+from agent_skills.approval_handoff import matching_platform_terms, valid_approval_parts
 
 PLAIN = ("Needs you", "In progress", "Monitoring", "Waiting on someone", "Done")
 NOTHING = "Nothing needed from you"
@@ -68,6 +70,47 @@ def material_from_record(record, *, progress, progress_state, where):
                            need_from_user=action if need else "None")
 
 
+def direct_approval_handoff(*, record, session, allowed_hosts, surface, surface_link_receipt, platform_terms,
+                            reason, route, previous_fingerprint):
+    """Prepare one direct-confirmation handoff; the caller verifies the link on the user's surface and sends it."""
+    if route != "handoff-direct-confirmation":
+        return {"decision": "platform-denial" if route == "stop-and-report-platform-denial" else route}
+    p = pending(record)
+    parts = p.get("parts")
+    if (record.get("status") != "blocked" or not valid_approval_parts(parts) or
+            (parts[0]["action"], parts[0]["target"]) != (p["action"], p["target"]) or
+            not clean(surface) or not clean(reason)):
+        raise ValueError("exact blocked task, approval terms and verified user surface required")
+    ref = checked_session(session, clean, allowed_hosts)
+    url = trusted(session.get("url"), allowed_hosts)
+    if (ref["id"] != record.get("worker", {}).get("session_id") or not url or
+            ref["url"] != url or session["url"]["receipt"]["source"] != "platform"):
+        raise ValueError("a verified link to this task's session is required")
+    if not matching_platform_terms(platform_terms, task_id=record["task_id"],
+                                   session_id=ref["id"], parts=parts):
+        raise ValueError("pending terms must match this task's platform read")
+    if (not isinstance(surface_link_receipt, dict) or
+            set(surface_link_receipt) != {"surface", "url", "source_ref", "verified"} or
+            surface_link_receipt["verified"] is not True or
+            surface_link_receipt["surface"] != surface or surface_link_receipt["url"] != url or
+            not clean(surface_link_receipt["source_ref"])):
+        raise ValueError("verify this exact link on the user's surface before routing")
+    identity = {"task": record["task_id"], "session": ref["id"], "url": url,
+                "parts": parts, "reason": reason, "surface": surface}
+    fp = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    if fp == previous_fingerprint:
+        return {"decision": "already-routed", "fingerprint": fp}
+    asks = "\n".join(f"{i}. {clean(item['wording'])} Action {exact(item['action'])}; "
+                     f"target {exact(item['target'])}; scope {exact(item['scope'])}."
+                     for i, item in enumerate(parts, 1))
+    body = (f"Direct confirmation needed for task {clean(record['task_id'])}.\n"
+            f"Open task session in {ref['app']}: <{url}|Open session>\n"
+            f"Reason: {clean(reason)}\n{asks}\n"
+            "Next owner/action: You answer in that task session; the orchestrator checks the direct reply "
+            "and platform admission before resuming. Work remains blocked until then.")
+    return {"decision": "send-handoff", "fingerprint": fp, "body": body}
+
+
 def exact(text):
     """An action or target shown verbatim in inline code, so markup can't change what is approved."""
     text = clean(text)
@@ -82,6 +125,8 @@ def _user_need(record):
     if (record.get("worker") or {}).get("owner") not in {"assistant", "human"}:
         return False
     p = pending(record)
+    if p.get("parts"):
+        return not approved_parts(record, p["parts"])
     if p["action"] and p["target"]:
         return not approved(record, p["action"], p["target"])
     return bool(p["need"] and p["need"] != "unspecified")

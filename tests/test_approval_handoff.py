@@ -1,7 +1,8 @@
 import unittest
 
 from agent_skills.approval_handoff import (authorization_check, retry_after_denial,
-                                          transcript_evidence, worker_handoff)
+                                          transcript_evidence, worker_handoff,
+                                          direct_confirmation_route, terms_from_platform_response)
 
 
 def approval():
@@ -14,6 +15,34 @@ def approval():
 
 
 class ApprovalHandoffTests(unittest.TestCase):
+    def test_platform_pending_terms_are_extracted_without_retaining_raw_response(self):
+        import json
+        parts = [{'action': 'deploy', 'target': 'production', 'scope': 'one commit',
+                  'wording': 'Approve deployment?'}]
+        raw = json.dumps({'task': {'id': 'task-7', 'session': 'session-1', 'pending': parts},
+                          'unrelated_private_data': 'never retain'})
+        result = terms_from_platform_response(raw, task_field='task.id',
+                    session_field='task.session', parts_field='task.pending', source_ref='platform-read:fixture')
+        self.assertEqual(result['parts'], parts)
+        self.assertNotIn('never retain', repr(result))
+        with self.assertRaises(ValueError):
+            terms_from_platform_response(raw, task_field='task.id', session_field='task.session',
+                                         parts_field='task.missing', source_ref='platform-read:fixture')
+
+    def test_direct_route_follows_failed_relay_but_preserves_one_evidence_retry(self):
+        base = dict(denial_reason='missing-authorization', evidence_check='covered-by-original-user-message',
+                    prior_evidence_retries=0, direct_confirmation_required=True, verified_relay_failed=True,
+                    new_sufficient_evidence=True)
+        self.assertEqual(direct_confirmation_route(**base), 'retry-once-with-transcript-evidence')
+        self.assertEqual(direct_confirmation_route(**{**base, 'prior_evidence_retries': 1}),
+                         'handoff-direct-confirmation')
+        self.assertEqual(direct_confirmation_route(**{**base, 'new_sufficient_evidence': False}),
+                         'handoff-direct-confirmation')
+        self.assertEqual(direct_confirmation_route(**{**base, 'verified_relay_failed': False,
+                                                       'prior_evidence_retries': 1}), 'stop-and-report-platform-denial')
+        self.assertEqual(direct_confirmation_route(**{**base, 'denial_reason': 'policy-denied',
+                                                       'prior_evidence_retries': 1}), 'stop-and-report-platform-denial')
+
     def check(self, evidence, **changes):
         return authorization_check(evidence, **{**dict(task_id="task-7", revision=2,
             action="deploy", target="staging", scope="revision 2",

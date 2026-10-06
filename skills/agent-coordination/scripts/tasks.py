@@ -15,6 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from agent_skills.task_contract import assess_completion, digest, validate_packet
+from agent_skills.approval_handoff import valid_approval_parts
 
 STATUSES = ("delivered", "accepted", "running", "blocked", "awaiting-worker", "ready-for-review", "verified-done")
 # kind: (allowed sources, statuses it may leave, status it enters)
@@ -78,6 +79,12 @@ def _from_user(data):
     text = unicodedata.normalize("NFKC", data.get("text") or "").strip()
     return (data.get("channel") == "chat" and bool(text) and text[0].isalnum() and text[0].isascii()
             and not AI_MARK.search(text[:40]))
+
+
+def direct_reply_observation(record, *, task_id, session_id):
+    """Identify a reply's task; observation never authenticates the author or admits approval."""
+    return ("reply-in-task-needs-verification" if task_id == record["task_id"] and session_id and
+            session_id == record["worker"].get("session_id") else "other-task")
 
 
 def apply(record, event):
@@ -164,6 +171,8 @@ def _apply(r, kind, source, data, ts, event_id):
             # An approval: both must have been asked, and the yes must name both exactly.
             if not (p["action"] and p["target"]) or (data.get("action"), data.get("target")) != (p["action"], p["target"]):
                 return "rejected"
+            if p.get("parts") and not approved_parts(r, p["parts"]):
+                return "rejected"  # no positive decision until every distinct scope is authenticated
         elif data.get("action") or data.get("target"):
             return "rejected"  # an answer (a no, a redirect, "name the target first") names nothing to approve
     if kind == "verified" and packet:
@@ -180,8 +189,14 @@ def _apply(r, kind, source, data, ts, event_id):
     if kind == "dispatched" and data.get("session_id"):
         r["worker"]["session_id"] = data["session_id"]
     if kind == "blocked":
+        parts = data.get("parts")
+        if parts is not None and (not valid_approval_parts(parts) or
+                                  (parts[0]["action"], parts[0]["target"]) !=
+                                  (data.get("action"), data.get("target"))):
+            return "rejected"
         r["pending_decision"] = {"need": data.get("need") or "unspecified",
-                                 "action": data.get("action"), "target": data.get("target")}
+                                 "action": data.get("action"), "target": data.get("target"),
+                                 **({"parts": copy.deepcopy(parts)} if parts is not None else {})}
         if data.get("action") and approved(r, data["action"], data.get("target")):
             r.setdefault("counts", {}).setdefault("unneeded_asks", 0)
             r["counts"]["unneeded_asks"] += 1  # asked again for something the user already approved
@@ -222,6 +237,14 @@ def approved(record, action, target):
         a.get("action") == action and a.get("target") == target for a in record["approvals"])
 
 
+def approved_parts(record, parts):
+    """Every distinct action, target and scope in the pending direct request was admitted."""
+    return valid_approval_parts(parts) and all(any(
+        (a.get("action"), a.get("target"), a.get("scope")) ==
+        (p["action"], p["target"], p["scope"]) for a in record["approvals"])
+        for p in parts)
+
+
 def begin_dispatch(record, dispatch_id, *, resume):
     """Mark a launch uncertain before it happens; refuses while another is unresolved or the session is human-owned."""
     if record["worker"]["owner"] != "assistant":
@@ -255,7 +278,8 @@ def attention(records):
         uncertain = any(o["state"] == "uncertain" for o in r["outbox"])
         if r["status"] == "blocked" and not uncertain:
             p = pending(r)
-            if (p["action"] and p["target"] or p["need"] not in (None, "unspecified")) and not approved(r, p["action"], p["target"]):
+            satisfied = approved_parts(r, p["parts"]) if p.get("parts") else approved(r, p["action"], p["target"])
+            if (p["action"] and p["target"] or p["need"] not in (None, "unspecified")) and not satisfied:
                 out.append((r["task_id"], f"needs decision: {p['need']}"))
         elif r["status"] == "ready-for-review":
             out.append((r["task_id"], "ready for review: verify the evidence"))

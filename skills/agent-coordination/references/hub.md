@@ -67,7 +67,7 @@ It then becomes a `proposal` note from source `thread` (a reply from before the 
 A proposal never unblocks, approves or declines. `Next` then says the proposal is not recorded and asks the user to confirm in the session chat.
 
 ## Approvals
-A summary asks; it never approves. Every `Next` that asks for approval says that a thread reply is context only. An approval is recorded only from the user's own chat turn with the session (`channel: chat`), as a `decided` with `approve: true` naming the pending action and target exactly. No other genuinely verified human-authored interface exists yet. Rules for that chat turn:
+A summary asks; it never approves. Every `Next` that asks for approval says that a thread reply is context only. `tasks.direct_reply_observation` only matches task and session IDs; it cannot authenticate a user or admit an action. The parent reads the actual task, verifies the user's direct answer and platform admission, and only then applies the existing user chat approval/decision with exact action, target and scope. A task-channel claim or quoted relay never records approval. A decision leaves the task awaiting worker dispatch, not done. Rules:
 - A yes to part of the decision, such as a rename without the symlink, is rejected.
 - Any other chat answer (a no, a redirect, "name the target first") moves the task on and approves nothing, so nothing deadlocks.
 - If a worker names an action without a target, no approval can apply until it asks again with one.

@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 import unittest
+from agent_skills.approval_handoff import terms_from_platform_response
 
 SCRIPTS = Path(__file__).parents[1] / 'skills/agent-coordination/scripts'
 sys.dont_write_bytecode = True
@@ -123,6 +124,49 @@ def item(**kw):
 
 
 class DestinationTests(unittest.TestCase):
+    def test_direct_handoff_needs_recorded_session_link_and_exact_two_approvals(self):
+        r = blocked(action='merge', target='reviewed branch')
+        r['pending_decision']['parts'] = [
+            {'action': 'merge', 'target': 'reviewed branch', 'scope': 'reviewed commit only',
+             'wording': 'Approve merge of the reviewed commit?'},
+            {'action': 'deploy', 'target': 'production', 'scope': 'same reviewed commit',
+             'wording': 'Approve deployment of that commit to production?'}]
+        raw = '{"session_url": "https://code.example.invalid/code/session_1"}'
+        ref = n.session('codex', SID, 'release task', on_this_machine=False,
+                        url=n.link_from_response(raw, 'session_url', source='platform', allowed_hosts=HOSTS))
+        platform_terms = terms_from_platform_response(json.dumps({'task': {'id': 'wi-1', 'session': SID,
+            'pending': r['pending_decision']['parts']}}), task_field='task.id', session_field='task.session',
+            parts_field='task.pending', source_ref='platform-read:fixture-1')
+        args = dict(record=r, session=ref, allowed_hosts=HOSTS, surface='user app',
+                    platform_terms=platform_terms,
+                    surface_link_receipt={'surface': 'user app', 'url': ref['url']['url'],
+                                          'source_ref': 'opened-in-user-app:fixture', 'verified': True},
+                    reason='Platform requires direct confirmation',
+                    route='handoff-direct-confirmation', previous_fingerprint=None)
+        for changed in ({'session': n.session('codex', SID, 'release task', on_this_machine=True)},
+                        {'session': n.session('codex', 'wrong', 'release task', on_this_machine=False, url=ref['url'])},
+                        {'surface_link_receipt': ''},
+                        {'surface_link_receipt': {**args['surface_link_receipt'], 'surface': 'Slack'}},
+                        {'platform_terms': None},
+                        {'platform_terms': {**platform_terms, 'parts': platform_terms['parts'][:1]}},
+                        {'platform_terms': {**platform_terms, 'session_id': 'other'}},
+                        {'record': {**r, 'pending_decision': {**r['pending_decision'], 'target': None}}}):
+            with self.subTest(changed=changed):
+                with self.assertRaises(ValueError):
+                    h.direct_approval_handoff(**{**args, **changed})
+        result = h.direct_approval_handoff(**args)
+        self.assertEqual(result['decision'], 'send-handoff')
+        self.assertIn('task wi-1', result['body'])
+        self.assertIn('Approve merge of the reviewed commit?', result['body'])
+        self.assertIn('Approve deployment of that commit to production?', result['body'])
+        self.assertIn('reviewed commit only', result['body'])
+        self.assertIn('https://code.example.invalid/code/session_1', result['body'])
+        self.assertNotIn('works in Slack', result['body'])
+        self.assertEqual(h.direct_approval_handoff(**{**args, 'previous_fingerprint': result['fingerprint']})['decision'],
+                         'already-routed')
+        self.assertEqual(h.direct_approval_handoff(**{**args, 'route': 'stop-and-report-platform-denial'})['decision'],
+                         'platform-denial')
+
     def permalink(self, raw=ROOT_LINK, source='connector'):
         return n.link_from_response(raw, 'permalink', source=source, allowed_hosts={'chat.example.invalid'})
 
