@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from tasks import pending  # noqa: E402
+from tasks import approved, pending  # noqa: E402
 from nav import checked as checked_session, session_details, session_line, thread_line, trusted  # noqa: E402
 
 PLAIN = ("Needs you", "In progress", "Monitoring", "Waiting on someone", "Done")
@@ -58,6 +58,16 @@ def material_status(*, progress, progress_state, next_action, next_owner, need_k
             f"Need from Thomas: {fields['need_from_user']}")
 
 
+def material_from_record(record, *, progress, progress_state, where):
+    """Bind a material update's owner and user need to the current task evidence."""
+    need = _user_need(record)
+    action = next_step(record, where=where)
+    return material_status(progress=progress, progress_state=progress_state,
+                           next_action=action, next_owner="Thomas" if need else "Orchestrator",
+                           need_kind=("approval" if pending(record)["action"] and pending(record)["target"] else "decision") if need else "none",
+                           need_from_user=action if need else "None")
+
+
 def exact(text):
     """An action or target shown verbatim in inline code, so markup can't change what is approved."""
     text = clean(text)
@@ -66,9 +76,19 @@ def exact(text):
     return f"`{text}`"
 
 
-def plain_status(record, *, monitoring=False, waiting_on=None):
+def _user_need(record):
+    if any(o["state"] == "uncertain" for o in record.get("outbox", [])):
+        return False
+    if (record.get("worker") or {}).get("owner") not in {"assistant", "human"}:
+        return False
     p = pending(record)
-    if p["need"] or p["action"] or p["target"] or record.get("status") == "ready-for-review":
+    if p["action"] and p["target"]:
+        return not approved(record, p["action"], p["target"])
+    return bool(p["need"] and p["need"] != "unspecified")
+
+
+def plain_status(record, *, monitoring=False, waiting_on=None):
+    if _user_need(record):
         return "Needs you"
     if waiting_on:
         return "Waiting on someone"
@@ -85,6 +105,18 @@ def next_step(record, *, where):
     with the session (`where`): workers share the user's messaging account, so a thread reply can't
     prove the user wrote it."""
     p, where = pending(record), clean(where)
+    if any(o["state"] == "uncertain" for o in record.get("outbox", [])):
+        return "Orchestrator: reconcile the uncertain dispatch receipt before retrying."
+    if record.get("status") == "ready-for-review":
+        return "Orchestrator: verify the worker evidence and continue the authorized next step."
+    if any(o["state"] == "not-sent" for o in record.get("outbox", [])) and record.get("status") is None:
+        return "Orchestrator: retry the failed dispatch within the authorized scope."
+    if (record.get("worker") or {}).get("owner") not in {"assistant", "human"}:
+        return "Orchestrator: reconcile task ownership before routing work."
+    if record.get("status") == "awaiting-worker":
+        return "Orchestrator: pass the decision to the worker and confirm the dispatch receipt."
+    if not _user_need(record) and any(p.values()):
+        return "Orchestrator: reconcile the blocker against current evidence and approval."
     if p["action"] and p["target"]:
         prop = record.get("proposal") or {}
         if prop.get("approve") and (prop.get("action"), prop.get("target")) == (p["action"], p["target"]):
@@ -95,8 +127,6 @@ def next_step(record, *, where):
         return f"The worker asked to {exact(p['action'])} without naming a target; tell it to name one, or decline, in {where}."
     if p["need"]:
         return f"{clean(p['need'])} Answer in {where}."
-    if record.get("status") == "ready-for-review":
-        return f"Review the result in {where}."
     return NOTHING
 
 
@@ -169,7 +199,7 @@ def fingerprint(s):
     return hashlib.sha256("\x1f".join(s[k] or "" for k in HUMAN_FIELDS).encode()).hexdigest()[:16]
 
 
-def plan_update(hub, s, *, editable_authors=()):
+def plan_update(hub, s, *, editable_authors=(), material=False):
     """What to do for a new summary: none, post-root, edit-root or reply.
 
     `hub` is the work item's hub state {root_ts, root_author, last_fp}; with no root_ts there is
@@ -177,10 +207,14 @@ def plan_update(hub, s, *, editable_authors=()):
     so a root is never posted twice). An edit is planned only when the root's known author is an
     identity the available tools can edit; otherwise the summary is a reply and the root stays.
     """
+    if hub and hub.get("send_state") == "uncertain":
+        return "reconcile"
     if not hub or not hub.get("root_ts"):
         return "post-root"
     if hub.get("last_fp") == fingerprint(s):
         return "none"
+    if material:
+        return "reply"
     author = hub.get("root_author")
     return "edit-root" if author and author in editable_authors else "reply"
 

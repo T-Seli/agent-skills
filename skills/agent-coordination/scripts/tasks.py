@@ -14,15 +14,15 @@ from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
 
-STATUSES = ("delivered", "accepted", "running", "blocked", "ready-for-review", "verified-done")
+STATUSES = ("delivered", "accepted", "running", "blocked", "awaiting-worker", "ready-for-review", "verified-done")
 # kind: (allowed sources, statuses it may leave, status it enters)
 MOVES = {
     "dispatched": ({"adapter"}, {None}, "delivered"),
     "accepted": ({"adapter", "worker"}, {"delivered"}, "accepted"),
-    "running": ({"adapter", "worker"}, {"delivered", "accepted"}, "running"),
-    "blocked": ({"adapter", "worker"}, {"delivered", "accepted", "running"}, "blocked"),
-    "decided": ({"user"}, {"blocked"}, "running"),
-    "ready": ({"worker"}, {"delivered", "accepted", "running"}, "ready-for-review"),
+    "running": ({"adapter", "worker"}, {"delivered", "accepted", "awaiting-worker"}, "running"),
+    "blocked": ({"adapter", "worker"}, {"delivered", "accepted", "running", "awaiting-worker"}, "blocked"),
+    "decided": ({"user"}, {"blocked"}, "awaiting-worker"),
+    "ready": ({"worker"}, {"delivered", "accepted", "running", "awaiting-worker"}, "ready-for-review"),
     "verified": ({"user", "verifier"}, {"ready-for-review"}, "verified-done"),
     "reopen": ({"user", "verifier"}, {"ready-for-review", "verified-done"}, "running"),
 }
@@ -72,7 +72,7 @@ def apply(record, event):
     ts = _ts(event["ts"])
     r = copy.deepcopy(record)
     kind, source, data = event["kind"], event["source"], event.get("data") or {}
-    outcome = _apply(r, kind, source, data, ts)
+    outcome = _apply(r, kind, source, data, ts, event["id"])
     if outcome in ("applied", "noted"):
         r["seen"].append(event["id"])
     elif any(h["id"] == event["id"] and h["outcome"] == outcome for h in r["history"]):
@@ -89,7 +89,7 @@ def _ts(value):
     return ts
 
 
-def _apply(r, kind, source, data, ts):
+def _apply(r, kind, source, data, ts, event_id):
     if source == "user" and not _from_user(data):
         return "rejected"
     if kind in NOTES:
@@ -116,6 +116,11 @@ def _apply(r, kind, source, data, ts):
         return "stale"
     if source not in sources or r["status"] not in leaves:
         return "ignored"
+    if kind in ("running", "blocked", "ready") and r["status"] == "awaiting-worker" and not any(
+        o["state"] == "sent" and event_id.startswith(o["id"] + ":")
+        for o in r["outbox"][r.get("resume_after", len(r["outbox"])):]
+    ):
+        return "unsupported"  # require this report's current resume receipt
     if kind == "ready" and not (data.get("commit") and data.get("tests")):
         return "unsupported"  # a completion claim without a commit and tests is not ready for review
     if kind == "decided":
@@ -145,6 +150,7 @@ def _apply(r, kind, source, data, ts):
             r["approvals"].append({"action": data["action"], "target": data.get("target"),
                                    "scope": "the pending decision", "ts": str(ts)})
         r["pending_decision"] = None
+        r["resume_after"] = len(r["outbox"])  # only a later resume receipt can prove new execution
     if kind == "ready":
         r["evidence"] = {k: data.get(k) for k in ("commit", "tests", "summary")}
     if kind == "reopen":
@@ -197,13 +203,16 @@ def attention(records):
     """What the user should hear about: decisions, reviews, unavailable workers, unresolved launches."""
     out = []
     for r in records:
-        if r["status"] == "blocked":
-            out.append((r["task_id"], f"needs decision: {pending(r)['need']}"))
+        uncertain = any(o["state"] == "uncertain" for o in r["outbox"])
+        if r["status"] == "blocked" and not uncertain:
+            p = pending(r)
+            if (p["action"] and p["target"] or p["need"] not in (None, "unspecified")) and not approved(r, p["action"], p["target"]):
+                out.append((r["task_id"], f"needs decision: {p['need']}"))
         elif r["status"] == "ready-for-review":
             out.append((r["task_id"], "ready for review: verify the evidence"))
         if r["worker"]["state"] == "unavailable":
             out.append((r["task_id"], "worker unavailable"))
-        if any(o["state"] == "uncertain" for o in r["outbox"]):
+        if uncertain:
             out.append((r["task_id"], "dispatch uncertain: reconcile before resending"))
     return out
 

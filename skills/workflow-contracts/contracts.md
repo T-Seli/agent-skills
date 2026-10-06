@@ -50,7 +50,7 @@ Every skill reads this file first. It is the only home for the names, files, flo
 ## Report
 - Hard caps, in lines: prime-context 10 · blueprint Answer 5, Plan 12 · action-items after blueprint 1 plus decisions, standalone 25 · implement 6 · test-review YES 4, NO 1 per blocker ≤12 · deploy 6 · monitor 8 · agent-coordination 6 · handoff 40 and ≤450 words.
 - Skeleton: the verdict or answer (1 line) · ≤3 facts, each proven or inferred · `Decide:` numbered questions, each with a default · `Next:` one line. Plain words.
-- No status messages while agents work. Wait for every agent before the final report; nothing arrives after it.
+- Report material blockers, decisions and verified readiness promptly in the originating thread; skip routine activity, continue authorized work, and reconcile required results before completion.
 
 ## Git
 - `git fetch` is fine anywhere, given up after about 8s; after a failed fetch, say so and label remote refs as possibly stale.

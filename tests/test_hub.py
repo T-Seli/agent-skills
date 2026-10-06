@@ -66,7 +66,7 @@ class StatusTests(unittest.TestCase):
     def test_plain_statuses(self):
         cases = [(record('running'), {}, 'In progress'),
                  (record('blocked', {'need': '?', 'action': 'a', 'target': 'b'}), {}, 'Needs you'),
-                 (record('ready-for-review'), {}, 'Needs you'),
+                 (record('ready-for-review'), {}, 'In progress'),
                  (record('running'), {'waiting_on': 'the reviewer'}, 'Waiting on someone'),
                  (record('verified-done'), {'monitoring': True}, 'Monitoring'),
                  (record('verified-done'), {}, 'Done')]
@@ -186,8 +186,9 @@ class ReviewRegressionTests(unittest.TestCase):
             self.assertEqual(t.apply(r, dict(e, data=dict({'channel': 'chat', 'text': 'yes'}, **data)))[1], 'rejected', data)
         # the user tells it to name a target: the task moves on, nothing is approved, and it can ask again
         r, o = t.apply(r, dict(e, data={'channel': 'chat', 'text': 'name the target first'}))
-        self.assertEqual((o, r['status'], r['approvals']), ('applied', 'running', []))
-        r, o = t.apply(r, {'id': 'b2', 'task': 'wi-1', 'ts': BASE + 2, 'source': 'worker', 'kind': 'blocked',
+        self.assertEqual((o, r['status'], r['approvals']), ('applied', 'awaiting-worker', []))
+        r = t.settle_dispatch(t.begin_dispatch(r, 'resume-4', resume=True), 'resume-4', 'sent')
+        r, o = t.apply(r, {'id': 'resume-4:s-1:b2', 'task': 'wi-1', 'ts': BASE + 2, 'source': 'worker', 'kind': 'blocked',
                            'data': {'need': '?', 'action': 'publish', 'target': 'draft PR from fix branch'}})
         self.assertEqual((o, h.plain_status(r)), ('applied', 'Needs you'))
         self.assertFalse(t.approved(r, 'publish', None))
@@ -276,3 +277,87 @@ class RealStateTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class MaterialTransitionTests(unittest.TestCase):
+    def test_assistant_owned_review_and_uncertain_dispatch_do_not_need_user(self):
+        ready = record('ready-for-review', evidence={'commit': 'abc1234', 'tests': '12 passed'})
+        self.assertEqual(h.plain_status(ready), 'In progress')
+        self.assertIn('orchestrator', h.next_step(ready, where='chat').lower())
+        uncertain = t.begin_dispatch(record(), 'launch-1', resume=False)
+        self.assertEqual(h.plain_status(uncertain), 'In progress')
+        self.assertIn('reconcile', h.next_step(uncertain, where='chat').lower())
+        self.assertNotIn('approve', h.next_step(uncertain, where='chat').lower())
+
+    def test_existing_approval_and_vague_blocker_are_not_needs_you(self):
+        r = record('blocked', {'need': 'Approve?', 'action': 'publish', 'target': 'branch'})
+        r['approvals'] = [{'action': 'publish', 'target': 'branch'}]
+        self.assertEqual(h.plain_status(r), 'In progress')
+        self.assertIn('orchestrator', h.next_step(r, where='chat').lower())
+        self.assertEqual(h.plain_status(record('blocked', {'need': 'unspecified'})), 'In progress')
+
+    def test_unknown_owner_stays_with_orchestrator(self):
+        r = record('blocked', {'need': 'approve?', 'action': 'publish', 'target': 'branch'})
+        r['worker']['owner'] = 'unknown'
+        self.assertEqual(h.plain_status(r), 'In progress')
+        self.assertIn('reconcile task ownership', h.next_step(r, where='chat'))
+
+    def test_material_reply_overrides_editable_root_and_uncertain_send_reconciles(self):
+        s = summ(record('running'))
+        hub = {'root_ts': '1', 'root_author': 'assistant-bot', 'last_fp': 'old'}
+        self.assertEqual(h.plan_update(hub, s, editable_authors=('assistant-bot',), material=True), 'reply')
+        self.assertEqual(h.plan_update(dict(hub, last_fp=h.fingerprint(s)), s,
+                                       editable_authors=('assistant-bot',), material=True), 'none')
+        self.assertEqual(h.plan_update(dict(hub, send_state='uncertain'), s, material=True), 'reconcile')
+
+class MaterialTraceTests(unittest.TestCase):
+    def test_failed_and_uncertain_start_notify_before_other_work_without_heartbeat(self):
+        events = []
+        r = t.begin_dispatch(record(), 'launch', resume=False)
+        text = h.material_from_record(r, progress='Dispatch receipt uncertain; no execution verified',
+                                      progress_state='unverified', where='the originating thread')
+        events.append(('notify-origin', text))
+        events.append(('other-work', None))
+        self.assertEqual(events[0][0], 'notify-origin')
+        self.assertIn('Need from Thomas: None', text)
+        self.assertIn('reconcile', text.lower())
+        failed = t.settle_dispatch(r, 'launch', 'not-sent')
+        self.assertIn('retry the failed dispatch', h.material_from_record(
+            failed, progress='Launch proven absent', progress_state='performed',
+            where='the originating thread'))
+        self.assertEqual(h.plan_update({'root_ts': '1', 'last_fp': h.fingerprint(summ(record('running')))},
+                                       summ(record('running')), material=True), 'none')
+
+    def test_genuine_user_decision_once_then_orchestrator_owns_next_action(self):
+        r = record('blocked', {'need': 'Which schema?', 'action': 'use schema', 'target': 'A'})
+        before = h.material_from_record(r, progress='Worker asks for schema', progress_state='reported', where='chat')
+        self.assertIn('Owner: Thomas', before)
+        self.assertIn('Need from Thomas: Approve or decline', before)
+        r, outcome = t.apply(r, {'id': 'decision', 'task': 'wi-1', 'ts': BASE + 1,
+                                 'source': 'user', 'kind': 'decided',
+                                 'data': {'channel': 'chat', 'text': 'Use A', 'approve': True,
+                                          'action': 'use schema', 'target': 'A'}})
+        self.assertEqual(outcome, 'applied')
+        after = h.material_from_record(r, progress='Decision recorded; resume pending',
+                                       progress_state='performed', where='chat')
+        self.assertIn('Owner: Orchestrator', after)
+        self.assertIn('Need from Thomas: None', after)
+        self.assertNotIn('running', after.lower())
+        self.assertEqual(t.apply(r, {'id': 'decision', 'task': 'wi-1', 'ts': BASE + 1,
+                                     'source': 'user', 'kind': 'decided', 'data': {}})[1], 'duplicate')
+
+    def test_ready_review_uses_current_evidence_without_user_ask(self):
+        r = record('ready-for-review', evidence={'commit': 'abc1234', 'tests': '12 passed'})
+        text = h.material_from_record(r, progress='Worker reports commit and tests; review pending',
+                                      progress_state='reported', where='chat')
+        self.assertIn('Owner: Orchestrator', text)
+        self.assertIn('Need from Thomas: None', text)
+        self.assertNotIn('Needs you', h.plain_status(r))
+
+class UncertainOwnershipTests(unittest.TestCase):
+    def test_uncertain_dispatch_overrides_pending_user_decision(self):
+        r = t.begin_dispatch(record('blocked', {'need': 'Approve?', 'action': 'publish', 'target': 'branch'}),
+                             'launch', resume=True)
+        text = h.material_from_record(r, progress='Receipt uncertain',
+                                      progress_state='unverified', where='chat')
+        self.assertIn('Owner: Orchestrator', text)
+        self.assertIn('Need from Thomas: None', text)

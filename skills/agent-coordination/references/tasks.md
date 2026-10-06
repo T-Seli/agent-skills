@@ -15,8 +15,9 @@ It holds no message bodies, secrets or personal data. A second record for a task
 ## Statuses
 - `delivered`: launched, with no report yet.
 - `accepted`: the worker took the task.
-- `running`
-- `blocked`: it names `pending_decision` {need, action, target}; `pending(record)` also reads older text-only ones. An approval is a user `decided` with `approve: true` and the exact pending action and target. Any other `decided` is an answer, such as a decline or redirect: it unblocks the task, names no action or target, and records no approval. The resume prompt must pass the user's answer to the worker, including a no.
+- `running`: requires a worker/adapter execution report; after a user decision, the report must name the matching new sent dispatch id before claiming running.
+- `awaiting-worker`: the user decision is recorded; the orchestrator must route it, with no worker execution inferred.
+- `blocked`: it names `pending_decision` {need, action, target}; `pending(record)` also reads older text-only ones. An approval is a user `decided` with `approve: true` and the exact pending action and target. Any other `decided` is an answer, such as a decline or redirect: it moves to `awaiting-worker`, names no action or target, and records no approval. The resume prompt must pass the user's answer to the worker, including a no.
 - `ready-for-review`: the worker gave a commit and tests.
 - `verified-done`: the verifier (your own check) or the user confirmed the same commit with passing tests.
 

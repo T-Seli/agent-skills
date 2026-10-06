@@ -359,7 +359,7 @@ class ThreadReplyTests(unittest.TestCase):
         e = {'id': 'chat-1', 'task': 'wi-1', 'ts': '1790820200', 'source': 'user', 'kind': 'decided',
              'data': dict(CHAT, approve=True, action='publish as a draft PR', target='fix branch, no deployment')}
         r, o = t.apply(r, e)
-        self.assertEqual((o, r['status'], r['proposal']), ('applied', 'running', None))
+        self.assertEqual((o, r['status'], r['proposal']), ('applied', 'awaiting-worker', None))
         self.assertTrue(t.approved(r, 'publish as a draft PR', 'fix branch, no deployment'))
 
     def test_direct_thread_injection_never_decides(self):

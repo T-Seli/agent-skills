@@ -50,10 +50,11 @@ class LifecycleTests(unittest.TestCase):
                     ev('a', 2, 'worker', 'accepted'),
                     ev('r', 3, 'worker', 'running'),
                     ev('b', 4, 'worker', 'blocked', need='pick a schema'),
-                    ev('u', 5, 'user', 'decided', **CHAT),
-                    ev('y', 6, 'worker', 'ready', **READY),
-                    ev('v', 7, 'verifier', 'verified', commit='abc123', tests_passed=True))
-        self.assertEqual(o, ['applied'] * 7)
+                    ev('u', 5, 'user', 'decided', **CHAT))
+        r = t.settle_dispatch(t.begin_dispatch(r, 'resume-1', resume=True), 'resume-1', 'sent')
+        r, later = play(r, ev('resume-1:s-1:ready', 6, 'worker', 'ready', **READY),
+                        ev('v', 7, 'verifier', 'verified', commit='abc123', tests_passed=True))
+        self.assertEqual(o + later, ['applied'] * 7)
         self.assertEqual((r['status'], r['worker']['session_id'], r['pending_decision']), ('verified-done', 's-1', None))
 
     def test_ack_idle_and_heartbeat_never_progress_or_complete(self):
@@ -131,6 +132,7 @@ class ReviewRegressionTests(unittest.TestCase):
         blocked = {'session_id': 's-1', 'error': False, 'report': {'status': 'blocked', 'commit': '', 'tests': '',
                                                                     'summary': '', 'need': 'A or B?'}}
         r, _ = play(fresh(), *w.events(TASK, 'x1', blocked, BASE + 1, BASE + 2), ev('u', 3, 'user', 'decided', **CHAT))
+        r = t.settle_dispatch(t.begin_dispatch(r, 'x2', resume=True), 'x2', 'sent')
         r, o = play(r, *w.events(TASK, 'x2', blocked, BASE + 4, BASE + 5)[1:])
         self.assertEqual((o, r['status']), (['applied'], 'blocked'))
 
@@ -182,15 +184,16 @@ class DecisionTests(unittest.TestCase):
                      dict(CHAT, approve=True, action='rename', target='a -> b'), dict(CHAT, action='rename+symlink', target='a -> b')]:
             self.assertEqual(t.apply(self.blocked(), ev('u', 3, 'user', 'decided', **data))[1], 'rejected', data)
         r, o = t.apply(self.blocked(), ev('u', 3, 'user', 'decided', **CHAT, approve=True, action='rename+symlink', target='a -> b'))
-        self.assertEqual((o, r['status'], t.approved(r, 'rename+symlink', 'a -> b')), ('applied', 'running', True))
+        self.assertEqual((o, r['status'], t.approved(r, 'rename+symlink', 'a -> b')), ('applied', 'awaiting-worker', True))
 
     def test_the_user_can_decline_and_it_approves_nothing(self):
         r, o = t.apply(self.blocked(), ev('u', 3, 'user', 'decided', channel='chat', text='no, keep the old path'))
-        self.assertEqual((o, r['status'], r['pending_decision'], r['approvals']), ('applied', 'running', None, []))
+        self.assertEqual((o, r['status'], r['pending_decision'], r['approvals']), ('applied', 'awaiting-worker', None, []))
 
     def test_asking_again_for_an_approved_action_is_counted(self):
         r, _ = t.apply(self.blocked(), ev('u', 3, 'user', 'decided', **CHAT, approve=True, action='rename+symlink', target='a -> b'))
-        r, _ = t.apply(r, ev('b2', 4, 'worker', 'blocked', need='again?', action='rename+symlink', target='a -> b'))
+        r = t.settle_dispatch(t.begin_dispatch(r, 'resume-3', resume=True), 'resume-3', 'sent')
+        r, _ = t.apply(r, ev('resume-3:s-1:b2', 4, 'worker', 'blocked', need='again?', action='rename+symlink', target='a -> b'))
         self.assertEqual(r['counts']['unneeded_asks'], 1)
 
 
@@ -343,3 +346,64 @@ class AdapterTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class DecisionReceiptTests(unittest.TestCase):
+    def test_user_decision_does_not_prove_worker_running(self):
+        r = fresh()
+        r, _ = t.apply(r, ev('d', 1, 'adapter', 'dispatched'))
+        r, _ = t.apply(r, ev('b', 2, 'worker', 'blocked', need='Which schema?'))
+        r, outcome = t.apply(r, ev('u', 3, 'user', 'decided', channel='chat', text='Use schema A'))
+        self.assertEqual(outcome, 'applied')
+        self.assertNotEqual(r['status'], 'running')
+        self.assertIsNone(r['pending_decision'])
+
+class ResumeReceiptTests(unittest.TestCase):
+    def test_resume_report_needs_sent_dispatch_receipt(self):
+        r, _ = t.apply(fresh(), ev('d', 1, 'adapter', 'dispatched'))
+        r, _ = t.apply(r, ev('b', 2, 'worker', 'blocked', need='Choose A or B'))
+        r, _ = t.apply(r, ev('u', 3, 'user', 'decided', channel='chat', text='Choose A'))
+        self.assertEqual(t.apply(r, ev('r', 4, 'worker', 'running'))[1], 'unsupported')
+        self.assertEqual(t.apply(r, ev('y', 4, 'worker', 'ready', **READY))[1], 'unsupported')
+        r = t.begin_dispatch(r, 'resume', resume=True)
+        self.assertEqual(t.apply(r, ev('r', 4, 'worker', 'running'))[1], 'unsupported')
+        r = t.settle_dispatch(r, 'resume', 'sent')
+        self.assertEqual(t.apply(r, ev('resume:s-1:r', 4, 'worker', 'running'))[1], 'applied')
+
+class CurrentResumeReceiptTests(unittest.TestCase):
+    def test_historical_sent_receipt_does_not_authorize_post_decision_running(self):
+        r = fresh()
+        r = t.settle_dispatch(t.begin_dispatch(r, 'original', resume=False), 'original', 'sent')
+        r, _ = t.apply(r, ev('d', 1, 'adapter', 'dispatched'))
+        r, _ = t.apply(r, ev('b', 2, 'worker', 'blocked', need='Choose schema'))
+        r, _ = t.apply(r, ev('u', 3, 'user', 'decided', channel='chat', text='Schema A'))
+        self.assertEqual(t.apply(r, ev('r', 4, 'worker', 'running'))[1], 'unsupported')
+        r = t.settle_dispatch(t.begin_dispatch(r, 'resume', resume=True), 'resume', 'sent')
+        self.assertEqual(t.apply(r, ev('resume:s-1:r', 4, 'worker', 'running'))[1], 'applied')
+
+    def test_approved_blocker_does_not_ask_again(self):
+        r = fresh()
+        r['status'] = 'blocked'
+        r['pending_decision'] = {'need': 'Approve?', 'action': 'publish', 'target': 'branch'}
+        r['approvals'] = [{'action': 'publish', 'target': 'branch', 'scope': 'this task'}]
+        self.assertFalse(any('needs decision' in message for _, message in t.attention([r])))
+
+class DispatchIdentityTests(unittest.TestCase):
+    def test_old_dispatch_report_after_resume_receipt_is_rejected(self):
+        r = fresh()
+        r = t.settle_dispatch(t.begin_dispatch(r, 'initial', resume=False), 'initial', 'sent')
+        r, _ = t.apply(r, ev('initial:dispatched', 1, 'adapter', 'dispatched'))
+        r, _ = t.apply(r, ev('initial:s1:blocked', 2, 'worker', 'blocked', need='Choose schema'))
+        r, _ = t.apply(r, ev('decision', 3, 'user', 'decided', channel='chat', text='Schema A'))
+        r = t.settle_dispatch(t.begin_dispatch(r, 'resume', resume=True), 'resume', 'sent')
+        self.assertEqual(t.apply(r, ev('initial:s1:late', 4, 'worker', 'ready', **READY))[1], 'unsupported')
+        self.assertEqual(t.apply(r, ev('resume:s2:fresh', 4, 'worker', 'ready', **READY))[1], 'applied')
+
+    def test_attention_prioritizes_uncertain_and_vague_blockers(self):
+        r = fresh()
+        r['status'] = 'blocked'
+        r['pending_decision'] = {'need': 'unspecified', 'action': None, 'target': None}
+        self.assertFalse(any('needs decision' in message for _, message in t.attention([r])))
+        r['pending_decision'] = {'need': 'Approve?', 'action': 'publish', 'target': 'branch'}
+        r = t.begin_dispatch(r, 'uncertain', resume=True)
+        messages = [message for _, message in t.attention([r])]
+        self.assertEqual(messages, ['dispatch uncertain: reconcile before resending'])

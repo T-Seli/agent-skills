@@ -16,7 +16,7 @@ Open chat thread: reply in this thread
 - **Label:** `[AI · Claude]` or `[AI · Codex]`. It identifies the AI; it is not proof of anything.
 - **Title:** what the work is, in words. Never a key or an id.
 - **Status:** one of `Needs you`, `In progress`, `Monitoring`, `Waiting on someone`, `Done`, derived from the task record:
-  - a pending decision or a review → Needs you;
+  - an unresolved, specific user decision → Needs you; assistant-owned review and uncertain dispatch → In progress with the orchestrator named;
   - verified and inside a monitor window → Monitoring.
 - **Latest:** one line, the newest result.
 - **Next:** the exact action and target to approve, plus where to answer, or `Nothing needed from you`.
@@ -31,7 +31,7 @@ Worker-supplied text is flattened to one line with `<`, `>` and `&` escaped, so 
 - `none` when nothing a person reads has changed (fingerprint of the human fields);
 - `post-root` only when the hub state has no `root_ts` (look the work item up first; never a second thread just for a better summary);
 - `edit-root` only when the root's known author is in `editable_authors`;
-- otherwise `reply`, keeping the existing root as it is.
+- otherwise `reply`, keeping the existing root as it is. A verified material transition replies even under an editable root; unchanged fingerprint is suppressed. An uncertain send returns `reconcile` before any retry.
 
 Editing: the current messaging connector can send, schedule and draft messages, but it has no message-edit operation. Messages from workers appear as the connected human. So no current root is editable through it, and `editable_authors` stays empty. Don't claim the assistant bot can edit a root that a worker or the user wrote.
 

@@ -25,10 +25,12 @@ def ev(task, i, ts, source, kind, **data):
 
 def run(task, *events, dispatches=1):
     r = t.new_task(task, task, worker_kind='claude', owner='assistant', repo='repo')
-    for n in range(dispatches):
-        r = t.settle_dispatch(t.begin_dispatch(r, f'd{n}', resume=False), f'd{n}', 'sent')
+    r = t.settle_dispatch(t.begin_dispatch(r, 'd0', resume=False), 'd0', 'sent')
     for e in events:
         r, _ = t.apply(r, ev(task, *e[:4], **(e[4] if len(e) > 4 else {})))
+        if e[3] == 'decided':
+            for n in range(1, dispatches):
+                r = t.settle_dispatch(t.begin_dispatch(r, f'd{n}', resume=True), f'd{n}', 'sent')
     return r
 
 
@@ -41,7 +43,7 @@ class MeasureTests(unittest.TestCase):
                         ('y', 100, 'worker', 'ready', READY), ('v', 120, 'verifier', 'verified', dict(commit='abc1234', tests_passed=True)))
         self.blocked = run('blk', ('d', 0, 'adapter', 'dispatched'), ('b', 10, 'worker', 'blocked', dict(need='?', action='merge', target='x')),
                            ('u', 610, 'user', 'decided', dict(CHAT, approve=True, action='merge', target='x')),
-                           ('b2', 620, 'worker', 'blocked', dict(need='again', action='merge', target='x')),
+                           ('d1:b2', 620, 'worker', 'blocked', dict(need='again', action='merge', target='x')),
                            ('y0', 700, 'worker', 'ready'), dispatches=2)
         self.silent = run('quiet', ('d', 0, 'adapter', 'dispatched'))
 
