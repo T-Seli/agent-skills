@@ -9,7 +9,7 @@ Tenant = whatever varies per install (customer, site, deployment). § Tenancy `n
 ## Engineering
 - Plug-and-play: a new tenant or project adopts any change by config alone: no code or prompt edit, no branching on tenant or environment names. Varying values are layered config (global > tenant > narrower); tenant logic never enters shared code.
 - System lens: before changing code, name its callers, callees, and data and config owners.
-- Fix at the most central point; extend existing helpers before adding new ones.
+- Fix at the most central point; refine existing skills and helpers before adding new ones. Keep instructions compact and cohesive across orchestrator and worker roles.
 - Minimum code: nothing speculative, no impossible-state handling. Atomic functions; flag files past ~500 lines. Fail loudly: no silent fallbacks.
 - Match surrounding style; comments state only the non-obvious why.
 - Scope: every changed line traces to the request; remove only your own orphans; mention unrelated dead code.
