@@ -107,6 +107,13 @@ def failure_incident(*, incident_id, failure_key, operation, target, failure_cla
     }.get(failure_class)
     if expected_authorization is not None and authorization_state != expected_authorization:
         raise ValueError("failure class does not match authorization state")
+    authorization_failure = {
+        "policy-denied": "legitimate-policy-limit",
+        "missing-provenance": "missing-approval-provenance",
+        "incorrect-provenance": "incorrect-approval-provenance",
+    }.get(authorization_state)
+    if authorization_failure is not None and failure_class != authorization_failure:
+        raise ValueError("authorization state does not match current failure class")
     if outcome not in FAILURE_OUTCOMES or next_action_mode not in NEXT_ACTION_MODES:
         raise ValueError("invalid failure outcome or next-action mode")
     if prevention_state not in ACCEPTANCE_STATES:

@@ -203,6 +203,9 @@ class SystemAuditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             failure(failure_class='missing-approval-provenance',
                     authorization_state='incorrect-provenance')
+        with self.assertRaises(ValueError):
+            failure(failure_class='unavailable-tool',
+                    authorization_state='missing-provenance')
 
     def test_guards_are_respected_and_human_only_steps_are_explicit(self):
         with self.assertRaises(ValueError):
