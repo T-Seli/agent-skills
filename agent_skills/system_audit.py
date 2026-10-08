@@ -282,6 +282,7 @@ def _owned_work(value, name, *, authorization_required=False):
     if not isinstance(value, list):
         raise ValueError(f"invalid {name}")
     result = []
+    by_task = {}
     for item in value:
         required = {"task_id", "owner", "work"}
         if authorization_required:
@@ -289,7 +290,12 @@ def _owned_work(value, name, *, authorization_required=False):
         if not isinstance(item, dict) or set(item) != required:
             raise ValueError(f"invalid {name}")
         row = {key: _text(item[key], f"{name} {key}") for key in required}
-        result.append(row)
+        task_id = row["task_id"]
+        if task_id in by_task and by_task[task_id] != row:
+            raise ValueError(f"conflicting duplicate {name}")
+        if task_id not in by_task:
+            by_task[task_id] = row
+            result.append(row)
     return result
 
 
@@ -336,6 +342,7 @@ def prioritize_human_unlocks(unlocks, *, limit=3):
     by_id = {}
     task_owners = {}
     priority_refs = set()
+    gated_tasks = set()
     for item in unlocks:
         if not isinstance(item, dict) or item.get("kind") != "human-unlock":
             raise ValueError("validated human unlock required")
@@ -348,6 +355,12 @@ def prioritize_human_unlocks(unlocks, *, limit=3):
         if task_id in task_owners and task_owners[task_id] != owner:
             raise ValueError("task owner conflict")
         task_owners[task_id] = owner
+        for work in item["downstream_work_unlocked"]:
+            downstream_id, downstream_owner = work["task_id"], work["owner"]
+            if downstream_id in task_owners and task_owners[downstream_id] != downstream_owner:
+                raise ValueError("downstream work owner conflicts with canonical task owner")
+            task_owners[downstream_id] = downstream_owner
+            gated_tasks.add(downstream_id)
     if len(priority_refs) > 1:
         raise ValueError("human unlocks must use one canonical daily priority receipt")
 
@@ -364,6 +377,8 @@ def prioritize_human_unlocks(unlocks, *, limit=3):
     for item in by_id.values():
         for work in item["parallel_authorized_work"]:
             task_id = work["task_id"]
+            if task_id in gated_tasks:
+                raise ValueError("work cannot be both decision-gated and already authorized")
             if task_id in task_owners and task_owners[task_id] != work["owner"]:
                 raise ValueError("parallel work owner conflicts with canonical task owner")
             existing = parallel_by_task.get(task_id)

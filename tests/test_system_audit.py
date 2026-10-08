@@ -359,6 +359,25 @@ class SystemAuditTests(unittest.TestCase):
             ])
         with self.assertRaises(ValueError):
             prioritize_human_unlocks([unlock(), conflict])
+        deduped = unlock(downstream_work_unlocked=[
+            {'task_id': 'rollout-1', 'owner': 'release-owner',
+             'work': 'Run the authorized rollout after approval.'},
+            {'task_id': 'rollout-1', 'owner': 'release-owner',
+             'work': 'Run the authorized rollout after approval.'},
+        ])
+        self.assertEqual(len(deduped['downstream_work_unlocked']), 1)
+        with self.assertRaises(ValueError):
+            unlock(downstream_work_unlocked=[
+                {'task_id': 'rollout-1', 'owner': 'release-owner', 'work': 'First route.'},
+                {'task_id': 'rollout-1', 'owner': 'other-owner', 'work': 'Second route.'},
+            ])
+        with self.assertRaises(ValueError):
+            prioritize_human_unlocks([unlock(
+                parallel_authorized_work=[
+                    {'task_id': 'rollout-1', 'owner': 'release-owner',
+                     'work': 'Run rollout now.',
+                     'authorization_ref': 'daily-list:already-authorized'},
+                ])])
 
 
 if __name__ == '__main__':
