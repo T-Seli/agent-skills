@@ -1,7 +1,8 @@
 import unittest
 
 from agent_skills.system_audit import (audit_artifact, blocker_update, failure_incident,
-                                       finding, synthesize, synthesize_failures)
+                                       finding, human_unlock, prioritize_human_unlocks,
+                                       synthesize, synthesize_failures)
 
 
 SOURCES = [{'source': 'task-record', 'state': 'observed', 'receipt_ref': 'task:receipt-4'}]
@@ -38,6 +39,28 @@ def failure(**changes):
                   prevention_check='A fixture reports one grouped failure and preserves both receipts.',
                   verified=True)
     return failure_incident(**{**values, **changes})
+
+
+def unlock(**changes):
+    values = dict(unlock_id='release-decision', task_id='release-1', owner='release-owner',
+                  daily_priority_ref='daily-list:2026-10-08', daily_priority_rank=1,
+                  human_effort='quick', readiness='ready',
+                  readiness_receipts=['review:yes', 'tests:268-pass'], safety_ready=True,
+                  risk_level='low', risk_summary='Reviewed staged release with rollback preserved.',
+                  downstream_work_unlocked=[
+                      {'task_id': 'rollout-1', 'owner': 'release-owner',
+                       'work': 'Run the authorized rollout after approval.'},
+                      {'task_id': 'monitor-1', 'owner': 'monitor-owner',
+                       'work': 'Monitor the released change.'},
+                  ], deadline='2026-10-08T18:00:00Z', dependencies=['human release decision'],
+                  shared_resources=['release window'],
+                  exact_decision='Approve or decline release of the reviewed commit.',
+                  parallel_authorized_work=[
+                      {'task_id': 'design-investigation', 'owner': 'design-owner',
+                       'work': 'Continue the authorized architecture investigation.',
+                       'authorization_ref': 'daily-list:design-authorized'},
+                  ])
+    return human_unlock(**{**values, **changes})
 
 
 class SystemAuditTests(unittest.TestCase):
@@ -109,14 +132,18 @@ class SystemAuditTests(unittest.TestCase):
     def test_durable_artifact_binds_scope_window_history_base_and_proposal_state(self):
         synthesis = synthesize([item()], source_manifest=SOURCES)
         ledger = synthesize_failures([failure()])
+        unlock_plan = prioritize_human_unlocks([unlock()])
         artifact = audit_artifact(
             audit_id='audit-20261008', revision=1, scope_ref='task:scope-1',
             window_start='2026-10-07T00:00:00Z', window_end='2026-10-08T00:00:00Z',
             prior_artifact_ref=None, record_owner='history-owner', history_revision=7,
-            history_digest='a' * 64, synthesis=synthesis, failure_ledger=ledger)
+            history_digest='a' * 64, synthesis=synthesis, failure_ledger=ledger,
+            human_unlock_plan=unlock_plan)
         self.assertEqual(artifact['history_publication'], 'proposed-not-appended')
         self.assertEqual(artifact['history_base']['revision'], 7)
         self.assertEqual(artifact['failure_ledger'][0]['failure_key'], 'transport:message-edit')
+        self.assertEqual(artifact['human_unlock_plan']['recommended_decisions'][0]['unlock_id'],
+                         'release-decision')
         occurrence = artifact['failure_ledger'][0]['occurrences'][0]
         for field in ('user_impact', 'authorization_state', 'operation_scope', 'approved_scope',
                       'approval_ref', 'retries_attempted', 'evidence_attempted', 'outcome',
@@ -273,6 +300,65 @@ class SystemAuditTests(unittest.TestCase):
         grouped = synthesize_failures([passed])
         self.assertEqual(grouped[0]['prevention_status'],
                          'passed-in-window-no-later-recurrence-observed')
+
+    def test_ready_release_decision_precedes_long_design_and_parallel_work_continues(self):
+        release = unlock()
+        design = unlock(
+            unlock_id='architecture-decision', task_id='architecture-1', owner='design-owner',
+            human_effort='extended', risk_level='medium',
+            risk_summary='The architecture direction has broader long-term consequences.',
+            downstream_work_unlocked=[
+                {'task_id': 'design-build', 'owner': 'design-owner',
+                 'work': 'Implement the selected architecture.'},
+            ], deadline=None, exact_decision='Choose the architecture direction.',
+            parallel_authorized_work=[])
+        plan = prioritize_human_unlocks([design, release], limit=2)
+        self.assertEqual([x['unlock_id'] for x in plan['recommended_decisions']],
+                         ['release-decision', 'architecture-decision'])
+        self.assertEqual(plan['parallel_authorized_work'], [{
+            'task_id': 'design-investigation', 'owner': 'design-owner',
+            'work': 'Continue the authorized architecture investigation.',
+            'authorization_ref': 'daily-list:design-authorized',
+        }])
+        self.assertEqual(plan['auto_decisions'], [])
+        self.assertTrue(all(x['human_decision_required'] for x in plan['recommended_decisions']))
+
+    def test_human_unlocks_require_real_readiness_and_preserve_owners(self):
+        with self.assertRaises(ValueError):
+            unlock(readiness_receipts=[])
+        with self.assertRaises(ValueError):
+            unlock(safety_ready=False)
+        with self.assertRaises(ValueError):
+            unlock(downstream_work_unlocked=[])
+        conditional = unlock(readiness='conditional', safety_ready=False,
+                             readiness_receipts=[], deadline=None)
+        plan = prioritize_human_unlocks([conditional])
+        self.assertEqual(plan['recommended_decisions'], [])
+        self.assertEqual(plan['deferred_not_ready'], [
+            {'unlock_id': 'release-decision', 'readiness': 'conditional'}])
+        with self.assertRaises(ValueError):
+            prioritize_human_unlocks([unlock(), unlock(
+                unlock_id='conflicting-owner', owner='different-owner')])
+        with self.assertRaises(ValueError):
+            prioritize_human_unlocks([unlock()], limit=4)
+        with self.assertRaises(ValueError):
+            prioritize_human_unlocks([unlock(), unlock(
+                unlock_id='other-list', task_id='other-task',
+                daily_priority_ref='daily-list:another-day')])
+
+    def test_parallel_work_dedupes_without_inventing_activity(self):
+        same = unlock(unlock_id='release-decision-copy', task_id='release-2')
+        plan = prioritize_human_unlocks([unlock(), same])
+        self.assertEqual(len(plan['parallel_authorized_work']), 1)
+        conflict = unlock(
+            unlock_id='release-conflict', task_id='release-3',
+            parallel_authorized_work=[
+                {'task_id': 'design-investigation', 'owner': 'other-owner',
+                 'work': 'Continue the authorized architecture investigation.',
+                 'authorization_ref': 'daily-list:design-authorized'},
+            ])
+        with self.assertRaises(ValueError):
+            prioritize_human_unlocks([unlock(), conflict])
 
 
 if __name__ == '__main__':

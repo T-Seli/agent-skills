@@ -32,6 +32,9 @@ AUTHORIZATION_STATES = {
 }
 FAILURE_OUTCOMES = {"blocked", "failed", "rejected"}
 NEXT_ACTION_MODES = {"agent-supported", "human-only"}
+HUMAN_EFFORT = {"quick", "short", "extended"}
+RISK_LEVELS = {"low", "medium", "high", "critical"}
+READINESS_STATES = {"ready", "conditional", "not-ready"}
 REMEDY_BY_CLASS = {
     "legitimate-policy-limit": "respect-policy-limit",
     "missing-approval-provenance": "repair-approval-provenance",
@@ -275,6 +278,112 @@ def synthesize_failures(incidents, *, prior_incidents=()):
     return result
 
 
+def _owned_work(value, name, *, authorization_required=False):
+    if not isinstance(value, list):
+        raise ValueError(f"invalid {name}")
+    result = []
+    for item in value:
+        required = {"task_id", "owner", "work"}
+        if authorization_required:
+            required.add("authorization_ref")
+        if not isinstance(item, dict) or set(item) != required:
+            raise ValueError(f"invalid {name}")
+        row = {key: _text(item[key], f"{name} {key}") for key in required}
+        result.append(row)
+    return result
+
+
+def human_unlock(*, unlock_id, task_id, owner, daily_priority_ref, daily_priority_rank,
+                 human_effort, readiness, readiness_receipts, safety_ready,
+                 risk_level, risk_summary, downstream_work_unlocked, deadline,
+                 dependencies, shared_resources, exact_decision,
+                 parallel_authorized_work=()):
+    """Record one human-owned decision opportunity without deciding or dispatching it."""
+    if (type(daily_priority_rank) is not int or daily_priority_rank < 1 or
+            human_effort not in HUMAN_EFFORT or readiness not in READINESS_STATES or
+            risk_level not in RISK_LEVELS or safety_ready not in {True, False}):
+        raise ValueError("invalid human unlock priority, effort, readiness or risk")
+    receipts = _text_list(readiness_receipts, "readiness receipts")
+    if readiness == "ready" and (safety_ready is not True or not receipts):
+        raise ValueError("ready human unlock requires passing safety and readiness receipts")
+    deadline_value = None if deadline is None else _utc(deadline, "human unlock deadline")
+    downstream = _owned_work(downstream_work_unlocked, "downstream work")
+    if readiness == "ready" and not downstream:
+        raise ValueError("ready human unlock must identify downstream work")
+    parallel = _owned_work(list(parallel_authorized_work), "parallel authorized work",
+                           authorization_required=True)
+    return {
+        "kind": "human-unlock", "unlock_id": _text(unlock_id, "unlock id"),
+        "task_id": _text(task_id, "task id"), "owner": _text(owner, "owner"),
+        "daily_priority_ref": _text(daily_priority_ref, "daily priority reference"),
+        "daily_priority_rank": daily_priority_rank, "human_effort": human_effort,
+        "readiness": readiness, "readiness_receipts": receipts,
+        "safety_ready": safety_ready, "risk_level": risk_level,
+        "risk_summary": _text(risk_summary, "risk summary"),
+        "downstream_work_unlocked": downstream, "deadline": deadline_value,
+        "dependencies": _text_list(dependencies, "dependencies"),
+        "shared_resources": _text_list(shared_resources, "shared resources"),
+        "exact_decision": _text(exact_decision, "exact decision"),
+        "parallel_authorized_work": parallel,
+        "human_decision_required": True, "auto_decide": False,
+    }
+
+
+def prioritize_human_unlocks(unlocks, *, limit=3):
+    """Recommend a small ready set and list already-authorized concurrent work."""
+    if not isinstance(unlocks, list) or type(limit) is not int or not 1 <= limit <= 3:
+        raise ValueError("human unlock list and limit of one to three required")
+    by_id = {}
+    task_owners = {}
+    priority_refs = set()
+    for item in unlocks:
+        if not isinstance(item, dict) or item.get("kind") != "human-unlock":
+            raise ValueError("validated human unlock required")
+        unlock_id = item["unlock_id"]
+        if unlock_id in by_id and by_id[unlock_id] != item:
+            raise ValueError("conflicting human unlock id")
+        by_id.setdefault(unlock_id, deepcopy(item))
+        priority_refs.add(item["daily_priority_ref"])
+        task_id, owner = item["task_id"], item["owner"]
+        if task_id in task_owners and task_owners[task_id] != owner:
+            raise ValueError("task owner conflict")
+        task_owners[task_id] = owner
+    if len(priority_refs) > 1:
+        raise ValueError("human unlocks must use one canonical daily priority receipt")
+
+    effort_order = {"quick": 0, "short": 1, "extended": 2}
+    risk_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    eligible = [x for x in by_id.values() if x["readiness"] == "ready" and x["safety_ready"]]
+    eligible.sort(key=lambda x: (
+        x["daily_priority_rank"], x["deadline"] is None, x["deadline"] or "",
+        risk_order[x["risk_level"]], -len(x["downstream_work_unlocked"]),
+        effort_order[x["human_effort"]], x["unlock_id"],
+    ))
+
+    parallel_by_task = {}
+    for item in by_id.values():
+        for work in item["parallel_authorized_work"]:
+            task_id = work["task_id"]
+            if task_id in task_owners and task_owners[task_id] != work["owner"]:
+                raise ValueError("parallel work owner conflicts with canonical task owner")
+            existing = parallel_by_task.get(task_id)
+            if existing is not None and existing != work:
+                raise ValueError("conflicting duplicate parallel work")
+            parallel_by_task.setdefault(task_id, deepcopy(work))
+
+    deferred = [{"unlock_id": x["unlock_id"], "readiness": x["readiness"]}
+                for x in by_id.values() if x not in eligible]
+    deferred.sort(key=lambda x: x["unlock_id"])
+    return {
+        "kind": "human-unlock-plan",
+        "recommended_decisions": deepcopy(eligible[:limit]),
+        "parallel_authorized_work": [parallel_by_task[key] for key in sorted(parallel_by_task)],
+        "deferred_not_ready": deferred,
+        "auto_decisions": [],
+        "selection_basis": "daily priority, deadline, readiness/risk, downstream unlock, human effort",
+    }
+
+
 def finding(*, finding_id, finding_key, angle, claim_level, cause_basis, confidence,
             assertion, evidence_window, scope_ref, evidence_refs, impact, counterevidence,
             minimal_remedy, regression_risk, acceptance_test, conclusion,
@@ -390,7 +499,7 @@ def synthesize(findings, *, source_manifest, prior_findings=()):
 
 def audit_artifact(*, audit_id, revision, scope_ref, window_start, window_end,
                    prior_artifact_ref, record_owner, history_revision, history_digest,
-                   synthesis, failure_ledger=()):
+                   synthesis, failure_ledger=(), human_unlock_plan=None):
     """Build the minimal sanitized durable envelope; writing remains the caller's job."""
     if type(revision) is not int or revision < 1 or type(history_revision) is not int or history_revision < 0:
         raise ValueError("invalid audit or history revision")
@@ -400,6 +509,10 @@ def audit_artifact(*, audit_id, revision, scope_ref, window_start, window_end,
             isinstance(x, dict) and x.get("kind") == "audit-failure-group"
             for x in failure_ledger)):
         raise ValueError("validated failure ledger required")
+    if human_unlock_plan is not None and (
+            not isinstance(human_unlock_plan, dict) or
+            human_unlock_plan.get("kind") != "human-unlock-plan"):
+        raise ValueError("validated human unlock plan required")
     return {"schema_version": 1, "audit_id": _text(audit_id, "audit_id"),
             "revision": revision, "scope_ref": _text(scope_ref, "scope_ref"),
             "window": {"start": _text(window_start, "window_start"),
@@ -409,4 +522,5 @@ def audit_artifact(*, audit_id, revision, scope_ref, window_start, window_end,
             "history_base": {"revision": history_revision,
                              "digest": _text(history_digest, "history_digest")},
             "synthesis": deepcopy(synthesis), "failure_ledger": deepcopy(list(failure_ledger)),
+            "human_unlock_plan": deepcopy(human_unlock_plan),
             "history_publication": "proposed-not-appended"}

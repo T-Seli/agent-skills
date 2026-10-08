@@ -12,7 +12,7 @@ Check worker execution receipts, questions returned to the orchestrator, evidenc
 
 ## C — decisions and human friction
 
-Check whether broad priorities remained with the human, whether questions were concrete and deduplicated, and whether direct user-to-worker instructions were honored within verified scope. When authenticated approval becomes sufficient, require the blocker to move from approval provenance to the receipt-backed current capability; reject another approval request or a false claim that forwarding succeeded. Measure repeated context requests, duplicate investigation, false blockers and time blocked on a specific decision only when receipts support them. Do not score people or activity volume.
+Check whether broad priorities remained with the human, whether questions were concrete and deduplicated, and whether direct user-to-worker instructions were honored within verified scope. When authenticated approval becomes sufficient, require the blocker to move from approval provenance to the receipt-backed current capability; reject another approval request or a false claim that forwarding succeeded. Compare ready human unlocks with the actual daily task-list receipt, deadlines, risks and dependencies. Check for avoidable idle chains or missed launch opportunities, but never infer value from task count or utilization. Measure repeated context requests, duplicate investigation, false blockers and time blocked on a specific decision only when receipts support them. Do not score people or activity volume.
 
 ## D — capabilities and release boundaries
 
@@ -32,3 +32,4 @@ Return a list with: stable `finding_id` and `finding_key`, `angle`, structured `
 - Remedies remain proposals until separately authorized.
 - Identical occurrence IDs deduplicate; distinct receipt-backed repeats remain one failure group with an explicit occurrence count.
 - A prevention pass needs a receipt. Any later same-key occurrence is reported as recurrence after pass rather than silently treated as fixed.
+- Human unlock recommendations require readiness/safety receipts, preserve canonical owners, contain no automatic decisions, and deduplicate already-authorized parallel work.

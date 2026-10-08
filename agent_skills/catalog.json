@@ -62,7 +62,7 @@
     {
       "id": "company.system-audit",
       "layer": "company",
-      "summary": "Run a bounded independent read-only audit of coordination outcomes, verified failures, guards and evidence gaps.",
+      "summary": "Run a bounded independent read-only audit of coordination outcomes, verified failures, guards, human unlocks and evidence gaps.",
       "phrases": [
         "audit agent workflow",
         "review coordination system",
