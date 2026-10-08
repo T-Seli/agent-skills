@@ -28,14 +28,14 @@ and a draft Dot workflow. Project and machine facts stay outside the shared core
 
 ## Deploy
 - Deploy doc: `README.md` § Install
-- Base branch: `master` · Release branch: `master` · Protected: `master`
+- Base branch: `main` · Release branch: `main` · Protected: `main`
 - Flow: `branch` (the main checkout is live, so edits happen in a task worktree)
 - PR merge style: ff
 - Release: per-merge
 - Trigger: manual
 - Skip-deploy marker: none
 - Targets: local installation after review in an idle window
-- Deployed version → commit: `git -C <main checkout> rev-parse master`
+- Deployed version → commit: `git -C <main checkout> rev-parse main`
 - Pre-deploy checks: `tests/check.sh`
 - Rollback: return to the previously installed source snapshot, rerun the selected installer, and restore any backed-up local files
 - Kill switch: none

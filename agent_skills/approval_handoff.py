@@ -7,8 +7,21 @@ user message, and it never overrides action-time platform review.
 from copy import deepcopy
 import hashlib
 import json
+from urllib.parse import urlsplit
 
 from .task_contract import ID
+
+
+BLOCKER_KINDS = (
+    "missing-permission",
+    "denied-authority",
+    "wrong-execution-surface",
+    "missing-evidence",
+    "unsupported-tool",
+    "disconnected-compute",
+)
+DIRECT_APPROVAL_BLOCKERS = {"missing-permission", "wrong-execution-surface"}
+APPS = {"claude-code": "Claude Code", "codex": "Codex"}
 
 
 def _short(value, name):
@@ -135,3 +148,88 @@ def direct_confirmation_route(*, denial_reason, evidence_check, prior_evidence_r
             denial_reason in ("missing-authorization", "direct-confirmation-required")):
         return "handoff-direct-confirmation"
     return "stop-and-report-platform-denial"
+
+
+def blocker_route(*, blocker_kind, evidence_check=None, relay_supported=False,
+                  relay_attempted=False, direct_session_required=False):
+    """Return the next supported step without treating every blocker as an approval request."""
+    if blocker_kind not in BLOCKER_KINDS:
+        raise ValueError("unknown approval blocker kind")
+    if blocker_kind == "denied-authority":
+        return "stop-and-report-denied-authority"
+    if blocker_kind == "missing-evidence":
+        return "collect-missing-evidence"
+    if blocker_kind == "unsupported-tool":
+        return "report-unsupported-tool"
+    if blocker_kind == "disconnected-compute":
+        return "report-disconnected-compute"
+    if (blocker_kind == "missing-permission" and
+            evidence_check == "covered-by-original-user-message" and
+            relay_supported is True and relay_attempted is False):
+        return "relay-exact-authorization"
+    if (blocker_kind in DIRECT_APPROVAL_BLOCKERS and direct_session_required is True and
+            (blocker_kind == "wrong-execution-surface" or relay_attempted is True)):
+        return "handoff-direct-session-approval"
+    if blocker_kind == "missing-permission" and evidence_check != "covered-by-original-user-message":
+        return "request-scoped-user-decision"
+    return "stop-and-report-blocker"
+
+
+def direct_worker_handoff(*, blocker_kind, direct_session_required,
+                          verified_session, verified_title, verified_workspace,
+                          platform, task_title, task_id, session_id, workspace,
+                          action, target, scope, revision, wording, source_ref,
+                          current_surface, session_link=None, link_platform=None,
+                          link_verified=False):
+    """Build a copy-ready direct-session approval handoff from verified platform facts."""
+    if blocker_kind not in DIRECT_APPROVAL_BLOCKERS or direct_session_required is not True:
+        raise ValueError("direct worker approval is not established")
+    if verified_session is not True or verified_title is not True or verified_workspace is not True:
+        raise ValueError("verified session title and workspace required")
+    if platform not in APPS or current_surface not in ("desktop", "ios", "messaging"):
+        raise ValueError("unsupported approval surface")
+    for name, value in (("task_title", task_title), ("task_id", task_id),
+                        ("session_id", session_id), ("workspace", workspace),
+                        ("action", action), ("target", target), ("scope", scope),
+                        ("wording", wording), ("source_ref", source_ref)):
+        _short(value, name)
+    if not ID.fullmatch(task_id) or type(revision) is not int or revision < 1:
+        raise ValueError("invalid task identity")
+    if "\n" in wording:
+        raise ValueError("approval wording must be copy-ready on one line")
+
+    link = None
+    if session_link is not None:
+        _short(session_link, "session_link")
+        parsed = urlsplit(session_link)
+        if (current_surface == "desktop" and link_verified is True and
+                link_platform == platform and parsed.scheme == "https" and parsed.hostname and
+                parsed.username is None and parsed.password is None):
+            link = session_link
+
+    request = {"action": action, "target": target, "scope": scope,
+               "revision": revision, "wording": wording}
+    identity = {"app": APPS[platform], "task_title": task_title, "task_id": task_id,
+                "session_id": session_id, "workspace": workspace, "request": request,
+                "source_ref": source_ref}
+    decision_identity = {"platform": platform, "task_id": task_id, "session_id": session_id,
+                         "workspace": workspace, "action": action, "target": target,
+                         "scope": scope, "revision": revision}
+    fingerprint = hashlib.sha256(json.dumps(decision_identity, sort_keys=True).encode()).hexdigest()
+    navigation = (f"Open {APPS[platform]} on desktop, search for {task_title!r}, "
+                  f"confirm session {session_id} in workspace {workspace}, then paste the wording exactly.")
+    if link:
+        navigation = (f"Open the verified {APPS[platform]} session link or search for {task_title!r}; "
+                      f"confirm session {session_id} in workspace {workspace}, then paste the wording exactly.")
+    return {"kind": "direct-worker-approval-handoff", "blocker_kind": blocker_kind,
+            **identity, "link": link, "navigation": navigation,
+            "fingerprint": fingerprint}
+
+
+def should_present_handoff(packet, prior_fingerprints):
+    """Suppress only an identical previously presented handoff; a changed revision remains new."""
+    if not isinstance(packet, dict) or packet.get("kind") != "direct-worker-approval-handoff":
+        raise ValueError("direct worker handoff packet required")
+    if not isinstance(prior_fingerprints, (list, tuple, set)):
+        raise ValueError("prior fingerprints required")
+    return packet.get("fingerprint") not in prior_fingerprints

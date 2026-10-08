@@ -2,7 +2,9 @@ import unittest
 
 from agent_skills.approval_handoff import (authorization_check, retry_after_denial,
                                           transcript_evidence, worker_handoff,
-                                          direct_confirmation_route, terms_from_platform_response)
+                                          direct_confirmation_route, terms_from_platform_response,
+                                          blocker_route, direct_worker_handoff,
+                                          should_present_handoff)
 
 
 def approval():
@@ -87,6 +89,60 @@ class ApprovalHandoffTests(unittest.TestCase):
             self.assertEqual(retry_after_denial(denial_reason=reason, evidence_check=check,
                                                prior_evidence_retries=count),
                              "stop-and-report-platform-denial")
+
+    def test_blocker_classes_do_not_turn_capability_gaps_into_approval_requests(self):
+        self.assertEqual(blocker_route(blocker_kind='disconnected-compute'),
+                         'report-disconnected-compute')
+        self.assertEqual(blocker_route(blocker_kind='unsupported-tool'),
+                         'report-unsupported-tool')
+        self.assertEqual(blocker_route(blocker_kind='missing-evidence'),
+                         'collect-missing-evidence')
+        self.assertEqual(blocker_route(blocker_kind='denied-authority'),
+                         'stop-and-report-denied-authority')
+
+    def test_existing_authority_is_relayed_before_direct_session_handoff(self):
+        self.assertEqual(blocker_route(blocker_kind='missing-permission',
+                         evidence_check='covered-by-original-user-message', relay_supported=True,
+                         relay_attempted=False, direct_session_required=True),
+                         'relay-exact-authorization')
+        self.assertEqual(blocker_route(blocker_kind='missing-permission',
+                         evidence_check='covered-by-original-user-message', relay_supported=True,
+                         relay_attempted=True, direct_session_required=True),
+                         'handoff-direct-session-approval')
+
+    def handoff(self, **changes):
+        values = dict(blocker_kind='wrong-execution-surface', direct_session_required=True,
+                      verified_session=True, verified_title=True, verified_workspace=True,
+                      platform='codex', task_title='Synthetic release review', task_id='task-7',
+                      session_id='session-1', workspace='local workspace', action='publish',
+                      target='reviewed source', scope='revision 2 only', revision=2,
+                      wording='Approve publishing revision 2 only.', source_ref='platform:read-1',
+                      current_surface='desktop', session_link='https://example.invalid/session-1',
+                      link_platform='codex', link_verified=True)
+        return direct_worker_handoff(**{**values, **changes})
+
+    def test_direct_worker_handoff_has_verified_identity_and_surface_compatible_navigation(self):
+        desktop = self.handoff()
+        self.assertEqual(desktop['link'], 'https://example.invalid/session-1')
+        self.assertIn('Synthetic release review', desktop['navigation'])
+        for surface in ('ios', 'messaging'):
+            packet = self.handoff(current_surface=surface)
+            self.assertIsNone(packet['link'])
+            self.assertIn('desktop', packet['navigation'])
+        self.assertIsNone(self.handoff(session_link='javascript:invalid')['link'])
+        with self.assertRaises(ValueError):
+            self.handoff(verified_workspace=False)
+
+    def test_duplicate_handoff_is_suppressed_but_a_new_revision_is_not(self):
+        first = self.handoff()
+        self.assertTrue(should_present_handoff(first, []))
+        self.assertFalse(should_present_handoff(first, [first['fingerprint']]))
+        refreshed = self.handoff(source_ref='platform:read-2',
+                                 wording='Please approve publishing revision 2 only.')
+        self.assertFalse(should_present_handoff(refreshed, [first['fingerprint']]))
+        changed = self.handoff(revision=3, scope='revision 3 only',
+                               wording='Approve publishing revision 3 only.')
+        self.assertTrue(should_present_handoff(changed, [first['fingerprint']]))
 
 
 if __name__ == "__main__":

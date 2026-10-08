@@ -36,7 +36,47 @@
       "requires": [
         "skills/workflow-contracts/contracts.md",
         "skills/agent-coordination/references/routing.md",
-        "skills/agent-coordination/references/tasks.md"
+        "skills/agent-coordination/references/tasks.md",
+        "skills/agent-coordination/references/state.md"
+      ]
+    },
+    {
+      "id": "company.approval-handoff",
+      "layer": "company",
+      "summary": "Route scoped authorization evidence and verified direct-session approval handoffs.",
+      "phrases": [
+        "approval handoff",
+        "worker needs permission",
+        "direct session approval"
+      ],
+      "roles": [
+        "dot",
+        "worker"
+      ],
+      "body": "skills/approval-handoff/SKILL.md",
+      "requires": [
+        "skills/workflow-contracts/contracts.md",
+        "skills/agent-coordination/references/state.md"
+      ]
+    },
+    {
+      "id": "company.system-audit",
+      "layer": "company",
+      "summary": "Run a bounded independent read-only audit of coordination outcomes and evidence gaps.",
+      "phrases": [
+        "audit agent workflow",
+        "review coordination system",
+        "daily system audit"
+      ],
+      "roles": [
+        "dot",
+        "worker"
+      ],
+      "body": "skills/system-audit/SKILL.md",
+      "requires": [
+        "skills/workflow-contracts/contracts.md",
+        "skills/system-audit/references/reviewers.md",
+        "skills/task-history/SKILL.md"
       ]
     },
     {

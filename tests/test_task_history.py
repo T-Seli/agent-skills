@@ -40,6 +40,12 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(set(schema['required']), history.REQUIRED)
         self.assertEqual(set(schema['properties']['kind']['enum']), history.KINDS)
 
+    def test_coordination_milestone_example_matches_the_live_validator(self):
+        example = json.loads((MODULE.parent / 'examples/coordination-milestone.json').read_text())
+        history.validate(example)
+        self.assertEqual(example['kind'], 'decision')
+        self.assertEqual(example['evidence'][0]['state'], 'performed')
+
     def test_retry_collision_stale_and_handoff(self):
         empty = history.digest(self.path)
         first = packet()

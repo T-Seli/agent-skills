@@ -81,6 +81,9 @@ class V0Tests(unittest.TestCase):
                          "skills/workflow-contracts/contracts.md", "skills/skill-steward/SKILL.md",
                          "skills/agent-coordination/SKILL.md", "skills/agent-coordination/references/tasks.md",
                          "skills/agent-coordination/references/routing.md",
+                         "skills/agent-coordination/references/state.md",
+                         "skills/approval-handoff/SKILL.md", "skills/system-audit/SKILL.md",
+                         "skills/system-audit/references/reviewers.md",
                          "skills/blueprint/SKILL.md", "skills/handoff/SKILL.md",
                          "skills/task-history/SKILL.md"):
                 (root / path).parent.mkdir(parents=True, exist_ok=True)

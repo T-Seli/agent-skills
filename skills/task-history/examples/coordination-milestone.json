@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "event_id": "example-coordination-002",
+  "task_id": "example-task-001",
+  "session_id": "example-session-001",
+  "revision": 2,
+  "record_owner": "example-owner",
+  "execution_owner": "example-worker",
+  "at_utc": "2026-10-08T10:00:00Z",
+  "observed_at_utc": "2026-10-08T10:01:00Z",
+  "kind": "decision",
+  "summary": "Current deliverable revision was acknowledged",
+  "scope": "One synthetic fixture in the local test environment",
+  "approval_ref": "restricted:current-task-scope",
+  "decision": "Continue with the acknowledged current revision",
+  "reason": "The worker readback matches the deliverable, environment and next action.",
+  "source_ref": "restricted:coordination-readback",
+  "environment": "local-test",
+  "outcomes": "Execution is admitted; acceptance and release remain pending.",
+  "next_step": "Run the named synthetic fixture",
+  "evidence": [
+    {
+      "state": "performed",
+      "claim": "The current task readback matched the bound revision.",
+      "ref": "restricted:coordination-readback",
+      "environment": "local-test",
+      "outcome": "pass"
+    }
+  ]
+}
