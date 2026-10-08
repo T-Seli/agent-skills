@@ -47,6 +47,8 @@ def unlock(**changes):
                   human_effort='quick', readiness='ready',
                   readiness_receipts=['review:yes', 'tests:268-pass'], safety_ready=True,
                   risk_level='low', risk_summary='Reviewed staged release with rollback preserved.',
+                  downstream_impact='high',
+                  impact_basis='daily-list:release unlocks rollout and monitoring',
                   downstream_work_unlocked=[
                       {'task_id': 'rollout-1', 'owner': 'release-owner',
                        'work': 'Run the authorized rollout after approval.'},
@@ -307,6 +309,8 @@ class SystemAuditTests(unittest.TestCase):
             unlock_id='architecture-decision', task_id='architecture-1', owner='design-owner',
             human_effort='extended', risk_level='medium',
             risk_summary='The architecture direction has broader long-term consequences.',
+            downstream_impact='medium',
+            impact_basis='daily-list:architecture enables the later build',
             downstream_work_unlocked=[
                 {'task_id': 'design-build', 'owner': 'design-owner',
                  'work': 'Implement the selected architecture.'},
@@ -322,6 +326,7 @@ class SystemAuditTests(unittest.TestCase):
         }])
         self.assertEqual(plan['auto_decisions'], [])
         self.assertTrue(all(x['human_decision_required'] for x in plan['recommended_decisions']))
+        self.assertEqual(len(plan['all_unlocks']), 2)
 
     def test_human_unlocks_require_real_readiness_and_preserve_owners(self):
         with self.assertRaises(ValueError):
@@ -334,8 +339,9 @@ class SystemAuditTests(unittest.TestCase):
                              readiness_receipts=[], deadline=None)
         plan = prioritize_human_unlocks([conditional])
         self.assertEqual(plan['recommended_decisions'], [])
-        self.assertEqual(plan['deferred_not_ready'], [
-            {'unlock_id': 'release-decision', 'readiness': 'conditional'}])
+        self.assertEqual(plan['deferred_not_ready'][0]['unlock_id'], 'release-decision')
+        self.assertEqual(plan['deferred_not_ready'][0]['daily_priority_ref'],
+                         'daily-list:2026-10-08')
         with self.assertRaises(ValueError):
             prioritize_human_unlocks([unlock(), unlock(
                 unlock_id='conflicting-owner', owner='different-owner')])
@@ -345,6 +351,10 @@ class SystemAuditTests(unittest.TestCase):
             prioritize_human_unlocks([unlock(), unlock(
                 unlock_id='other-list', task_id='other-task',
                 daily_priority_ref='daily-list:another-day')])
+        with self.assertRaises(ValueError):
+            prioritize_human_unlocks([unlock(), unlock(
+                unlock_id='same-task-other-decision',
+                exact_decision='Make a conflicting decision for the same task.')])
 
     def test_parallel_work_dedupes_without_inventing_activity(self):
         same = unlock(unlock_id='release-decision-copy', task_id='release-2')
@@ -378,6 +388,25 @@ class SystemAuditTests(unittest.TestCase):
                      'work': 'Run rollout now.',
                      'authorization_ref': 'daily-list:already-authorized'},
                 ])])
+
+    def test_unlock_limit_preserves_ready_records_and_does_not_rank_by_task_count(self):
+        values = []
+        for index, name in enumerate(('a-one', 'b-two', 'c-three', 'd-four'), start=1):
+            downstream = [{'task_id': f'{name}-work', 'owner': f'{name}-owner',
+                           'work': 'One meaningful downstream outcome.'}]
+            if name == 'b-two':
+                downstream.append({'task_id': 'b-two-extra', 'owner': 'b-two-owner',
+                                   'work': 'A second downstream item.'})
+            values.append(unlock(
+                unlock_id=name, task_id=f'{name}-task', owner=f'{name}-owner',
+                deadline=None, downstream_impact='medium',
+                impact_basis='same daily-list impact class', downstream_work_unlocked=downstream,
+                parallel_authorized_work=[]))
+        plan = prioritize_human_unlocks(values, limit=3)
+        self.assertEqual([x['unlock_id'] for x in plan['recommended_decisions']],
+                         ['a-one', 'b-two', 'c-three'])
+        self.assertEqual([x['unlock_id'] for x in plan['ready_not_selected']], ['d-four'])
+        self.assertEqual(len(plan['all_unlocks']), 4)
 
 
 if __name__ == '__main__':

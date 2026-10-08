@@ -35,6 +35,7 @@ NEXT_ACTION_MODES = {"agent-supported", "human-only"}
 HUMAN_EFFORT = {"quick", "short", "extended"}
 RISK_LEVELS = {"low", "medium", "high", "critical"}
 READINESS_STATES = {"ready", "conditional", "not-ready"}
+DOWNSTREAM_IMPACT = {"high", "medium", "low"}
 REMEDY_BY_CLASS = {
     "legitimate-policy-limit": "respect-policy-limit",
     "missing-approval-provenance": "repair-approval-provenance",
@@ -301,13 +302,15 @@ def _owned_work(value, name, *, authorization_required=False):
 
 def human_unlock(*, unlock_id, task_id, owner, daily_priority_ref, daily_priority_rank,
                  human_effort, readiness, readiness_receipts, safety_ready,
-                 risk_level, risk_summary, downstream_work_unlocked, deadline,
+                 risk_level, risk_summary, downstream_impact, impact_basis,
+                 downstream_work_unlocked, deadline,
                  dependencies, shared_resources, exact_decision,
                  parallel_authorized_work=()):
     """Record one human-owned decision opportunity without deciding or dispatching it."""
     if (type(daily_priority_rank) is not int or daily_priority_rank < 1 or
             human_effort not in HUMAN_EFFORT or readiness not in READINESS_STATES or
-            risk_level not in RISK_LEVELS or safety_ready not in {True, False}):
+            risk_level not in RISK_LEVELS or downstream_impact not in DOWNSTREAM_IMPACT or
+            safety_ready not in {True, False}):
         raise ValueError("invalid human unlock priority, effort, readiness or risk")
     receipts = _text_list(readiness_receipts, "readiness receipts")
     if readiness == "ready" and (safety_ready is not True or not receipts):
@@ -326,6 +329,8 @@ def human_unlock(*, unlock_id, task_id, owner, daily_priority_ref, daily_priorit
         "readiness": readiness, "readiness_receipts": receipts,
         "safety_ready": safety_ready, "risk_level": risk_level,
         "risk_summary": _text(risk_summary, "risk summary"),
+        "downstream_impact": downstream_impact,
+        "impact_basis": _text(impact_basis, "downstream impact basis"),
         "downstream_work_unlocked": downstream, "deadline": deadline_value,
         "dependencies": _text_list(dependencies, "dependencies"),
         "shared_resources": _text_list(shared_resources, "shared resources"),
@@ -341,6 +346,7 @@ def prioritize_human_unlocks(unlocks, *, limit=3):
         raise ValueError("human unlock list and limit of one to three required")
     by_id = {}
     task_owners = {}
+    unlock_by_task = {}
     priority_refs = set()
     gated_tasks = set()
     for item in unlocks:
@@ -352,6 +358,9 @@ def prioritize_human_unlocks(unlocks, *, limit=3):
         by_id.setdefault(unlock_id, deepcopy(item))
         priority_refs.add(item["daily_priority_ref"])
         task_id, owner = item["task_id"], item["owner"]
+        if task_id in unlock_by_task and unlock_by_task[task_id]["unlock_id"] != unlock_id:
+            raise ValueError("one canonical human unlock decision is allowed per task")
+        unlock_by_task[task_id] = item
         if task_id in task_owners and task_owners[task_id] != owner:
             raise ValueError("task owner conflict")
         task_owners[task_id] = owner
@@ -366,10 +375,11 @@ def prioritize_human_unlocks(unlocks, *, limit=3):
 
     effort_order = {"quick": 0, "short": 1, "extended": 2}
     risk_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    impact_order = {"high": 0, "medium": 1, "low": 2}
     eligible = [x for x in by_id.values() if x["readiness"] == "ready" and x["safety_ready"]]
     eligible.sort(key=lambda x: (
         x["daily_priority_rank"], x["deadline"] is None, x["deadline"] or "",
-        risk_order[x["risk_level"]], -len(x["downstream_work_unlocked"]),
+        risk_order[x["risk_level"]], impact_order[x["downstream_impact"]],
         effort_order[x["human_effort"]], x["unlock_id"],
     ))
 
@@ -386,16 +396,18 @@ def prioritize_human_unlocks(unlocks, *, limit=3):
                 raise ValueError("conflicting duplicate parallel work")
             parallel_by_task.setdefault(task_id, deepcopy(work))
 
-    deferred = [{"unlock_id": x["unlock_id"], "readiness": x["readiness"]}
-                for x in by_id.values() if x not in eligible]
-    deferred.sort(key=lambda x: x["unlock_id"])
+    all_unlocks = sorted(by_id.values(), key=lambda x: x["unlock_id"])
+    deferred = sorted((x for x in by_id.values() if x not in eligible),
+                      key=lambda x: x["unlock_id"])
     return {
         "kind": "human-unlock-plan",
         "recommended_decisions": deepcopy(eligible[:limit]),
+        "ready_not_selected": deepcopy(eligible[limit:]),
         "parallel_authorized_work": [parallel_by_task[key] for key in sorted(parallel_by_task)],
-        "deferred_not_ready": deferred,
+        "deferred_not_ready": deepcopy(deferred),
+        "all_unlocks": deepcopy(all_unlocks),
         "auto_decisions": [],
-        "selection_basis": "daily priority, deadline, readiness/risk, downstream unlock, human effort",
+        "selection_basis": "daily priority, deadline, readiness/risk, receipt-backed downstream impact, human effort",
     }
 
 
