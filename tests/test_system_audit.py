@@ -28,7 +28,9 @@ def failure(**changes):
                   failure_class='transport-offline', source_receipt='tool:message-edit:error-1',
                   occurred_at='2026-10-08T01:00:00Z',
                   user_impact='The requested status was not visible.',
-                  authorization_state='not-required', approved_scope=None, approval_ref=None,
+                  authorization_state='not-required',
+                  operation_scope='Read-only audit of this exact messaging operation.',
+                  approved_scope=None, approval_ref=None,
                   retries_attempted=['one bounded retry returned the same error'],
                   evidence_attempted=['read the exact tool error receipt'], outcome='failed',
                   next_supported_action='Reconcile message state, then retry once after transport recovery.',
@@ -115,6 +117,11 @@ class SystemAuditTests(unittest.TestCase):
         self.assertEqual(artifact['history_publication'], 'proposed-not-appended')
         self.assertEqual(artifact['history_base']['revision'], 7)
         self.assertEqual(artifact['failure_ledger'][0]['failure_key'], 'transport:message-edit')
+        occurrence = artifact['failure_ledger'][0]['occurrences'][0]
+        for field in ('user_impact', 'authorization_state', 'operation_scope', 'approved_scope',
+                      'approval_ref', 'retries_attempted', 'evidence_attempted', 'outcome',
+                      'human_action', 'prevention_check'):
+            self.assertIn(field, occurrence)
         with self.assertRaises(ValueError):
             audit_artifact(audit_id='audit-20261008', revision=1, scope_ref='task:scope-1',
                 window_start='2026-10-07T00:00:00Z', window_end='2026-10-08T00:00:00Z',
@@ -153,12 +160,14 @@ class SystemAuditTests(unittest.TestCase):
             operation='forward alert-tuning context', target='verified child task',
             failure_class='missing-approval-provenance',
             authorization_state='missing-provenance',
+            operation_scope='Forward the preserved alert-tuning report to this child only.',
             source_receipt='child:rejection-2', occurred_at='2026-10-08T01:00:00Z',
             next_supported_action='Authenticate the original scoped user message.')
         current = failure(
             incident_id='handoff-tool-unavailable', failure_key='handoff:alert-tuning-capability',
             operation='forward alert-tuning context', target='verified child task',
             failure_class='unavailable-tool', authorization_state='verified-covered',
+            operation_scope='Forward the preserved alert-tuning report to this child only.',
             approved_scope='Forward the preserved alert-tuning report to this child only.',
             approval_ref='user-item:01a119bc-44cf-727c-a876-c681e10eefd0',
             source_receipt='child:task-messaging-tool-missing',
@@ -175,6 +184,7 @@ class SystemAuditTests(unittest.TestCase):
             incident_id='parent-old-session-not-found', failure_key='handoff:old-session',
             operation='forward alert-tuning context', target='verified older task session',
             failure_class='stale-session-id', authorization_state='verified-covered',
+            operation_scope='Forward the preserved alert-tuning report to this child only.',
             approved_scope='Forward the preserved alert-tuning report to this child only.',
             approval_ref='user-item:01a119bc-44cf-727c-a876-c681e10eefd0',
             source_receipt='cloud-thread:CloudThreadNotFoundError',
@@ -184,6 +194,7 @@ class SystemAuditTests(unittest.TestCase):
             incident_id='placement-format-unsupported', failure_key='handoff:placement-format',
             operation='read alert-tuning task context', target='original task placement',
             failure_class='stale-session-placement', authorization_state='verified-covered',
+            operation_scope='Read the original alert-tuning task context for this handoff only.',
             approved_scope='Read the original alert-tuning task context for this handoff only.',
             approval_ref='user-item:01a119bc-44cf-727c-a876-c681e10eefd0',
             source_receipt='cloud-thread:unsupported-placement-format-v1',
@@ -194,11 +205,13 @@ class SystemAuditTests(unittest.TestCase):
                          {'unavailable-tool', 'stale-session-id', 'stale-session-placement'})
         with self.assertRaises(ValueError):
             failure(failure_class='missing-approval-provenance',
-                    authorization_state='verified-covered', approved_scope='same scope',
+                    authorization_state='verified-covered', operation_scope='same scope',
+                    approved_scope='same scope',
                     approval_ref='user:item-1')
         with self.assertRaises(ValueError):
             failure(failure_class='unavailable-tool', authorization_state='verified-covered',
-                    approved_scope='same scope', approval_ref='user:item-1',
+                    operation_scope='same scope', approved_scope='same scope',
+                    approval_ref='user:item-1',
                     next_supported_action='Ask the user for approval again.')
         with self.assertRaises(ValueError):
             failure(failure_class='missing-approval-provenance',
@@ -206,11 +219,18 @@ class SystemAuditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             failure(failure_class='unavailable-tool',
                     authorization_state='missing-provenance')
+        with self.assertRaises(ValueError):
+            failure(failure_class='unavailable-tool', authorization_state='verified-covered',
+                    operation_scope='forward report A', approved_scope='forward report B',
+                    approval_ref='user:item-1')
 
     def test_guards_are_respected_and_human_only_steps_are_explicit(self):
         with self.assertRaises(ValueError):
             failure(failure_class='legitimate-policy-limit', authorization_state='policy-denied',
                     next_supported_action='Bypass the policy guard and retry.')
+        with self.assertRaises(ValueError):
+            failure(failure_class='legitimate-policy-limit', authorization_state='policy-denied',
+                    next_supported_action='Route around the denied action using another channel.')
         with self.assertRaises(ValueError):
             failure(next_action_mode='human-only')
         human = failure(next_action_mode='human-only',
@@ -231,6 +251,8 @@ class SystemAuditTests(unittest.TestCase):
         self.assertEqual(grouped[0]['repeat_count'], 1)
         self.assertTrue(grouped[0]['recurrence_after_pass'])
         self.assertEqual(grouped[0]['prevention_status'], 'recurrence-observed-after-pass')
+        self.assertEqual(grouped[0]['occurrences'][1]['source_receipt'],
+                         'tool:message-edit:error-2')
         with self.assertRaises(ValueError):
             synthesize_failures([failure(incident_id='incident-2',
                                          occurred_at='2026-10-08T02:00:00Z')],
@@ -238,6 +260,11 @@ class SystemAuditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             synthesize_failures([repeat], prior_incidents=[failure(
                 incident_id='incident-2', source_receipt='different-receipt')])
+        with self.assertRaises(ValueError):
+            synthesize_failures([failure(repeat_of='incident-1')])
+        with self.assertRaises(ValueError):
+            synthesize_failures([failure(), failure(
+                incident_id='incident-2', repeat_of='incident-1')])
 
     def test_prevention_results_require_receipts_and_do_not_overclaim(self):
         with self.assertRaises(ValueError):

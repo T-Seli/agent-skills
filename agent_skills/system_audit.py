@@ -59,7 +59,8 @@ FAILURE_DOMAINS = {
 _APPROVAL_FAILURES = {"missing-approval-provenance", "incorrect-approval-provenance"}
 _APPROVAL_REQUEST = re.compile(r"\b(?:ask|request)\b.{0,40}\bapproval\b|\bapprove\s+again\b", re.I)
 _GUARD_BYPASS = re.compile(
-    r"\b(?:bypass|circumvent|disable|override)\b.{0,40}\b(?:guard|policy|denial|authorization)\b|"
+    r"\b(?:route|work)\s+around\b|"
+    r"\b(?:bypass|circumvent|disable|override|evade)\b.{0,40}\b(?:guard|policy|denial|authorization)\b|"
     r"\bforce\b.{0,40}\bdenied\b", re.I)
 
 
@@ -91,7 +92,8 @@ def _utc(value, name):
 
 def failure_incident(*, incident_id, failure_key, operation, target, failure_class,
                      source_receipt, occurred_at, user_impact, authorization_state,
-                     approved_scope, approval_ref, retries_attempted, evidence_attempted,
+                     operation_scope, approved_scope, approval_ref,
+                     retries_attempted, evidence_attempted,
                      outcome, next_supported_action, owner, next_action_mode,
                      prevention_check, prevention_state="untested", prevention_receipt=None,
                      repeat_of=None, human_action=None, verified=False):
@@ -120,13 +122,21 @@ def failure_incident(*, incident_id, failure_key, operation, target, failure_cla
         raise ValueError("invalid prevention state")
     if prevention_state in {"passed", "failed"} and not prevention_receipt:
         raise ValueError("prevention result requires a receipt")
+    operation_scope_value = _text(operation_scope, "operation scope")
     if authorization_state == "verified-covered":
         if not approved_scope or not approval_ref:
             raise ValueError("covered authorization requires scope and receipt")
+        approved_scope_value = _text(approved_scope, "approved scope")
+        approval_ref_value = _text(approval_ref, "approval reference")
+        if approved_scope_value != operation_scope_value:
+            raise ValueError("approved scope must exactly match the operation scope")
         if failure_class in _APPROVAL_FAILURES:
             raise ValueError("covered authorization cannot remain an approval blocker")
     elif approved_scope is not None or approval_ref is not None:
         raise ValueError("unverified authorization cannot carry approved scope")
+    else:
+        approved_scope_value = None
+        approval_ref_value = None
     next_action = _text(next_supported_action, "next supported action")
     if _GUARD_BYPASS.search(next_action):
         raise ValueError("next action may not route around a guard or denial")
@@ -145,8 +155,9 @@ def failure_incident(*, incident_id, failure_key, operation, target, failure_cla
         "occurred_at": _utc(occurred_at, "occurred at"),
         "user_impact": _text(user_impact, "user impact"),
         "authorization_state": authorization_state,
-        "approved_scope": _text(approved_scope, "approved scope", optional=True),
-        "approval_ref": _text(approval_ref, "approval reference", optional=True),
+        "operation_scope": operation_scope_value,
+        "approved_scope": approved_scope_value,
+        "approval_ref": approval_ref_value,
         "retries_attempted": _text_list(retries_attempted, "retries attempted"),
         "evidence_attempted": _text_list(evidence_attempted, "evidence attempted"),
         "outcome": outcome, "remedy_kind": REMEDY_BY_CLASS[failure_class],
@@ -167,12 +178,15 @@ def blocker_update(prior, current):
     for item in (prior, current):
         if not isinstance(item, dict) or item.get("kind") != "audit-failure-incident":
             raise ValueError("validated failure incidents required")
-    if (prior["operation"], prior["target"]) != (current["operation"], current["target"]):
-        raise ValueError("blocker transition must retain operation and target")
+    if ((prior["operation"], prior["target"], prior["operation_scope"]) !=
+            (current["operation"], current["target"], current["operation_scope"])):
+        raise ValueError("blocker transition must retain operation, target and scope")
     if current["occurred_at"] < prior["occurred_at"]:
         raise ValueError("blocker transition cannot move backward in time")
     if (prior["failure_class"] in _APPROVAL_FAILURES and
             current["authorization_state"] == "verified-covered"):
+        if current.get("approved_scope") != current.get("operation_scope"):
+            raise ValueError("clear authorization must match the current operation scope")
         if current["failure_class"] in _APPROVAL_FAILURES:
             raise ValueError("clear authorization must replace the approval blocker")
         return {"decision": "replace-blocker", "from_failure_class": prior["failure_class"],
@@ -213,8 +227,9 @@ def synthesize_failures(incidents, *, prior_incidents=()):
         if repeat_of is None:
             continue
         previous = by_id.get(repeat_of)
-        if (previous is None or _incident_fingerprint(previous) != _incident_fingerprint(item) or
-                previous["occurred_at"] > item["occurred_at"]):
+        if (repeat_of == item["incident_id"] or previous is None or
+                _incident_fingerprint(previous) != _incident_fingerprint(item) or
+                previous["occurred_at"] >= item["occurred_at"]):
             raise ValueError("repeat occurrence must reference the same earlier failure")
     groups = {}
     for item in by_id.values():
@@ -254,7 +269,8 @@ def synthesize_failures(incidents, *, prior_incidents=()):
                        "prevention_status": prevention_status,
                        "prevention_receipts": sorted({x["prevention_receipt"] for x in values
                                                        if x["prevention_receipt"]}),
-                       "recurrence_after_pass": recurrence_after_pass})
+                       "recurrence_after_pass": recurrence_after_pass,
+                       "occurrences": deepcopy(values)})
     result.sort(key=lambda x: (x["failure_key"], x["failure_class"]))
     return result
 
