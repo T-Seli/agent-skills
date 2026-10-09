@@ -52,8 +52,15 @@ class SourceHistoryCloseoutTests(unittest.TestCase):
             lock.rmdir()
             (main / ".git/info/exclude").write_text("ignored.bin\n")
             (main / "ignored.bin").write_text("keep")
-            self.assertFalse(main_sync_gate(main, base="main", repository="origin",
-                                            fetched_sha=sha, lock_path=lock)["ready"])
+            self.assertTrue(main_sync_gate(main, base="main", repository="origin",
+                                           fetched_sha=sha, lock_path=lock)["ready"])
+            self.assertEqual((main / "ignored.bin").read_text(), "keep")
+            (main / "untracked.bin").write_text("user work")
+            result = main_sync_gate(main, base="main", repository="origin",
+                                    fetched_sha=sha, lock_path=lock)
+            self.assertFalse(result["ready"])
+            self.assertIn("tracked or non-ignored untracked", result["reason"])
+            self.assertEqual((main / "untracked.bin").read_text(), "user work")
 
     def test_runtime_receipt_separates_installed_loaded_and_exercised_behavior(self):
         with tempfile.TemporaryDirectory() as tmp:

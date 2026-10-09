@@ -44,8 +44,8 @@ def main_sync_gate(main, *, base, repository, fetched_sha, lock_path):
             raise ValueError("origin repository mismatch")
         if _git(main, "symbolic-ref", "--short", "HEAD") != base:
             raise ValueError("main checkout branch mismatch")
-        if _git(main, "status", "--porcelain", "--untracked-files=all", "--ignored"):
-            raise ValueError("main checkout is not fully clean")
+        if _git(main, "status", "--porcelain", "--untracked-files=all"):
+            raise ValueError("main checkout has tracked or non-ignored untracked changes")
         lock = Path(lock_path)
         if lock.resolve(strict=False) != _deploy_lock(main).resolve(strict=False):
             raise ValueError("lock path does not match repository deploy lock")
