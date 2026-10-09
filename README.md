@@ -64,8 +64,9 @@ non-ignored worktree, an ancestor-only update and a final race check. It never
 fetches, stages, lists ignored paths or removes ignored content.
 `activate-local-release` accepts only native targets for which reconciliation
 returned `install-approved-release-at-safe-checkpoint`, verifies the immutable
-release pin and rollback references, and invokes that release's transactional
-installer. Its receipt still requires post-activation load and behavior
+release pin, byte/mode-identical tracked tree against an exact clean source
+checkout, absence of extra release entries, and rollback references, then invokes
+that release's transactional installer. Its receipt still requires post-activation load and behavior
 reconciliation; it never changes settings or hook trust, restarts a runtime,
 publishes cloud state, or claims system-wide adoption.
 

@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -96,6 +97,33 @@ class ReleaseMaintenanceTests(unittest.TestCase):
         return {"main": str(main), "base": "main", "repository": "owner/repo",
                 "fetched_sha": sha, "lock_path": str(lock), "lock_owner": owner}
 
+    def activation_fixture(self, root):
+        origin = root / "owner" / "repo.git"
+        source = root / "source"
+        origin.parent.mkdir()
+        run("git", "init", "-q", "--bare", "--initial-branch=main", str(origin))
+        run("git", "clone", "-q", str(origin), str(source))
+        run("git", "-C", str(source), "config", "user.name", "Fixture")
+        run("git", "-C", str(source), "config", "user.email", "fixture@example.invalid")
+        installer = source / "install.sh"
+        installer.write_text("#!/bin/sh\nexit 0\n")
+        installer.chmod(0o755)
+        body = source / "skills/fixture/SKILL.md"
+        body.parent.mkdir(parents=True)
+        body.write_text("fixture\n")
+        run("git", "-C", str(source), "add", "install.sh", "skills/fixture/SKILL.md")
+        run("git", "-C", str(source), "commit", "-qm", "release")
+        run("git", "-C", str(source), "push", "-q", "origin", "main")
+        commit = run("git", "-C", str(source), "rev-parse", "HEAD")
+        tree = run("git", "-C", str(source), "rev-parse", "HEAD^{tree}")
+        release = root / commit[:7]
+        release.mkdir()
+        shutil.copy2(installer, release / "install.sh")
+        shutil.copytree(source / "skills", release / "skills")
+        (release / ".release-pin.json").write_text(json.dumps({
+            "source": "owner/repo", "commit": commit, "tree": tree}))
+        return source, release, commit, tree
+
     def test_fast_forward_preserves_ignored_content_and_exact_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, seed, main = self.repository(Path(tmp))
@@ -162,12 +190,8 @@ class ReleaseMaintenanceTests(unittest.TestCase):
 
     def test_activation_requires_reconciled_action_pin_and_rollback_provenance(self):
         with tempfile.TemporaryDirectory() as tmp:
-            release = Path(tmp) / COMMIT[:7]
-            release.mkdir()
-            (release / ".release-pin.json").write_text(json.dumps({
-                "source": "owner/repo", "commit": COMMIT, "tree": TREE}))
+            source, release, commit, tree = self.activation_fixture(Path(tmp))
             installer = release / "install.sh"
-            installer.write_text("#!/bin/sh\nexit 0\n")
             calls = []
 
             def runner(argv, **kwargs):
@@ -178,10 +202,12 @@ class ReleaseMaintenanceTests(unittest.TestCase):
 
             old = observation("verified", commit=OLD_COMMIT, tree=OLD_TREE,
                               dimension="installed")
-            params = {"release_root": str(release), "target": "codex",
+            params = {"release_root": str(release), "source_checkout": str(source),
+                      "target": "codex",
                       "safe_checkpoint_ref": "fixture:safe-window"}
-            result = maintain_release(manifest(), state(installed=old),
-                                      request("activate-local-release", params), runner=runner)
+            result = maintain_release(manifest(), state(commit, tree, installed=old),
+                                      request("activate-local-release", params,
+                                              commit=commit, tree=tree), runner=runner)
             receipt = result["action_receipt"]
             self.assertEqual(calls[0][0], [str(installer.resolve()), "--target=codex"])
             self.assertEqual(receipt["rollback_refs"], {"local-codex": "release:previous"})
@@ -190,34 +216,51 @@ class ReleaseMaintenanceTests(unittest.TestCase):
             self.assertFalse(receipt["settings_or_trust_changed"])
 
             (release / ".release-pin.json").write_text(json.dumps({
-                "source": "owner/repo", "commit": "f" * 40, "tree": TREE}))
+                "source": "owner/repo", "commit": "f" * 40, "tree": tree}))
             with self.assertRaisesRegex(ValueError, "pin differs"):
-                maintain_release(manifest(), state(installed=old),
-                                 request("activate-local-release", params), runner=runner)
+                maintain_release(manifest(), state(commit, tree, installed=old),
+                                 request("activate-local-release", params,
+                                         commit=commit, tree=tree), runner=runner)
             self.assertEqual(len(calls), 1)
 
     def test_activation_rejects_unrecommended_or_loaded_drift(self):
         with tempfile.TemporaryDirectory() as tmp:
-            release = Path(tmp) / COMMIT[:7]
-            release.mkdir()
-            (release / ".release-pin.json").write_text(json.dumps({
-                "source": "owner/repo", "commit": COMMIT, "tree": TREE}))
-            (release / "install.sh").write_text("#!/bin/sh\nexit 0\n")
-            params = {"release_root": str(release), "target": "codex",
+            source, release, commit, tree = self.activation_fixture(Path(tmp))
+            params = {"release_root": str(release), "source_checkout": str(source),
+                      "target": "codex",
                       "safe_checkpoint_ref": "fixture:safe-window"}
-            ready = state(installed=observation("verified", commit=COMMIT, tree=TREE,
-                                                dimension="installed"))
+            ready = state(commit, tree, installed=observation(
+                "verified", commit=commit, tree=tree, dimension="installed"))
             with self.assertRaisesRegex(ValueError, "not recommended"):
                 maintain_release(manifest(), ready,
-                                 request("activate-local-release", params))
+                                 request("activate-local-release", params,
+                                         commit=commit, tree=tree))
 
-            value = state(installed=observation("verified", commit=OLD_COMMIT,
-                                                tree=OLD_TREE, dimension="installed"))
+            value = state(commit, tree, installed=observation(
+                "verified", commit=OLD_COMMIT, tree=OLD_TREE, dimension="installed"))
             value["targets"]["local-codex"]["loaded"] = observation(
                 "verified", commit=OLD_COMMIT, tree=OLD_TREE)
             with self.assertRaisesRegex(ValueError, "runtime-loaded drift"):
                 maintain_release(manifest(), value,
-                                 request("activate-local-release", params))
+                                 request("activate-local-release", params,
+                                         commit=commit, tree=tree))
+
+    def test_activation_rejects_tampered_or_extra_release_content(self):
+        for case in ("tampered", "extra"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                source, release, commit, tree = self.activation_fixture(Path(tmp))
+                if case == "tampered":
+                    (release / "skills/fixture/SKILL.md").write_text("tampered\n")
+                else:
+                    (release / "untracked.txt").write_text("extra\n")
+                params = {"release_root": str(release), "source_checkout": str(source),
+                          "target": "codex", "safe_checkpoint_ref": "fixture:safe-window"}
+                old = observation("verified", commit=OLD_COMMIT, tree=OLD_TREE,
+                                  dimension="installed")
+                with self.assertRaisesRegex(ValueError, "release (file differs|contents differ)"):
+                    maintain_release(manifest(), state(commit, tree, installed=old),
+                                     request("activate-local-release", params,
+                                             commit=commit, tree=tree))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 """Approval-bound release maintenance actions with explicit lifecycle receipts."""
 
+import hashlib
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -119,7 +121,7 @@ def _fast_forward(parameters, desired):
         raise ValueError("remote base changed after preflight")
     if local != fetched:
         merged = subprocess.run(["git", "-C", str(main), "merge", "--ff-only",
-                                 "--no-overwrite-ignore", remote_ref],
+                                 "--no-overwrite-ignore", fetched],
                                 capture_output=True, text=True)
         if merged.returncode != 0:
             raise ValueError("fast-forward refused to preserve working content")
@@ -156,8 +158,66 @@ def _installer_targets(manifest, reconciliation, target):
     return selected
 
 
+def _release_entries(root):
+    entries = set()
+    for current, directories, files in os.walk(root, followlinks=False):
+        current = Path(current)
+        for name in [*directories, *files]:
+            entries.add((current / name).relative_to(root).as_posix())
+    return entries
+
+
+def _verify_release_root(release, source, desired):
+    if source.is_symlink():
+        raise ValueError("source checkout must not be a symlink")
+    source = source.resolve(strict=True)
+    if Path(_git(source, "rev-parse", "--show-toplevel")) != source:
+        raise ValueError("source checkout root mismatch")
+    if not _repository_matches(_git(source, "remote", "get-url", "origin"), desired["source"]):
+        raise ValueError("source checkout repository mismatch")
+    if (_git(source, "rev-parse", "HEAD^{commit}") != desired["commit"] or
+            _git(source, "rev-parse", "HEAD^{tree}") != desired["tree"]):
+        raise ValueError("source checkout differs from approved commit and tree")
+    _clean_without_ignored(source)
+
+    raw = subprocess.run(["git", "-C", str(source), "ls-files", "-s", "-z"],
+                         check=True, capture_output=True, text=True).stdout
+    tracked = {}
+    for record in raw.split("\0"):
+        if not record:
+            continue
+        metadata, name = record.split("\t", 1)
+        mode = metadata.split(" ", 1)[0]
+        if mode not in {"100644", "100755", "120000"}:
+            raise ValueError("unsupported tracked entry in approved release")
+        tracked[name] = mode
+    expected_entries = {".release-pin.json"}
+    for name in tracked:
+        path = Path(name)
+        expected_entries.add(path.as_posix())
+        expected_entries.update(parent.as_posix() for parent in path.parents
+                                if parent.as_posix() != ".")
+    if _release_entries(release) != expected_entries:
+        raise ValueError("release contents differ from the approved tracked tree")
+    for name, mode in tracked.items():
+        source_path, release_path = source / name, release / name
+        if mode == "120000":
+            if (not source_path.is_symlink() or not release_path.is_symlink() or
+                    os.readlink(source_path) != os.readlink(release_path)):
+                raise ValueError("release symlink differs from the approved tracked tree")
+        else:
+            if (source_path.is_symlink() or release_path.is_symlink() or
+                    not source_path.is_file() or not release_path.is_file() or
+                    hashlib.sha256(source_path.read_bytes()).digest() !=
+                    hashlib.sha256(release_path.read_bytes()).digest() or
+                    bool(source_path.stat().st_mode & 0o111) != bool(release_path.stat().st_mode & 0o111)):
+                raise ValueError("release file differs from the approved tracked tree")
+    return source
+
+
 def _activate(manifest, state, reconciliation, parameters, desired, runner):
-    value = _exact_dict(parameters, {"release_root", "target", "safe_checkpoint_ref"},
+    value = _exact_dict(parameters,
+                        {"release_root", "source_checkout", "target", "safe_checkpoint_ref"},
                         "local activation parameters")
     target = value["target"]
     if target not in _TARGET_ADAPTERS:
@@ -179,6 +239,7 @@ def _activate(manifest, state, reconciliation, parameters, desired, runner):
         raise ValueError("immutable release pin or installer unavailable")
     if json.loads(pin.read_text(encoding="utf-8")) != desired:
         raise ValueError("immutable release pin differs from approval")
+    source = _verify_release_root(release, Path(value["source_checkout"]), desired)
     rollback_refs = {target_id: state["targets"][target_id]["rollback_ref"]
                      for target_id in selected}
     if any(not isinstance(ref, str) or not ref.strip() for ref in rollback_refs.values()):
@@ -195,6 +256,7 @@ def _activate(manifest, state, reconciliation, parameters, desired, runner):
         "action": "activate-local-release",
         "result": "activation-performed-awaiting-post-activation-reconciliation",
         "release_root": str(release),
+        "verified_source_checkout": str(source),
         "target": target,
         "selected_targets": selected,
         "safe_checkpoint_ref": checkpoint_ref,
