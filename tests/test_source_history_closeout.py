@@ -93,6 +93,19 @@ class SourceHistoryCloseoutTests(unittest.TestCase):
                                   'receipt_ref': 'fixture:behavior-1'}])
             self.assertFalse(mismatch['installed_ready'])
             self.assertFalse(mismatch['ready'])
+            route.unlink()
+            route.symlink_to(body)
+            duplicate = {**bundle, 'sources': [
+                {'path': 'skills/fixture.md', 'sha256': '0' * 64},
+                {'path': 'skills/fixture.md', 'sha256': digest}],
+                'load_receipt': {**bundle['load_receipt'], 'sha256': '0' * 64}}
+            with self.assertRaisesRegex(ValueError, 'duplicate loaded source path'):
+                runtime_capability_receipt(
+                    root, runtime='codex', expected_commit=commit, expected_tree=tree,
+                    installed_routes={'fixture': {'route': route, 'source': 'skills/fixture.md'}},
+                    loaded_bundle=duplicate,
+                    behavior_checks=[{'id': 'selected-body-used', 'outcome': 'pass',
+                                      'receipt_ref': 'fixture:behavior-1'}])
 
     def test_bound_closeout_requires_current_independent_artifact_inspection(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -100,11 +100,15 @@ def runtime_capability_receipt(release_root, *, runtime, expected_commit, expect
     sources = loaded_bundle.get("sources") if isinstance(loaded_bundle, dict) else None
     load_receipt = loaded_bundle.get("load_receipt") if isinstance(loaded_bundle, dict) else None
     load_checks = {}
+    seen_sources = set()
     if isinstance(sources, list):
         for source in sources:
             if not isinstance(source, dict) or not isinstance(source.get("path"), str) or not isinstance(source.get("sha256"), str):
                 load_checks["invalid-source"] = False
                 continue
+            if source["path"] in seen_sources:
+                raise ValueError("duplicate loaded source path")
+            seen_sources.add(source["path"])
             candidate = root / source["path"]
             safe = (not candidate.is_symlink() and candidate.resolve(strict=False).is_relative_to(root) and
                     candidate.is_file())
@@ -118,6 +122,7 @@ def runtime_capability_receipt(release_root, *, runtime, expected_commit, expect
             load_receipt.get("runtime") == runtime and selected and
             load_receipt.get("selected_path") in route_sources.values() and
             selected.get("sha256") == load_receipt.get("sha256") and
+            load_checks.get(load_receipt.get("selected_path")) is True and
             all(isinstance(load_receipt.get(key), str) and load_receipt[key].strip()
                 for key in ("session_id", "reader", "read_ref", "selected_path", "sha256")) and
             re.fullmatch(r"[0-9a-f]{64}", load_receipt["sha256"]))
