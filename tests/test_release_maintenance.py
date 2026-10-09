@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from agent_skills.release_maintenance import maintain_release
 
@@ -140,7 +141,37 @@ class ReleaseMaintenanceTests(unittest.TestCase):
             self.assertEqual(run("git", "-C", str(main), "rev-parse", "main"), sha)
             self.assertEqual(ignored.read_text(), "preserve\n")
             self.assertEqual(receipt["ignored_content"], "preserved-not-enumerated")
+            self.assertTrue(receipt["synchronized"])
             self.assertFalse(result["system_wide_claim"])
+
+    def test_remote_advance_after_exact_merge_returns_reconciliation_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, seed, main = self.repository(Path(tmp))
+            approved = self.advance(seed, main)
+            params = self.main_parameters(main, approved)
+            (seed / "release.txt").write_text("three\n")
+            run("git", "-C", str(seed), "add", "release.txt")
+            run("git", "-C", str(seed), "commit", "-qm", "advance again")
+            run("git", "-C", str(seed), "push", "-q", "origin", "main")
+            latest = run("git", "-C", str(seed), "rev-parse", "HEAD")
+            real_run = subprocess.run
+
+            def racing_run(argv, **kwargs):
+                result = real_run(argv, **kwargs)
+                if len(argv) > 3 and argv[0] == "git" and argv[3] == "merge":
+                    real_run(["git", "-C", str(main), "fetch", "-q", "origin"], check=True)
+                return result
+
+            with mock.patch("agent_skills.release_maintenance.subprocess.run", side_effect=racing_run):
+                result = maintain_release(manifest(), state(approved),
+                                          request("fast-forward-main", params,
+                                                  commit=approved))
+            receipt = result["action_receipt"]
+            self.assertEqual(run("git", "-C", str(main), "rev-parse", "main"), approved)
+            self.assertEqual(receipt["remote_after"], latest)
+            self.assertFalse(receipt["synchronized"])
+            self.assertEqual(receipt["result"], "approved-commit-landed-remote-advanced")
+            self.assertTrue(result["post_action_reconciliation_required"])
 
     def test_dirty_diverged_wrong_lock_and_missing_mode_never_advance(self):
         for case in ("dirty", "diverged", "lock", "mode"):

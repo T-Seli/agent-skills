@@ -129,16 +129,21 @@ def _fast_forward(parameters, desired):
     _lock_owner(lock, owner)
     _clean_without_ignored(main)
     after = _git(main, "rev-parse", "--verify", f"refs/heads/{base}^{{commit}}")
-    if after != fetched or _git(main, "rev-parse", "--verify", f"{remote_ref}^{{commit}}") != fetched:
-        raise RuntimeError("post-fast-forward identity mismatch")
+    if after != fetched:
+        raise RuntimeError("post-fast-forward local identity mismatch")
+    remote_after = _git(main, "rev-parse", "--verify", f"{remote_ref}^{{commit}}")
+    synchronized = remote_after == fetched
     return {
         "action": "fast-forward-main",
-        "result": "already-current" if local == fetched else "fast-forwarded",
+        "result": (("already-current" if local == fetched else "fast-forwarded")
+                   if synchronized else "approved-commit-landed-remote-advanced"),
         "repository": repository,
         "base": base,
         "before": local,
         "after": after,
         "fetched_sha": fetched,
+        "remote_after": remote_after,
+        "synchronized": synchronized,
         "lock_owner": owner,
         "ignored_content": "preserved-not-enumerated",
         "activation": "not-performed",
@@ -290,7 +295,9 @@ def maintain_release(manifest, state, request, *, runner=subprocess.run):
         "desired": reconciliation["desired"],
         "reviewer_admission": admission,
         "action_receipt": action,
-        "post_action_reconciliation_required": approval["action"] == "activate-local-release",
+        "post_action_reconciliation_required": (
+            approval["action"] == "activate-local-release" or
+            not action.get("synchronized", True)),
         "system_wide_claim": False,
         "scheduler_created": False,
     }
