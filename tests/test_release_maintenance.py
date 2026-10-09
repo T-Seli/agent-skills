@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from sys import executable
 from unittest import mock
 
 from agent_skills.release_maintenance import maintain_release
@@ -143,6 +144,28 @@ class ReleaseMaintenanceTests(unittest.TestCase):
             self.assertEqual(receipt["ignored_content"], "preserved-not-enumerated")
             self.assertTrue(receipt["synchronized"])
             self.assertFalse(result["system_wide_claim"])
+
+    def test_cli_consumes_one_approved_action_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, seed, main = self.repository(root)
+            sha = self.advance(seed, main)
+            inputs = {
+                "manifest.json": manifest(),
+                "state.json": state(sha),
+                "request.json": request("fast-forward-main",
+                                        self.main_parameters(main, sha), commit=sha),
+            }
+            for name, value in inputs.items():
+                (root / name).write_text(json.dumps(value))
+            result = subprocess.run(
+                [executable, "-m", "agent_skills.safeguard_cli", "maintain-release",
+                 str(root / "manifest.json"), str(root / "state.json"),
+                 str(root / "request.json")], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            receipt = json.loads(result.stdout)
+            self.assertEqual(receipt["action_receipt"]["after"], sha)
+            self.assertEqual(receipt["authorization_ref"], "approval:fixture")
 
     def test_remote_advance_after_exact_merge_returns_reconciliation_receipt(self):
         with tempfile.TemporaryDirectory() as tmp:
