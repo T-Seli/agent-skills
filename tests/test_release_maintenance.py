@@ -134,9 +134,11 @@ class ReleaseMaintenanceTests(unittest.TestCase):
             ignored.parent.mkdir()
             ignored.write_text("preserve\n")
             sha = self.advance(seed, main)
+            tree = run("git", "-C", str(main), "rev-parse", f"{sha}^{{tree}}")
             params = self.main_parameters(main, sha)
-            result = maintain_release(manifest(), state(sha),
-                                      request("fast-forward-main", params, commit=sha))
+            result = maintain_release(manifest(), state(sha, tree),
+                                      request("fast-forward-main", params,
+                                              commit=sha, tree=tree))
             receipt = result["action_receipt"]
             self.assertEqual(receipt["result"], "fast-forwarded")
             self.assertEqual(run("git", "-C", str(main), "rev-parse", "main"), sha)
@@ -150,11 +152,13 @@ class ReleaseMaintenanceTests(unittest.TestCase):
             root = Path(tmp)
             _, seed, main = self.repository(root)
             sha = self.advance(seed, main)
+            tree = run("git", "-C", str(main), "rev-parse", f"{sha}^{{tree}}")
             inputs = {
                 "manifest.json": manifest(),
-                "state.json": state(sha),
+                "state.json": state(sha, tree),
                 "request.json": request("fast-forward-main",
-                                        self.main_parameters(main, sha), commit=sha),
+                                        self.main_parameters(main, sha),
+                                        commit=sha, tree=tree),
             }
             for name, value in inputs.items():
                 (root / name).write_text(json.dumps(value))
@@ -171,6 +175,7 @@ class ReleaseMaintenanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _, seed, main = self.repository(Path(tmp))
             approved = self.advance(seed, main)
+            tree = run("git", "-C", str(main), "rev-parse", f"{approved}^{{tree}}")
             params = self.main_parameters(main, approved)
             (seed / "release.txt").write_text("three\n")
             run("git", "-C", str(seed), "add", "release.txt")
@@ -186,9 +191,9 @@ class ReleaseMaintenanceTests(unittest.TestCase):
                 return result
 
             with mock.patch("agent_skills.release_maintenance.subprocess.run", side_effect=racing_run):
-                result = maintain_release(manifest(), state(approved),
+                result = maintain_release(manifest(), state(approved, tree),
                                           request("fast-forward-main", params,
-                                                  commit=approved))
+                                                  commit=approved, tree=tree))
             receipt = result["action_receipt"]
             self.assertEqual(run("git", "-C", str(main), "rev-parse", "main"), approved)
             self.assertEqual(receipt["remote_after"], latest)
@@ -201,6 +206,7 @@ class ReleaseMaintenanceTests(unittest.TestCase):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 _, seed, main = self.repository(Path(tmp))
                 sha = self.advance(seed, main)
+                tree = run("git", "-C", str(main), "rev-parse", f"{sha}^{{tree}}")
                 before = run("git", "-C", str(main), "rev-parse", "main")
                 params = self.main_parameters(main, sha)
                 if case == "dirty":
@@ -214,10 +220,10 @@ class ReleaseMaintenanceTests(unittest.TestCase):
                     before = run("git", "-C", str(main), "rev-parse", "main")
                 elif case == "lock":
                     (Path(params["lock_path"]) / "owner").write_text("someone-else\n")
-                value = request("fast-forward-main", params, commit=sha,
+                value = request("fast-forward-main", params, commit=sha, tree=tree,
                                 observed=None if case == "mode" else "automatic")
                 with self.assertRaises(ValueError):
-                    maintain_release(manifest(), state(sha), value)
+                    maintain_release(manifest(), state(sha, tree), value)
                 self.assertEqual(run("git", "-C", str(main), "rev-parse", "main"), before)
                 if case == "dirty":
                     self.assertEqual((main / "user-work.txt").read_text(), "keep\n")
@@ -234,13 +240,28 @@ class ReleaseMaintenanceTests(unittest.TestCase):
             run("git", "-C", str(seed), "push", "-q", "origin", "main")
             run("git", "-C", str(main), "fetch", "-q", "origin")
             sha = run("git", "-C", str(main), "rev-parse", "origin/main")
+            tree = run("git", "-C", str(main), "rev-parse", f"{sha}^{{tree}}")
             before = run("git", "-C", str(main), "rev-parse", "main")
             params = self.main_parameters(main, sha)
             with self.assertRaisesRegex(ValueError, "preserve working content"):
-                maintain_release(manifest(), state(sha),
-                                 request("fast-forward-main", params, commit=sha))
+                maintain_release(manifest(), state(sha, tree),
+                                 request("fast-forward-main", params,
+                                         commit=sha, tree=tree))
             self.assertEqual(run("git", "-C", str(main), "rev-parse", "main"), before)
             self.assertEqual(protected.read_text(), "user-owned\n")
+
+    def test_wrong_approved_tree_never_advances_main(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, seed, main = self.repository(Path(tmp))
+            sha = self.advance(seed, main)
+            before = run("git", "-C", str(main), "rev-parse", "main")
+            params = self.main_parameters(main, sha)
+            wrong_tree = "f" * 40
+            with self.assertRaisesRegex(ValueError, "commit tree differs"):
+                maintain_release(manifest(), state(sha, wrong_tree),
+                                 request("fast-forward-main", params,
+                                         commit=sha, tree=wrong_tree))
+            self.assertEqual(run("git", "-C", str(main), "rev-parse", "main"), before)
 
     def test_activation_requires_reconciled_action_pin_and_rollback_provenance(self):
         with tempfile.TemporaryDirectory() as tmp:

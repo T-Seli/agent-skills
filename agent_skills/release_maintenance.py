@@ -109,6 +109,8 @@ def _fast_forward(parameters, desired):
     local = _git(main, "rev-parse", "--verify", f"refs/heads/{base}^{{commit}}")
     if remote != fetched:
         raise ValueError("remote base differs from supplied fresh-fetch receipt")
+    if _git(main, "rev-parse", "--verify", f"{fetched}^{{tree}}") != desired["tree"]:
+        raise ValueError("approved commit tree differs from the desired immutable release")
     ancestor = subprocess.run(["git", "-C", str(main), "merge-base", "--is-ancestor",
                                local, fetched], capture_output=True, text=True)
     if ancestor.returncode != 0:
@@ -119,6 +121,8 @@ def _fast_forward(parameters, desired):
     _clean_without_ignored(main)
     if _git(main, "rev-parse", "--verify", f"{remote_ref}^{{commit}}") != fetched:
         raise ValueError("remote base changed after preflight")
+    if _git(main, "rev-parse", "--verify", f"{fetched}^{{tree}}") != desired["tree"]:
+        raise ValueError("approved commit tree changed after preflight")
     if local != fetched:
         merged = subprocess.run(["git", "-C", str(main), "merge", "--ff-only",
                                  "--no-overwrite-ignore", fetched],
