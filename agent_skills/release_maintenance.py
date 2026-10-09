@@ -229,9 +229,12 @@ def _activate(manifest, state, reconciliation, parameters, desired, runner):
         raise ValueError("invalid installer target")
     checkpoint_ref = _text(value["safe_checkpoint_ref"], "safe checkpoint receipt")
     selected = _installer_targets(manifest, reconciliation, target)
-    if any(item["target"] not in selected or item["dimension"] != "installed"
-           for item in reconciliation["drift"]):
-        raise ValueError("unrelated or runtime-loaded drift blocks automatic activation")
+    for item in reconciliation["drift"]:
+        active_loaded_pin = (item["target"] in selected and
+                             state["targets"][item["target"]]["active_task"] and
+                             item["dimension"] in {"loaded", "behavior_verified"})
+        if not (item["target"] in selected and item["dimension"] == "installed") and not active_loaded_pin:
+            raise ValueError("unrelated or inactive runtime-loaded drift blocks automatic activation")
     release_input = Path(value["release_root"])
     if release_input.is_symlink():
         raise ValueError("release root must not be a symlink")
@@ -254,9 +257,14 @@ def _activate(manifest, state, reconciliation, parameters, desired, runner):
     if run.returncode != 0:
         raise RuntimeError("transactional installer failed; inspect its retained failure receipt")
     rollback_receipt = None
+    no_changes = False
     for line in run.stdout.splitlines():
         if line.startswith("rollback receipt: "):
             rollback_receipt = line.split(": ", 1)[1]
+        if line == "install transaction: no changes":
+            no_changes = True
+    if rollback_receipt is None and not no_changes:
+        raise RuntimeError("installer completion provenance unavailable; reconcile before retry")
     return {
         "action": "activate-local-release",
         "result": "activation-performed-awaiting-post-activation-reconciliation",
@@ -267,6 +275,9 @@ def _activate(manifest, state, reconciliation, parameters, desired, runner):
         "safe_checkpoint_ref": checkpoint_ref,
         "rollback_refs": rollback_refs,
         "installer_rollback_receipt": rollback_receipt,
+        "installer_no_changes": no_changes,
+        "active_sessions_preserved": [target_id for target_id in selected
+                                      if state["targets"][target_id]["active_task"]],
         "settings_or_trust_changed": False,
         "restart_performed": False,
     }

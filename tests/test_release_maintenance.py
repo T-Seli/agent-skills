@@ -294,10 +294,43 @@ class ReleaseMaintenanceTests(unittest.TestCase):
                 "verified", commit=OLD_COMMIT, tree=OLD_TREE, dimension="installed"))
             value["targets"]["local-codex"]["loaded"] = observation(
                 "verified", commit=OLD_COMMIT, tree=OLD_TREE)
-            with self.assertRaisesRegex(ValueError, "runtime-loaded drift"):
+            with self.assertRaisesRegex(ValueError, "inactive runtime-loaded drift"):
                 maintain_release(manifest(), value,
                                  request("activate-local-release", params,
                                          commit=commit, tree=tree))
+
+            calls = []
+            value["targets"]["local-codex"]["active_task"] = True
+
+            def runner(argv, **kwargs):
+                calls.append(argv)
+                return subprocess.CompletedProcess(
+                    argv, 0, stdout="rollback receipt: /fixture/rollback\n", stderr="")
+
+            result = maintain_release(
+                manifest(), value,
+                request("activate-local-release", params, commit=commit, tree=tree),
+                runner=runner)
+            self.assertEqual(result["action_receipt"]["active_sessions_preserved"],
+                             ["local-codex"])
+            self.assertEqual(len(calls), 1)
+
+    def test_activation_requires_installer_completion_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, release, commit, tree = self.activation_fixture(Path(tmp))
+            params = {"release_root": str(release), "source_checkout": str(source),
+                      "target": "codex", "safe_checkpoint_ref": "fixture:safe-window"}
+            old = observation("verified", commit=OLD_COMMIT, tree=OLD_TREE,
+                              dimension="installed")
+
+            def runner(argv, **kwargs):
+                return subprocess.CompletedProcess(argv, 0, stdout="completed\n", stderr="")
+
+            with self.assertRaisesRegex(RuntimeError, "completion provenance unavailable"):
+                maintain_release(
+                    manifest(), state(commit, tree, installed=old),
+                    request("activate-local-release", params, commit=commit, tree=tree),
+                    runner=runner)
 
     def test_activation_rejects_tampered_or_extra_release_content(self):
         for case in ("tampered", "extra"):
