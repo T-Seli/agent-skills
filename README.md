@@ -54,10 +54,34 @@ needs a fresh-task receipt. Built-in instructions and tool grants are outside
 this user-owned release target set. The gate never fetches, installs, publishes,
 changes access, or schedules background work.
 
+For one explicitly approved maintenance action, a lifecycle owner can run
+`python3 -m agent_skills.safeguard_cli maintain-release <manifest.json>
+<state.json> <request.json>`. The request binds one action, authorization reference,
+immutable source/commit/tree, lifecycle checkpoint, expected and observed approval
+reviewer mode, and action parameters. `fast-forward-main` requires a fresh fetched
+SHA equal to the approved commit, an exact deploy-lock owner, a clean tracked and
+non-ignored worktree, an ancestor-only update and a final race check. It never
+fetches, stages, lists ignored paths or removes ignored content.
+`activate-local-release` accepts only native targets for which reconciliation
+returned `install-approved-release-at-safe-checkpoint`, verifies the immutable
+release pin and rollback references, and invokes that release's transactional
+installer. Its receipt still requires post-activation load and behavior
+reconciliation; it never changes settings or hook trust, restarts a runtime,
+publishes cloud state, or claims system-wide adoption.
+
+The adapter is callable at task-entry, resume, reconnect, pre-activation and
+post-activation checkpoints because it binds the checkpoint in both state and
+request. The current hosts do not expose a supported automatic lifecycle callback
+that supplies this structured request plus reviewer-mode readback. Therefore the
+adapter is a tested operation invoked by the owning workflow, not a daemon or an
+automatic updater. Missing reviewer-mode evidence blocks mutation as unverified;
+it is not treated as manual approval or bypassed by starting another session.
+
 Before treating a fetched `main` as the next release candidate, run `git fetch`
 and then `safeguard_cli main-sync` with the exact repository, base, fetched SHA
-and deploy-lock path. It requires an exact clean local/remote match, including no
-ignored content and no active lock; it never pulls or activates newer source.
+and deploy-lock path. It requires an exact clean local/remote match, permits but
+does not enumerate ignored content, and rejects tracked or non-ignored untracked
+changes and any active lock; it never pulls or activates newer source.
 For an improvement, `propose` writes a JSON proposal to stdout; keep it in
 a private task folder. `review-proposal <file>` runs its fixture and reports
 whether human review is needed. Neither command edits or promotes a skill.
