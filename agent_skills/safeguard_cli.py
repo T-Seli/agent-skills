@@ -8,6 +8,7 @@ from .closeout import cleanup_gate, main_sync_gate
 from .code_state import code_state
 from .release_reconciliation import reconcile_release
 from .release_guard import capture_rollback, verify_release
+from .release_maintenance import maintain_release
 
 
 def main(argv=None):
@@ -30,6 +31,10 @@ def main(argv=None):
     reconcile = subs.add_parser('reconcile')
     reconcile.add_argument('manifest')
     reconcile.add_argument('state')
+    maintain = subs.add_parser('maintain-release')
+    maintain.add_argument('manifest')
+    maintain.add_argument('state')
+    maintain.add_argument('request')
     cleanup = subs.add_parser('cleanup')
     cleanup.add_argument('main')
     cleanup.add_argument('worktree')
@@ -68,6 +73,11 @@ def main(argv=None):
             if not result['system_wide']:
                 print(json.dumps(result, sort_keys=True))
                 return 1
+        elif args.action == 'maintain-release':
+            manifest = json.loads(Path(args.manifest).read_text(encoding='utf-8'))
+            state = json.loads(Path(args.state).read_text(encoding='utf-8'))
+            request = json.loads(Path(args.request).read_text(encoding='utf-8'))
+            result = maintain_release(manifest, state, request)
         elif args.action == 'cleanup':
             result = cleanup_gate(args.main, args.worktree, base=args.base, branch=args.branch,
                                   completion_accepted=args.completion_accepted,
