@@ -1,8 +1,10 @@
+import json
+from pathlib import Path
 import unittest
 
 from agent_skills.system_audit import (audit_artifact, blocker_update, failure_incident,
                                        finding, human_unlock, prioritize_human_unlocks,
-                                       synthesize, synthesize_failures)
+                                       monitoring_verdict, synthesize, synthesize_failures)
 
 
 SOURCES = [{'source': 'task-record', 'state': 'observed', 'receipt_ref': 'task:receipt-4'}]
@@ -66,6 +68,39 @@ def unlock(**changes):
 
 
 class SystemAuditTests(unittest.TestCase):
+    def test_heldout_missing_blocked_and_unseen_cases(self):
+        fixture = json.loads((Path(__file__).parent / 'fixtures' /
+                              'system_audit_holdout.json').read_text())
+        self.assertEqual(fixture['version'], 1)
+        for case in fixture['cases']:
+            with self.subTest(case=case['id']):
+                if case['kind'] == 'stable-identity':
+                    values = [item(finding_id=value, evidence_refs=[f"heldout:{value}"])
+                              for value in case['finding_ids']]
+                    result = synthesize(values, source_manifest=SOURCES,
+                                        required_sources=['task-record'])
+                    self.assertEqual(len(result['findings']), case['expected_groups'])
+                elif case['kind'] == 'coverage':
+                    manifest = [{'source': source, 'state': 'observed',
+                                 'receipt_ref': f'heldout:{source}'}
+                                for source in case['observed_sources']]
+                    result = synthesize([], source_manifest=manifest,
+                                        required_sources=case['required_sources'])
+                    self.assertEqual(result['coverage_complete'], case['expected_complete'])
+                else:
+                    result = monitoring_verdict(
+                        wake_receipt=case['wake_receipt'],
+                        readback_receipt=case['readback_receipt'],
+                        expires_at_utc='2026-10-09T04:00:00Z',
+                        observed_at_utc='2026-10-09T03:00:00Z',
+                        traffic_count=case['traffic_count'],
+                        functional_results=[True] * case['traffic_count'])
+                    if 'expected_watch_state' in case:
+                        self.assertEqual(result['watch_state'], case['expected_watch_state'])
+                    if 'expected_acceptance' in case:
+                        self.assertEqual(result['functional_acceptance'],
+                                         case['expected_acceptance'])
+
     def test_incomplete_evidence_is_a_coverage_gap_not_an_observed_cause(self):
         with self.assertRaises(ValueError):
             item(evidence_refs=[])
@@ -102,8 +137,60 @@ class SystemAuditTests(unittest.TestCase):
         self.assertEqual(result['findings'], [])
         self.assertEqual(result['unchanged'][0], {
             'finding_key': 'evidence-cursor', 'prior_finding_id': 'cursor-pagination',
+            'current_finding_aliases': ['cursor-pagination'],
             'evidence_windows': ['next-day'], 'current_evidence_refs': ['task:new-receipt'],
             'acceptance_states': ['failed'], 'acceptance_receipts': ['audit:test-2']})
+
+    def test_stable_mechanism_identity_reconciles_new_reviewer_ids_and_disagreement(self):
+        first = item(finding_id='reviewer-a-cursor')
+        equivalent = item(finding_id='reviewer-b-renamed', evidence_refs=['task:other-receipt'])
+        grouped = synthesize([first, equivalent], source_manifest=SOURCES,
+                             required_sources=['task-record'])
+        self.assertEqual(grouped['findings'][0]['reviewer_count'], 2)
+        self.assertEqual(grouped['findings'][0]['finding_aliases'],
+                         ['reviewer-a-cursor', 'reviewer-b-renamed'])
+
+        contrary = item(finding_id='reviewer-c-opposite', assertion='pagination-complete',
+                        conclusion='The current cursor was reached.')
+        disputed = synthesize([first, contrary], source_manifest=SOURCES,
+                              required_sources=['task-record'])
+        self.assertEqual(disputed['findings'][0]['state'], 'disputed')
+
+        other_scope = item(finding_id='same-key-other-scope', scope_ref='task:scope-2')
+        separate = synthesize([first, other_scope], source_manifest=SOURCES,
+                              required_sources=['task-record'])
+        self.assertEqual(len(separate['findings']), 2)
+
+    def test_scope_bound_coverage_rejects_omitted_prerequisites(self):
+        omitted = synthesize([], source_manifest=SOURCES,
+                             required_sources=['task-record', 'release-receipt'])
+        self.assertFalse(omitted['coverage_complete'])
+        self.assertEqual(omitted['coverage_missing'], ['release-receipt'])
+        declared = synthesize([], source_manifest=[
+            *SOURCES, {'source': 'release-receipt', 'state': 'not-applicable',
+                       'receipt_ref': 'scope:no-release-target'}],
+            required_sources=['task-record', 'release-receipt'])
+        self.assertTrue(declared['coverage_complete'])
+        self.assertEqual(declared['coverage_missing'], [])
+
+    def test_native_monitoring_requires_current_wake_readback_and_real_traffic(self):
+        missing = monitoring_verdict(
+            wake_receipt=None, readback_receipt=None,
+            expires_at_utc='2026-10-09T04:00:00Z', observed_at_utc='2026-10-09T03:00:00Z',
+            traffic_count=0, functional_results=[])
+        self.assertEqual((missing['watch_state'], missing['functional_acceptance']),
+                         ('not-armed', 'unverified'))
+        expired = monitoring_verdict(
+            wake_receipt='wake:1', readback_receipt='read:1',
+            expires_at_utc='2026-10-09T02:00:00Z', observed_at_utc='2026-10-09T03:00:00Z',
+            traffic_count=3, functional_results=[True, True, True])
+        self.assertEqual(expired['watch_state'], 'not-armed')
+        zero = monitoring_verdict(
+            wake_receipt='wake:2', readback_receipt='read:2',
+            expires_at_utc='2026-10-09T04:00:00Z', observed_at_utc='2026-10-09T03:00:00Z',
+            traffic_count=0, functional_results=[])
+        self.assertEqual((zero['watch_state'], zero['functional_acceptance']),
+                         ('armed', 'inconclusive-zero-traffic'))
 
     def test_coverage_and_acceptance_claims_require_receipts(self):
         with self.assertRaises(ValueError):

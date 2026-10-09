@@ -59,6 +59,63 @@ def installed_links(root, home):
     return {"links": checks, "ready": all(checks.values()), "native_load": "unverified"}
 
 
+def runtime_capability_receipt(release_root, *, runtime, expected_commit, expected_tree,
+                               installed_routes, loaded_bundle, behavior_checks):
+    """Bind installed routes, loaded bodies and exercised behavior for one runtime."""
+    if runtime not in {"codex", "claude"}:
+        raise ValueError("unsupported runtime")
+    if (not isinstance(expected_commit, str) or not isinstance(expected_tree, str) or
+            len(expected_commit) != 40 or len(expected_tree) != 40 or
+            any(char not in "0123456789abcdef" for char in expected_commit + expected_tree)):
+        raise ValueError("full expected commit and tree required")
+    root = Path(release_root).resolve(strict=True)
+    pin_path = root / ".release-pin.json"
+    try:
+        pin = json.loads(pin_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pin = None
+    identity_ready = (isinstance(pin, dict) and pin.get("commit") == expected_commit and
+                      pin.get("tree") == expected_tree)
+    if not isinstance(installed_routes, dict) or not installed_routes:
+        raise ValueError("installed runtime routes required")
+    route_checks = {}
+    for name, route in installed_routes.items():
+        if not isinstance(name, str) or not name or not isinstance(route, (str, Path)):
+            raise ValueError("invalid installed runtime route")
+        path = Path(route)
+        route_checks[name] = path.is_symlink() and path.resolve().is_relative_to(root)
+    sources = loaded_bundle.get("sources") if isinstance(loaded_bundle, dict) else None
+    load_checks = {}
+    if isinstance(sources, list):
+        for source in sources:
+            if not isinstance(source, dict) or not isinstance(source.get("path"), str) or not isinstance(source.get("sha256"), str):
+                load_checks["invalid-source"] = False
+                continue
+            candidate = root / source["path"]
+            safe = (not candidate.is_symlink() and candidate.resolve(strict=False).is_relative_to(root) and
+                    candidate.is_file())
+            load_checks[source["path"]] = safe and hashlib.sha256(candidate.read_bytes()).hexdigest() == source["sha256"]
+    if not isinstance(behavior_checks, list) or not behavior_checks:
+        raise ValueError("runtime behavior checks required")
+    behavior = []
+    for check in behavior_checks:
+        if (not isinstance(check, dict) or set(check) != {"id", "outcome", "receipt_ref"} or
+                check.get("outcome") not in {"pass", "fail", "blocked"} or
+                not all(isinstance(check.get(key), str) and check[key].strip()
+                        for key in ("id", "receipt_ref"))):
+            raise ValueError("invalid runtime behavior check")
+        behavior.append(dict(check))
+    routes_ready = all(route_checks.values())
+    load_ready = bool(load_checks) and all(load_checks.values())
+    behavior_ready = all(check["outcome"] == "pass" for check in behavior)
+    return {"runtime": runtime, "commit": expected_commit, "tree": expected_tree,
+            "release_root": str(root), "identity_ready": identity_ready,
+            "installed_routes": route_checks, "installed_ready": routes_ready,
+            "loaded_sources": load_checks, "loaded_ready": load_ready,
+            "behavior_checks": behavior, "behavior_ready": behavior_ready,
+            "ready": identity_ready and routes_ready and load_ready and behavior_ready}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Read-only source and adapter readiness")
     parser.add_argument("root", type=Path, help="already materialized source checkout")

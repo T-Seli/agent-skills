@@ -1,6 +1,6 @@
 ---
 name: system-audit
-description: 'Run a bounded independent read-only audit of agent coordination, verified failures, guards, evidence, decision friction and release boundaries. Use for a system audit or scheduled audit run; never changes the audited system.'
+description: 'Run a bounded independent read-only audit of agent coordination, workspace navigation, verified failures, guards, evidence, decision friction and release boundaries. Use for a system audit or scheduled audit run; never changes the audited system.'
 argument-hint: '<time window, scope and prior audit reference>'
 ---
 
@@ -10,11 +10,13 @@ First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`, [references
 
 ## Inputs
 
-Use, in order: explicit time window and scope in the request · current canonical task records and owner receipts · prior audit artifact and acceptance checks · available read-only host records. If time window or scope is absent, use the current task and the preceding 24 hours, label that default, and do not broaden it. Cover every material contract revision, blocker, decision, handoff, release gate and acceptance event in-window; for unchanged in-flight work, sample at most three records deterministically by oldest evidence cursor and report the denominator. State every unavailable surface and resulting coverage limit.
+Use, in order: explicit time window and scope in the request · current canonical task records and owner receipts · prior audit artifact and acceptance checks · available read-only host records. Declare the required evidence surfaces for that scope before synthesis; each is `observed`, `unavailable`, `not-checked` or explicitly `not-applicable` with a receipt. An omitted or unavailable prerequisite prevents complete coverage without authorizing new access. If time window or scope is absent, use the current task and the preceding 24 hours, label that default, and do not broaden it. Cover every material contract revision, blocker, decision, handoff, release gate and acceptance event in-window; for unchanged in-flight work, sample at most three records deterministically by oldest evidence cursor and report the denominator. State every unavailable surface and resulting coverage limit.
 
 ## Reconcile before review
 
 List canonical work items, execution owners, active deliverable revisions, in-flight work and evidence cursors. Do not interrupt, resume, archive, message or alter an active session. A direct user instruction to a worker remains authoritative within its verified scope; compare it with the current task contract instead of treating it as interference. Page supported records to the last consumed receipt before calling context missing. Protected or unsupported cross-session data stays unread; never use session files, credentials or exports as a workaround.
+
+Check whether each material item is discoverable through one canonical task, owner and supported thread/workspace reference, with accurate status, pending decision, next authorized action, receipt-checked links and artifact provenance. A stale or duplicate surface is a navigation finding and closure-readiness recommendation, not authority to rename, move, archive or create another registry. Missing host metadata is a coverage gap; never infer it from a folder or thread ID.
 
 ## Independent review
 
@@ -40,7 +42,7 @@ Recommend at most three decisions, ordered by the user's daily priority, deadlin
 
 ## Synthesis
 
-Reconcile reviewer disagreement against primary receipts. Keep unresolved conflicts visible and lower confidence; do not vote facts into existence. Deduplicate by mechanism, evidence window and acceptance test, including prior audits. For an unchanged repeated finding, report its prior ID and current acceptance-test state instead of proposing it again. Rank a small improvement list by user-goal impact, evidence strength, reversibility and regression risk; preserve independent decisions separately.
+Reconcile reviewer disagreement against primary receipts. Keep unresolved conflicts visible and lower confidence; do not vote facts into existence. Deduplicate by the stable mechanism key, scope and acceptance test—not a reviewer-local finding ID—and retain every ID as an alias with its evidence. Equivalent new IDs are one recurrence, contradictory assertions remain disputed, and distinct scopes remain separate. For an unchanged repeated finding, report its prior ID and current acceptance-test state instead of proposing it again. Rank a small improvement list by user-goal impact, evidence strength, reversibility and regression risk; preserve independent decisions separately. A recurring audit proposes bounded changes with acceptance tests and held-out missing/blocked/unseen fixtures; it never self-approves, requires a change every run or turns zero traffic into a pass.
 
 Produce a concise user brief and a durable sanitized artifact at the configured task-artifact path (else return it inline without inventing a path). Its envelope is `{schema_version, audit_id, revision, scope_ref, window, prior_artifact_ref, record_owner, history_base:{revision,digest}, synthesis, failure_ledger, human_unlock_plan, history_publication:"proposed-not-appended"}`; findings retain stable IDs, current evidence windows and acceptance state, `failure_ledger` contains the deduplicated verified occurrence groups and prevention state, and `human_unlock_plan` preserves readiness, ownership and non-automation. Reuse the canonical task record for live state and task-history for durable milestones; do not create another queue, scorecard or authority layer. Prepare owner-bound proposed history events against the freshly read owner/revision/digest; do not append. No finding or unlock self-approves a change. Skill edits, deployments, production changes, access expansion and external messages require a separate authorized step. A caller may schedule this skill, but one audit run never creates or duplicates its schedule.
 

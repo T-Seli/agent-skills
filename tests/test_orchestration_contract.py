@@ -17,6 +17,15 @@ def base():
                           repo='example/repo', worktree='worktree')
 
 
+def history_base():
+    return tasks.new_task(
+        'task-123', 'synthetic', worker_kind='local', owner='assistant',
+        repo='example/repo', worktree='worktree',
+        history_capture={'record_owner': 'history-owner',
+                         'authorization_ref': 'user:item-1',
+                         'history_repo': '/private/tmp/history-fixture'})
+
+
 def bind(record, revision=1, deliverable='fixture', **changes):
     values = dict(user_goal='Verify one deterministic fixture', constraints=['read-only fixture'],
                   priority_source_ref='task:priority-1', canonical_issue_ref='task:123',
@@ -74,6 +83,125 @@ def verify_active(record):
 
 
 class OrchestrationReplayTests(unittest.TestCase):
+    def test_history_lifecycle_separates_append_publish_readback_and_resume_consumption(self):
+        record, event_id = tasks.stage_history_checkpoint(
+            history_base(), source_id='start-revision-1', transition='start',
+            summary='Synthetic task started', evidence_refs=['task:revision-1'])
+        digest_value = 'd' * 64
+        for stage, receipt in (
+                ('locally-appended', 'history:append-1'),
+                ('view-rendered', 'history:view-1'),
+                ('index-updated', 'history:index-1'),
+                ('published', 'history:push-1')):
+            record = tasks.mark_history_checkpoint(
+                record, event_id=event_id, stage=stage, receipt_ref=receipt,
+                **({'digest_value': digest_value} if stage == 'locally-appended' else {}))
+        self.assertEqual(record['coordination']['history_publication_state'],
+                         'published-unverified')
+        record = tasks.consume_history_readback(
+            record, task_id='task-123', record_owner='history-owner', revision=1,
+            digest_value=digest_value, event_ids=[event_id], readback_ref='fresh-clone:1')
+        self.assertEqual(record['coordination']['history_publication_state'], 'readback-verified')
+        record = tasks.consume_history_readback(
+            record, task_id='task-123', record_owner='history-owner', revision=1,
+            digest_value=digest_value, event_ids=[event_id], readback_ref='fresh-clone:1')
+        replayed, replayed_id = tasks.stage_history_checkpoint(
+            record, source_id='start-revision-1', transition='start',
+            summary='Synthetic task started', evidence_refs=['task:revision-1'])
+        self.assertEqual(replayed_id, event_id)
+        self.assertEqual(replayed['history_outbox'][0]['stage'], 'readback-verified')
+        record = bind(record, requested_artifact='pdf-report')
+        with self.assertRaisesRegex(ValueError, 'latest canonical history'):
+            acknowledge(record)
+        record = tasks.acknowledge_task_contract(
+            record, deliverable_id='fixture', revision=1,
+            changed_criteria='criteria revision 1', next_action='run fixture',
+            environment='local-test', receipt_ref='task:readback-1',
+            history_revision=1, history_digest=digest_value)
+        self.assertEqual(tasks.result_binding(record, **current_binding(record)), 'current')
+
+    def test_missing_history_publication_does_not_block_unrelated_authorized_work(self):
+        record, _ = tasks.stage_history_checkpoint(
+            history_base(), source_id='start-revision-1', transition='start',
+            summary='Synthetic task started', evidence_refs=['task:revision-1'])
+        record = acknowledge(bind(record))
+        self.assertEqual(tasks.result_binding(record, **current_binding(record)), 'current')
+        self.assertEqual(record['coordination']['history_publication_state'], 'not-published')
+
+    def test_worker_return_must_match_requested_artifact_and_keeps_state_layers_separate(self):
+        record = approve_release(acknowledge(bind(base(), requested_artifact='pdf-report')))
+        binding = current_binding(record)
+        for event in (
+                {'id': 'artifact-dispatch', 'task': 'task-123', 'ts': 1790000040,
+                 'source': 'adapter', 'kind': 'dispatched', 'data': {}},
+                {'id': 'artifact-running', 'task': 'task-123', 'ts': 1790000041,
+                 'source': 'worker', 'kind': 'running', 'data': binding}):
+            record, outcome = tasks.apply(record, event)
+            self.assertEqual(outcome, 'applied')
+        adjacent = {'id': 'artifact-adjacent', 'task': 'task-123', 'ts': 1790000042,
+                    'source': 'worker', 'kind': 'ready',
+                    'data': {'commit': 'a' * 40, 'final_diff_digest': 'b' * 64,
+                             'tests': 'passed', 'artifact_kind': 'provisioning-guidance',
+                             'artifact_ref': 'handoff.md', 'result': 'Local commit created.',
+                             'remaining': ['Push is not published.'], 'next_owner': 'source-owner',
+                             **binding}}
+        rejected, outcome = tasks.apply(record, adjacent)
+        self.assertEqual((outcome, rejected['status']), ('unsupported', 'running'))
+        self.assertEqual(len(rejected['approvals']), 1)
+        self.assertIsNone(rejected['evidence'])
+
+        correct = {**adjacent, 'id': 'artifact-correct', 'ts': 1790000043,
+                   'data': {**adjacent['data'], 'artifact_kind': 'pdf-report',
+                            'artifact_ref': 'report.pdf', 'result': 'Requested PDF produced.',
+                            'remaining': [], 'next_owner': 'orchestrator'}}
+        ready, outcome = tasks.apply(record, correct)
+        self.assertEqual((outcome, ready['coordination']['acceptance_state']), ('applied', 'ready'))
+        self.assertEqual(ready['coordination']['user_delivery_state'], 'not-delivered')
+        self.assertEqual(ready['coordination']['history_publication_state'], 'not-published')
+        verified, outcome = tasks.apply(ready, {
+            'id': 'artifact-verified', 'task': 'task-123', 'ts': 1790000044,
+            'source': 'verifier', 'kind': 'verified',
+            'data': {'commit': 'a' * 40, 'final_diff_digest': 'b' * 64,
+                     'tests_passed': True}})
+        self.assertEqual(outcome, 'applied')
+        delivered = tasks.record_user_delivery(
+            verified, artifact_ref='report.pdf', receipt_ref='delivery:parent-1')
+        self.assertEqual(delivered['coordination']['user_delivery_state'], 'delivered')
+        self.assertEqual(delivered['coordination']['history_publication_state'], 'not-published')
+
+    def test_communication_brief_filters_priorities_and_does_not_repeat_valid_approval(self):
+        record = bind(base())
+        record, _ = tasks.apply(record, {
+            'id': 'brief-dispatch', 'task': 'task-123', 'ts': 1790000050,
+            'source': 'adapter', 'kind': 'dispatched', 'data': {}})
+        record, _ = tasks.apply(record, {
+            'id': 'brief-blocked', 'task': 'task-123', 'ts': 1790000051,
+            'source': 'worker', 'kind': 'blocked',
+            'data': {'need': 'Approve exact publish', 'action': 'push', 'target': 'reviewed commit',
+                     **current_binding(record)}})
+        active = record['coordination']['active_deliverable']
+        record, outcome = tasks.apply(record, {
+            'id': 'brief-approval', 'task': 'task-123', 'ts': 1790000052,
+            'source': 'user', 'kind': 'approval',
+            'data': {'channel': 'chat', 'text': 'Approve reviewed commit push',
+                     'action': 'push', 'target': 'reviewed commit', 'scope': 'fixture only',
+                     'revision': 1, 'contract_digest': active['contract_digest']}})
+        self.assertEqual(outcome, 'noted')
+        brief = tasks.communication_brief(
+            record, priority_candidates=[
+                {'id': 'ship', 'rank': 1, 'action': 'Push reviewed commit',
+                 'immediately_actionable': True, 'waiting_on': [], 'state': 'pending'},
+                {'id': 'monitor', 'rank': 2, 'action': 'Observe real traffic',
+                 'immediately_actionable': False, 'waiting_on': ['deployment'], 'state': 'pending'},
+                {'id': 'old', 'rank': 3, 'action': 'Repeat finished work',
+                 'immediately_actionable': True, 'waiting_on': [], 'state': 'completed'}],
+            result='Exact approval already exists.', remaining=['Push and verify.'],
+            next_owner='source-owner')
+        self.assertEqual([x['id'] for x in brief['priorities']], ['ship'])
+        self.assertIsNone(brief['approval_need'])
+        self.assertEqual((brief['result'], brief['remaining'], brief['next_owner']),
+                         ('Exact approval already exists.', ['Push and verify.'], 'source-owner'))
+
     def test_stale_worker_task_drift_preserves_displaced_obligation(self):
         record = acknowledge(bind(base()))
         record = bind(record, revision=2, displaced_state='superseded',
@@ -83,6 +211,21 @@ class OrchestrationReplayTests(unittest.TestCase):
                          'stale-revision')
         self.assertEqual(record['coordination']['obligations'][0]['state'], 'superseded')
         self.assertEqual(record['coordination']['execution_state'], 'awaiting-readback')
+
+    def test_completed_obligation_cannot_be_reopened_by_stale_narrative(self):
+        record = acknowledge(bind(base()))
+        record = bind(record, revision=2, displaced_state='queued',
+                      displaced_reason='A new active deliverable took priority')
+        record = tasks.complete_obligation(
+            record, deliverable_id='fixture', revision=1,
+            completion_ref='verification:revision-1')
+        reconciled, decision = tasks.reconcile_obligation_claim(
+            record, deliverable_id='fixture', revision=1, claimed_state='running',
+            source_ref='stale-summary:revision-1')
+        self.assertEqual(decision, 'completion-preserved')
+        self.assertEqual(reconciled['coordination']['obligations'], [])
+        self.assertEqual(reconciled['coordination']['completed_obligations'][0]['state'],
+                         'completed')
 
     def test_dispatch_and_acceptance_do_not_replace_current_revision_readback(self):
         record = bind(base())

@@ -5,6 +5,7 @@ data: it can move a status only along the rules below, and it never grants an ap
 """
 import copy
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -38,17 +39,22 @@ NOTES = {"ack", "idle", "heartbeat", "unavailable", "available", "approval", "pr
 AI_MARK = re.compile(r"(claude|codex|assistant|\bbot|\bai\b)", re.I)
 CLOCK_LEEWAY = 300  # seconds an event may be ahead of this machine's clock
 EXECUTION_STATES = ("not-started", "awaiting-dispatch", "awaiting-readback", "admitted", "running",
-                    "pause-requested", "paused", "blocked", "finished")
+                    "pause-requested", "paused", "blocked", "awaiting-reconciliation", "finished")
 ACCEPTANCE_STATES = ("unreviewed", "rejected", "ready", "verified", "accepted")
 DISPLAY_STATES = ("current", "stale", "unknown")
+HISTORY_STAGES = ("pending", "locally-appended", "view-rendered", "index-updated",
+                  "published", "readback-verified")
 
 
 def _coordination(work_item):
     return {"user_goal": None, "constraints": [], "priority_source_ref": None,
             "canonical_issue_ref": work_item, "canonical_owner": None,
-            "active_deliverable": None, "obligations": [], "evidence_cursors": {},
+            "active_deliverable": None, "obligations": [], "completed_obligations": [],
+            "obligation_reconciliations": [], "evidence_cursors": {},
             "decisions": [], "execution_state": "not-started",
             "acceptance_state": "unreviewed", "deployment_state": None,
+            "user_delivery_state": "not-delivered",
+            "history_publication_state": "not-published",
             "display_sync": {}, "watch_baselines": {}}
 
 
@@ -71,14 +77,16 @@ def _hex(value, name, lengths):
 
 def _contract_digest(value):
     fields = {key: value[key] for key in ("id", "revision", "acceptance_ref", "environment",
-                                           "changed_criteria", "next_action", "source_ref")}
+                                           "changed_criteria", "next_action", "source_ref",
+                                           "requested_artifact")}
     return digest(fields)
 
 
 def bind_task_contract(record, *, user_goal, constraints, priority_source_ref,
                        canonical_issue_ref, canonical_owner, deliverable_id, revision,
                        acceptance_ref, environment, changed_criteria, next_action,
-                       source_ref, displaced_state="queued", displaced_reason=None):
+                       source_ref, requested_artifact=None, displaced_state="queued",
+                       displaced_reason=None):
     """Bind one active deliverable and preserve any displaced acknowledged obligation."""
     if not isinstance(constraints, list) or not all(isinstance(x, str) and x.strip() for x in constraints):
         raise ValueError("invalid constraints")
@@ -90,6 +98,8 @@ def bind_task_contract(record, *, user_goal, constraints, priority_source_ref,
         ("deliverable_id", deliverable_id), ("acceptance_ref", acceptance_ref),
         ("environment", environment), ("changed_criteria", changed_criteria),
         ("next_action", next_action), ("source_ref", source_ref))}
+    values["requested_artifact"] = (_text(requested_artifact, "requested_artifact")
+                                      if requested_artifact is not None else None)
     r = copy.deepcopy(record)
     coordination = _coord(r)
     previous = coordination.get("active_deliverable")
@@ -108,7 +118,8 @@ def bind_task_contract(record, *, user_goal, constraints, priority_source_ref,
         expected = {"id": values["deliverable_id"], "revision": revision,
                     "acceptance_ref": values["acceptance_ref"], "environment": values["environment"],
                     "changed_criteria": values["changed_criteria"], "next_action": values["next_action"],
-                    "source_ref": values["source_ref"]}
+                    "source_ref": values["source_ref"],
+                    "requested_artifact": values["requested_artifact"]}
         if any(previous.get(key) != value for key, value in expected.items()):
             raise ValueError("changed task contract fields require a new revision")
         outer = {"user_goal": values["user_goal"], "constraints": constraints,
@@ -121,7 +132,8 @@ def bind_task_contract(record, *, user_goal, constraints, priority_source_ref,
     active = {"id": values["deliverable_id"], "revision": revision,
               "acceptance_ref": values["acceptance_ref"], "environment": values["environment"],
               "changed_criteria": values["changed_criteria"], "next_action": values["next_action"],
-              "source_ref": values["source_ref"]}
+              "source_ref": values["source_ref"],
+              "requested_artifact": values["requested_artifact"]}
     active["contract_digest"] = _contract_digest(active)
     active["readback_ref"] = None
     coordination.update({"user_goal": values["user_goal"], "constraints": constraints.copy(),
@@ -137,7 +149,8 @@ def bind_task_contract(record, *, user_goal, constraints, priority_source_ref,
 
 
 def acknowledge_task_contract(record, *, deliverable_id, revision, changed_criteria,
-                              next_action, environment, receipt_ref):
+                              next_action, environment, receipt_ref,
+                              history_revision=None, history_digest=None):
     """Record a worker's exact current-revision readback before accepting new work."""
     r = copy.deepcopy(record)
     active = _coord(r).get("active_deliverable")
@@ -147,6 +160,14 @@ def acknowledge_task_contract(record, *, deliverable_id, revision, changed_crite
                 (active or {}).get("environment"))
     if actual != expected:
         raise ValueError("worker readback does not match the active deliverable revision")
+    canonical = r.get("canonical_history")
+    if r.get("history_capture") and canonical:
+        if ((history_revision, history_digest) !=
+                (canonical.get("revision"), canonical.get("digest"))):
+            raise ValueError("worker readback must consume the latest canonical history state")
+        active["history_readback"] = {
+            "revision": history_revision, "digest": history_digest,
+            "readback_ref": canonical["readback_ref"]}
     active["readback_ref"] = _text(receipt_ref, "receipt_ref")
     _coord(r)["execution_state"] = "admitted"
     return r
@@ -164,6 +185,11 @@ def result_binding(record, *, deliverable_id, revision, contract_digest=None):
         return "stale-contract"
     if not active.get("readback_ref"):
         return "missing-current-readback"
+    canonical = record.get("canonical_history")
+    if record.get("history_capture") and canonical and (
+            active.get("history_readback", {}).get("revision") != canonical.get("revision") or
+            active.get("history_readback", {}).get("digest") != canonical.get("digest")):
+        return "stale-history-readback"
     return "current"
 
 
@@ -174,6 +200,38 @@ def evidence_page(record, *, source, receipt_ids, has_more):
     if expected is None or expected in receipt_ids:
         return "complete"
     return "continue" if has_more is True else "gap"
+
+
+def complete_obligation(record, *, deliverable_id, revision, completion_ref):
+    """Move one displaced obligation to completed without losing its contract identity."""
+    r = copy.deepcopy(record)
+    coordination = _coord(r)
+    matches = [item for item in coordination["obligations"]
+               if (item["id"], item["revision"]) == (deliverable_id, revision)]
+    if len(matches) != 1:
+        raise KeyError("active displaced obligation not found")
+    obligation = matches[0]
+    coordination["obligations"].remove(obligation)
+    completed = {**obligation, "state": "completed",
+                 "completion_ref": _text(completion_ref, "completion_ref")}
+    coordination["completed_obligations"].append(completed)
+    return r
+
+
+def reconcile_obligation_claim(record, *, deliverable_id, revision, claimed_state, source_ref):
+    """A stale narrative cannot reopen a receipt-backed completed obligation."""
+    if claimed_state not in ("queued", "running", "blocked", "completed"):
+        raise ValueError("invalid obligation claim state")
+    r = copy.deepcopy(record)
+    coordination = _coord(r)
+    completed = next((item for item in coordination["completed_obligations"]
+                      if (item["id"], item["revision"]) == (deliverable_id, revision)), None)
+    decision = "completion-preserved" if completed and claimed_state != "completed" else "claim-recorded"
+    coordination["obligation_reconciliations"].append({
+        "id": _text(deliverable_id, "deliverable_id"), "revision": revision,
+        "claimed_state": claimed_state, "source_ref": _text(source_ref, "source_ref"),
+        "decision": decision})
+    return r, decision
 
 
 def consume_evidence(record, *, source, receipt, observed_at):
@@ -306,7 +364,165 @@ def watch_changed(record, *, watch_id, digest_value):
     return baseline is None or baseline.get("digest") != digest_value
 
 
-def new_task(task_id, work_item, *, worker_kind, owner, repo, worktree=None, source_thread=None, acceptance_packet=None):
+def actionable_priorities(candidates, *, priority_source_ref):
+    """Return only explicitly actionable work in the user's stated priority order."""
+    if not isinstance(candidates, list):
+        raise ValueError("priority candidates must be a list")
+    source = _text(priority_source_ref, "priority_source_ref")
+    result = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or set(candidate) != {
+                "id", "rank", "action", "immediately_actionable", "waiting_on", "state"}:
+            raise ValueError("invalid priority candidate")
+        if type(candidate["rank"]) is not int or candidate["rank"] < 1:
+            raise ValueError("invalid priority rank")
+        if candidate["state"] not in ("pending", "completed", "deferred"):
+            raise ValueError("invalid priority state")
+        if not isinstance(candidate["waiting_on"], list) or not all(
+                isinstance(x, str) and x.strip() for x in candidate["waiting_on"]):
+            raise ValueError("invalid priority prerequisites")
+        if candidate["immediately_actionable"] is True and not candidate["waiting_on"] and candidate["state"] == "pending":
+            result.append({"id": _text(candidate["id"], "id"),
+                           "rank": candidate["rank"],
+                           "action": _text(candidate["action"], "action"),
+                           "priority_source_ref": source})
+    return sorted(result, key=lambda item: (item["rank"], item["id"]))
+
+
+def communication_brief(record, *, priority_candidates, result, remaining, next_owner):
+    """Build one concise checkpoint without repeating an already valid approval."""
+    if not isinstance(remaining, list) or not all(isinstance(x, str) and x.strip() for x in remaining):
+        raise ValueError("remaining work must be a string list")
+    coordination = _coord(record)
+    decision = pending(record)
+    satisfied = (approved_parts(record, decision["parts"]) if decision.get("parts") else
+                 approved(record, decision.get("action"), decision.get("target")))
+    approval_need = None if satisfied or not (decision.get("action") and decision.get("target")) else {
+        "need": decision.get("need"), "action": decision["action"], "target": decision["target"]}
+    return {"priorities": actionable_priorities(
+                priority_candidates, priority_source_ref=coordination.get("priority_source_ref") or "unspecified"),
+            "approval_need": approval_need, "result": _text(result, "result"),
+            "remaining": remaining.copy(), "next_owner": _text(next_owner, "next_owner")}
+
+
+def assess_worker_return(record, *, deliverable_id, revision, contract_digest,
+                         artifact_kind, artifact_ref, result, remaining, next_owner):
+    """Validate the returned artifact without inferring acceptance or delivery."""
+    binding = result_binding(record, deliverable_id=deliverable_id, revision=revision,
+                             contract_digest=contract_digest)
+    active = (record.get("coordination") or {}).get("active_deliverable") or {}
+    requested = active.get("requested_artifact")
+    if binding != "current":
+        return {"status": binding, "execution": "reported", "acceptance": "unreviewed",
+                "user_delivery": "not-delivered", "history_publication": "not-published"}
+    if not isinstance(remaining, list) or not all(isinstance(x, str) and x.strip() for x in remaining):
+        raise ValueError("remaining work must be a string list")
+    details = {"artifact_kind": _text(artifact_kind, "artifact_kind"),
+               "artifact_ref": _text(artifact_ref, "artifact_ref"),
+               "result": _text(result, "result"), "remaining": remaining.copy(),
+               "next_owner": _text(next_owner, "next_owner")}
+    status = "current-artifact" if requested is None or requested == details["artifact_kind"] else "adjacent-output"
+    return {"status": status, **details, "execution": "reported", "acceptance": "unreviewed",
+            "user_delivery": "not-delivered", "history_publication": "not-published"}
+
+
+def record_user_delivery(record, *, artifact_ref, receipt_ref):
+    """Record one verified user delivery; execution or history publication cannot imply it."""
+    r = copy.deepcopy(record)
+    coordination = _coord(r)
+    if coordination.get("acceptance_state") not in ("verified", "accepted"):
+        raise ValueError("user delivery requires verified acceptance")
+    value = {"artifact_ref": _text(artifact_ref, "artifact_ref"),
+             "receipt_ref": _text(receipt_ref, "receipt_ref")}
+    prior = coordination.get("user_delivery")
+    if prior and prior != value:
+        raise ValueError("a different user delivery already exists")
+    coordination["user_delivery"] = value
+    coordination["user_delivery_state"] = "delivered"
+    return r
+
+
+def stage_history_checkpoint(record, *, source_id, transition, summary, evidence_refs):
+    """Stage sanitized metadata only; this never appends or publishes task history."""
+    if not record.get("history_capture"):
+        raise ValueError("task has no authorized history capture configuration")
+    if transition not in {"start", "decision", "failure", "implementation", "test",
+                          "review", "deploy", "handoff", "verification"}:
+        raise ValueError("unsupported history checkpoint transition")
+    if not isinstance(evidence_refs, list) or not all(isinstance(x, str) and x.strip() for x in evidence_refs):
+        raise ValueError("history evidence references must be a string list")
+    source = _text(source_id, "source_id")
+    event_id = "coord-" + hashlib.sha256((record["task_id"] + "\0" + source).encode()).hexdigest()[:32]
+    r = copy.deepcopy(record)
+    existing = next((x for x in r["history_outbox"] if x["event_id"] == event_id), None)
+    item = {"event_id": event_id, "transition": transition, "summary": _text(summary, "summary"),
+            "evidence_refs": evidence_refs.copy(), "stage": "pending", "receipts": {}}
+    if existing:
+        if any(existing.get(key) != item[key] for key in (
+                "event_id", "transition", "summary", "evidence_refs")):
+            raise ValueError("history checkpoint id already names different content")
+        return r, event_id
+    r["history_outbox"].append(item)
+    return r, event_id
+
+
+def mark_history_checkpoint(record, *, event_id, stage, receipt_ref, digest_value=None):
+    """Advance one checkpoint through append, render, index, publish and readback stages."""
+    if stage not in HISTORY_STAGES[1:]:
+        raise ValueError("invalid history stage")
+    r = copy.deepcopy(record)
+    item = next((x for x in r.get("history_outbox", []) if x["event_id"] == event_id), None)
+    if not item:
+        raise KeyError("unknown history checkpoint")
+    current = HISTORY_STAGES.index(item["stage"])
+    target = HISTORY_STAGES.index(stage)
+    if target < current:
+        raise ValueError("history checkpoint cannot move backward")
+    if target > current + 1:
+        raise ValueError("history checkpoint stages cannot be skipped")
+    receipt = _text(receipt_ref, "receipt_ref")
+    if target == current:
+        if (item["receipts"].get(stage) != receipt or
+                (digest_value is not None and item.get("digest") != digest_value)):
+            raise ValueError("history stage replay has a different receipt")
+        return r
+    item["stage"] = stage
+    item["receipts"][stage] = receipt
+    if digest_value is not None:
+        item["digest"] = _hex(digest_value, "digest", {64})
+    coordination = _coord(r)
+    if stage == "published":
+        coordination["history_publication_state"] = "published-unverified"
+    elif stage == "readback-verified":
+        coordination["history_publication_state"] = "readback-verified"
+    return r
+
+
+def consume_history_readback(record, *, task_id, record_owner, revision, digest_value,
+                             event_ids, readback_ref):
+    """Bind a fresh canonical read to resume; retrieval is not independent acceptance."""
+    config = record.get("history_capture") or {}
+    if task_id != record.get("task_id") or record_owner != config.get("record_owner"):
+        raise ValueError("history readback task or owner mismatch")
+    if type(revision) is not int or revision < 1 or not isinstance(event_ids, list) or not event_ids:
+        raise ValueError("invalid history readback")
+    latest = record.get("history_outbox", [])[-1] if record.get("history_outbox") else None
+    if latest and (latest["event_id"] not in event_ids or
+                   latest["stage"] not in {"published", "readback-verified"}):
+        raise ValueError("fresh readback must contain the latest published checkpoint")
+    r = copy.deepcopy(record)
+    if latest:
+        r = mark_history_checkpoint(r, event_id=latest["event_id"], stage="readback-verified",
+                                    receipt_ref=readback_ref, digest_value=digest_value)
+    r["canonical_history"] = {"task_id": task_id, "record_owner": record_owner,
+                              "revision": revision, "digest": _hex(digest_value, "digest", {64}),
+                              "event_ids": event_ids.copy(),
+                              "readback_ref": _text(readback_ref, "readback_ref")}
+    return r
+
+
+def new_task(task_id, work_item, *, worker_kind, owner, repo, worktree=None, source_thread=None,
+             acceptance_packet=None, history_capture=None):
     """A fresh record; `owner` is "assistant" (this layer started it) or "human" (never driven)."""
     if owner not in ("assistant", "human"):
         raise ValueError(f"owner must be assistant or human, got {owner!r}")
@@ -314,12 +530,22 @@ def new_task(task_id, work_item, *, worker_kind, owner, repo, worktree=None, sou
         validate_packet(acceptance_packet)
         if acceptance_packet["task_id"] != task_id:
             raise ValueError("acceptance packet belongs to another task")
+    if history_capture is not None:
+        if owner != "assistant" or not isinstance(history_capture, dict) or set(history_capture) != {
+                "record_owner", "authorization_ref", "history_repo"}:
+            raise ValueError("history capture requires explicit owner, authorization and repository")
+        for key in ("record_owner", "authorization_ref", "history_repo"):
+            _text(history_capture[key], key)
+        if not Path(history_capture["history_repo"]).is_absolute():
+            raise ValueError("history repository must be an absolute path")
     return {"task_id": task_id, "work_item": work_item, "status": None,
             "worker": {"kind": worker_kind, "session_id": None, "owner": owner, "state": "unknown"},
             "repo": repo, "worktree": worktree, "source_thread": source_thread,
             "evidence": None, "acceptance_packet": acceptance_packet, "pending_decision": None, "approvals": [], "outbox": [],
             "seen": [], "last_change_ts": None, "history": [], "counts": {"duplicates": 0, "unneeded_asks": 0},
-            "coordination": _coordination(work_item)}
+            "coordination": _coordination(work_item),
+            **({"history_capture": copy.deepcopy(history_capture), "history_outbox": [],
+                "canonical_history": None} if history_capture else {})}
 
 
 def bind_packet(record, value):
@@ -456,6 +682,18 @@ def _apply(r, kind, source, data, ts, event_id):
             _hex(data.get("final_diff_digest"), "final_diff_digest", {64})
         except ValueError:
             return "unsupported"
+        if active.get("requested_artifact"):
+            try:
+                worker_return = assess_worker_return(
+                    r, deliverable_id=data.get("deliverable_id"), revision=data.get("revision"),
+                    contract_digest=data.get("contract_digest"),
+                    artifact_kind=data.get("artifact_kind"), artifact_ref=data.get("artifact_ref"),
+                    result=data.get("result"), remaining=data.get("remaining"),
+                    next_owner=data.get("next_owner"))
+            except ValueError:
+                return "unsupported"
+            if worker_return["status"] != "current-artifact":
+                return "unsupported"
     if kind == "decided":
         p = pending(r)
         if data.get("approve") is True:
@@ -507,6 +745,8 @@ def _apply(r, kind, source, data, ts, event_id):
     if kind == "ready":
         r["evidence"] = {k: data.get(k) for k in (
             "commit", "final_diff_digest", "tests", "summary")}
+        if active and active.get("requested_artifact"):
+            r["worker_return"] = worker_return
     if kind == "reopen":
         r["evidence"] = None
         r["acceptance_assessment"] = None

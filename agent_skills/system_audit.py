@@ -9,10 +9,11 @@ import re
 CLAIM_LEVELS = {"observed", "hypothesis", "known-platform-limit", "coverage-gap"}
 ANGLES = {"intake-contracts", "execution-context", "decision-friction", "capability-release"}
 OUTCOME_SIGNALS = {"repeated-context-request", "duplicate-investigation", "missed-evidence",
-                   "decision-block-time", "false-blocker", "successful-handoff"}
+                   "decision-block-time", "false-blocker", "successful-handoff",
+                   "workspace-navigation-gap"}
 CAUSE_BASES = {"observed-root-cause", "hypothesis", "known-platform-limit", "not-established"}
 CONFIDENCE = {"high", "medium", "low"}
-SOURCE_STATES = {"observed", "unavailable", "not-checked"}
+SOURCE_STATES = {"observed", "unavailable", "not-checked", "not-applicable"}
 ACCEPTANCE_STATES = {"untested", "passed", "failed", "blocked"}
 FAILURE_CLASSES = {
     "legitimate-policy-limit",
@@ -459,8 +460,8 @@ def finding(*, finding_id, finding_key, angle, claim_level, cause_basis, confide
 
 
 def _fingerprint(value):
-    fields = {k: value.get(k) for k in ("finding_id", "finding_key",
-                                        "acceptance_test", "scope_ref")}
+    """Stable mechanism identity; reviewer-local finding IDs are retained only as aliases."""
+    fields = {k: value.get(k) for k in ("finding_key", "acceptance_test", "scope_ref")}
     return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
 
 
@@ -484,23 +485,30 @@ def _sources(source_manifest):
     return result
 
 
-def synthesize(findings, *, source_manifest, prior_findings=()):
+def synthesize(findings, *, source_manifest, prior_findings=(), required_sources=None):
     """Deduplicate unchanged findings and preserve contradictory conclusions as disputes."""
     if not isinstance(findings, list) or not isinstance(prior_findings, (list, tuple)):
         raise ValueError("findings and prior findings must be lists")
     sources = _sources(source_manifest)
+    if required_sources is not None and (not isinstance(required_sources, list) or
+            not required_sources or not all(isinstance(x, str) and x.strip() for x in required_sources) or
+            len(required_sources) != len(set(required_sources))):
+        raise ValueError("required audit sources must be a non-empty unique list")
     prior_by_fp = {_fingerprint(x): x for x in prior_findings}
     groups = {}
     for item in findings:
         if not isinstance(item, dict) or item.get("angle") not in ANGLES:
             raise ValueError("validated finding required")
-        groups.setdefault(item["finding_id"], []).append(deepcopy(item))
+        groups.setdefault(_fingerprint(item), []).append(deepcopy(item))
     results = []
     duplicates = []
-    for finding_id, items in groups.items():
+    for fingerprint, items in groups.items():
+        aliases = sorted({x["finding_id"] for x in items})
         assertions = {x["assertion"] for x in items}
         if len(assertions) > 1:
-            results.append({"finding_id": finding_id, "finding_key": items[0]["finding_key"],
+            results.append({"finding_id": aliases[0], "finding_aliases": aliases,
+                            "mechanism_fingerprint": fingerprint,
+                            "finding_key": items[0]["finding_key"],
                             "state": "disputed", "reviewer_count": len(items),
                             "findings": items})
             continue
@@ -508,6 +516,7 @@ def synthesize(findings, *, source_manifest, prior_findings=()):
         if previous:
             duplicates.append({"finding_key": items[0]["finding_key"],
                                "prior_finding_id": previous.get("finding_id"),
+                               "current_finding_aliases": aliases,
                                "evidence_windows": sorted({x["evidence_window"] for x in items}),
                                "current_evidence_refs": sorted({ref for x in items
                                                                 for ref in x["evidence_refs"]}),
@@ -515,13 +524,47 @@ def synthesize(findings, *, source_manifest, prior_findings=()):
                                "acceptance_receipts": sorted({x["acceptance_receipt"] for x in items
                                                               if x["acceptance_receipt"]})})
             continue
-        results.append({"finding_id": finding_id, "finding_key": items[0]["finding_key"],
+        results.append({"finding_id": aliases[0], "finding_aliases": aliases,
+                        "mechanism_fingerprint": fingerprint,
+                        "finding_key": items[0]["finding_key"],
                         "state": "supported", "reviewer_count": len(items),
                         "findings": items})
     results.sort(key=lambda x: x["finding_id"])
     duplicates.sort(key=lambda x: x["finding_key"])
+    by_source = {item["source"]: item for item in sources}
+    if required_sources is None:
+        missing = ["required-sources-not-declared"]
+    else:
+        missing = [source for source in required_sources if source not in by_source]
+        missing.extend(source for source in required_sources if source in by_source and
+                       by_source[source]["state"] not in {"observed", "not-applicable"})
     return {"findings": results, "unchanged": duplicates, "source_manifest": sources,
-            "coverage_complete": all(x["state"] == "observed" for x in sources)}
+            "required_sources": list(required_sources or []),
+            "coverage_missing": sorted(set(missing)), "coverage_complete": not missing}
+
+
+def monitoring_verdict(*, wake_receipt, readback_receipt, expires_at_utc,
+                       observed_at_utc, traffic_count, functional_results):
+    """A configured watch is not armed without current wake and readback receipts."""
+    if type(traffic_count) is not int or traffic_count < 0 or not isinstance(functional_results, list):
+        raise ValueError("invalid monitoring evidence")
+    observed = _utc(observed_at_utc, "observed_at_utc")
+    expires = _utc(expires_at_utc, "expires_at_utc") if expires_at_utc else None
+    receipts_current = bool(wake_receipt and readback_receipt and expires and observed <= expires)
+    armed = "armed" if receipts_current else "not-armed"
+    if not receipts_current:
+        acceptance = "unverified"
+    elif traffic_count == 0:
+        acceptance = "inconclusive-zero-traffic"
+    elif not functional_results:
+        acceptance = "unverified"
+    else:
+        acceptance = "passed" if all(x is True for x in functional_results) else "failed"
+    return {"watch_state": armed, "functional_acceptance": acceptance,
+            "traffic_count": traffic_count,
+            "wake_receipt": _text(wake_receipt, "wake_receipt", optional=True),
+            "readback_receipt": _text(readback_receipt, "readback_receipt", optional=True),
+            "expires_at_utc": expires_at_utc, "observed_at_utc": observed_at_utc}
 
 
 def audit_artifact(*, audit_id, revision, scope_ref, window_start, window_end,

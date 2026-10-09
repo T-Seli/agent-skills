@@ -4,7 +4,7 @@ Use four reviewers at most. Each receives the same declared window, scope, canon
 
 ## A — intake and contracts
 
-Check intake/triage, canonical ownership, active deliverable revisions, superseded obligations, worker readback and stale-result handling. Look for duplicate work or task drift. Do not judge execution quality outside the bound contract.
+Check intake/triage, canonical ownership, active and completed obligation revisions, worker readback and stale-result handling. Verify that each material item has one discoverable canonical task, owner and supported thread/workspace reference with accurate status, pending decision, next action, working artifact links and alias/handoff provenance. Treat missing metadata as a coverage gap and closure readiness as a recommendation only; never rename, move or archive a surface. Look for duplicate work or task drift. Do not judge execution quality outside the bound contract.
 
 ## B — execution and context
 

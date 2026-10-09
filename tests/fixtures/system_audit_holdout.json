@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "unseen-reviewer-id",
+      "kind": "stable-identity",
+      "finding_ids": ["heldout-alpha", "heldout-beta"],
+      "expected_groups": 1
+    },
+    {
+      "id": "missing-scope-source",
+      "kind": "coverage",
+      "required_sources": ["task-record", "runtime-readback"],
+      "observed_sources": ["task-record"],
+      "expected_complete": false
+    },
+    {
+      "id": "blocked-runtime-wake",
+      "kind": "monitoring",
+      "wake_receipt": null,
+      "readback_receipt": "runtime:readback-1",
+      "traffic_count": 4,
+      "expected_watch_state": "not-armed"
+    },
+    {
+      "id": "zero-traffic",
+      "kind": "monitoring",
+      "wake_receipt": "runtime:wake-1",
+      "readback_receipt": "runtime:readback-1",
+      "traffic_count": 0,
+      "expected_acceptance": "inconclusive-zero-traffic"
+    }
+  ]
+}

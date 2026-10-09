@@ -5,11 +5,13 @@ The host must supply this packet at a task boundary. This module has no session
 reader, background hook, network call, or publication side effect.
 """
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import sys
 
 import history
+import markdown
 
 
 REQUIRED = {"authorization_ref", "expected_digest", "event"}
@@ -38,6 +40,34 @@ def capture(repo, checkpoint):
         raise ValueError("stale checkpoint digest; reconcile before retry")
     result, digest = history.append(repo, event, checkpoint["expected_digest"])
     return {"result": result, "event_id": event["event_id"], "digest": digest}
+
+
+def verify_publication(repo, *, task_id, event_id, expected_digest, reader_ref):
+    """Verify journal, generated view, and index from the caller's fresh reader checkout."""
+    if not isinstance(reader_ref, str) or not reader_ref.strip():
+        raise ValueError("fresh reader reference is required")
+    rows, current = history.snapshot(repo, task_id)
+    if current != expected_digest:
+        raise ValueError("published journal digest does not match expected digest")
+    if event_id not in {row["event_id"] for row in rows}:
+        raise ValueError("published journal is missing the expected event")
+    view = Path(repo).resolve() / "views" / f"{task_id}.md"
+    if not view.is_file() or view.is_symlink():
+        raise ValueError("published generated view is missing or unsafe")
+    content = view.read_text(encoding="utf-8")
+    marker = markdown.MARKER.match(content)
+    if (not marker or marker.group(2) != current or
+            hashlib.sha256(content[marker.end():].encode()).hexdigest() != marker.group(1)):
+        raise ValueError("published generated view does not match the journal")
+    index = Path(repo).resolve() / "INDEX.md"
+    if not index.is_file() or index.is_symlink():
+        raise ValueError("published index is missing or unsafe")
+    index_text = index.read_text(encoding="utf-8")
+    if f"(views/{task_id}.md)" not in index_text or f"(events/{task_id}.jsonl)" not in index_text:
+        raise ValueError("published index is missing the task journal or view link")
+    return {"task_id": task_id, "event_id": event_id, "revision": len(rows),
+            "record_owner": history.owner(rows), "digest": current,
+            "reader_ref": reader_ref.strip(), "view": str(view), "index": str(index)}
 
 
 def main():

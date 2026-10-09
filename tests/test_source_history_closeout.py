@@ -11,7 +11,8 @@ from pathlib import Path
 
 from agent_skills.closeout import cleanup_gate, completion_gate, handoff_gate
 from agent_skills.history import append, read
-from agent_skills.source_readiness import compare_receipt, installed_links, source_receipt
+from agent_skills.source_readiness import (compare_receipt, installed_links,
+                                           runtime_capability_receipt, source_receipt)
 from agent_skills.task_contract import checkpoint, packet
 
 H = "a" * 64
@@ -30,6 +31,37 @@ def sample():
 
 
 class SourceHistoryCloseoutTests(unittest.TestCase):
+    def test_runtime_receipt_separates_installed_loaded_and_exercised_behavior(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'release'
+            route_root = Path(tmp) / 'runtime'
+            (root / 'skills').mkdir(parents=True)
+            route_root.mkdir()
+            body = root / 'skills' / 'fixture.md'
+            body.write_text('fixture\n')
+            commit, tree = 'a' * 40, 'b' * 40
+            (root / '.release-pin.json').write_text(json.dumps({
+                'source': 'T-Seli/agent-skills', 'commit': commit, 'tree': tree}))
+            route = route_root / 'fixture'
+            route.symlink_to(body)
+            bundle = {'sources': [{'path': 'skills/fixture.md',
+                                   'sha256': hashlib.sha256(body.read_bytes()).hexdigest()}]}
+            ready = runtime_capability_receipt(
+                root, runtime='codex', expected_commit=commit, expected_tree=tree,
+                installed_routes={'fixture': route}, loaded_bundle=bundle,
+                behavior_checks=[{'id': 'selected-body-used', 'outcome': 'pass',
+                                  'receipt_ref': 'fixture:behavior-1'}])
+            self.assertTrue(ready['ready'])
+            blocked = runtime_capability_receipt(
+                root, runtime='claude', expected_commit=commit, expected_tree=tree,
+                installed_routes={'fixture': route}, loaded_bundle=bundle,
+                behavior_checks=[{'id': 'fresh-session-readback', 'outcome': 'blocked',
+                                  'receipt_ref': 'fixture:no-native-reader'}])
+            self.assertTrue(blocked['installed_ready'])
+            self.assertTrue(blocked['loaded_ready'])
+            self.assertFalse(blocked['behavior_ready'])
+            self.assertFalse(blocked['ready'])
+
     def test_bound_closeout_requires_current_independent_artifact_inspection(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

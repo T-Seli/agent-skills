@@ -6,7 +6,7 @@ Use one durable record per work item. The compact envelope below supplements the
 
 - `user_goal`, `constraints`, `priority_source_ref`: the current human outcome and its authoritative source.
 - `canonical_issue_ref`, `canonical_owner`: the one issue/card and execution owner responsible for action.
-- `active_deliverable`: `{id, revision, acceptance_ref, environment, changed_criteria, next_action, source_ref, readback_ref}`; revisions increase monotonically and an exact replay preserves state.
+- `active_deliverable`: `{id, revision, acceptance_ref, environment, changed_criteria, next_action, source_ref, requested_artifact, readback_ref, history_readback}`; revisions increase monotonically and an exact replay preserves state.
 - `obligations`: displaced acknowledged deliverables retained as `queued` or `superseded`, with reason and source. Never silently drop one.
 
 Only one deliverable is active. Changed criteria require a new revision. Before accepting worker progress on it, require a readback naming its ID, revision, changed criteria, environment and next action. Old results remain evidence but are labeled stale.
@@ -23,8 +23,9 @@ Keep ranked independent decisions separate from evidence: `[{id, rank, scope, ta
 
 Track independently:
 
-- execution: `not-started | awaiting-dispatch | awaiting-readback | admitted | running | pause-requested | paused | blocked | finished`;
+- execution: `not-started | awaiting-dispatch | awaiting-readback | admitted | running | pause-requested | paused | blocked | awaiting-reconciliation | finished`;
 - acceptance: `unreviewed | rejected | ready | verified | accepted`;
+- user delivery: `not-delivered | delivered`, with an artifact and receipt; history publication: `not-published | published-unverified | readback-verified`;
 - deployment: exact head, final-diff digest, scope, revision, lock owner, pause state and release-gate reasons;
 - display sync per surface: `current | stale | unknown`, plus a receipt when current.
 
@@ -32,4 +33,4 @@ A pause request becomes effective only after the canonical execution owner confi
 
 ## Watches and milestones
 
-A watch starts from `{watch_id, scope, digest, observed_at, source_ref}` and emits only on a changed digest or a stated deadline. Milestones sent to the designated history owner are sanitized summaries of a contract revision/readback, decision, material blocker, release gate or acceptance result. They carry evidence references, never raw sessions, transcripts, secrets or customer data.
+A watch starts from `{watch_id, scope, digest, observed_at, source_ref}` and emits only on a changed digest or a stated deadline; an actual current wake/readback receipt is required to call it armed, and zero traffic is inconclusive. Milestones sent to the designated history owner are sanitized summaries of a contract revision/readback, decision, material blocker, release gate or acceptance result. `history_outbox` advances only through `pending → locally-appended → view-rendered → index-updated → published → readback-verified`; those stages carry receipts and never imply acceptance. They carry evidence references, never raw sessions, transcripts, secrets or customer data.

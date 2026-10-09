@@ -85,7 +85,7 @@ Each skill starts from the user's plain words and starts the next one itself; th
 | `skills/handoff` | Mid-task transfer prompt, saved to the handoffs folder | Description always; body on invoke |
 | `skills/agent-coordination` | Work items across worker sessions and the orchestrator assistant: durable local task records, worker adapters, one thread per item, correlated replies | Description always; body on invoke |
 | `skills/approval-handoff` | Classify worker blockers, relay matching scoped authority, and route an actual direct-session approval with verified navigation and wording | Description always; body on invoke |
-| `skills/system-audit` | Bounded independent read-only review of coordination outcomes, verified failures/guards, human unlocks, evidence coverage, decision friction and release boundaries | Description always; body on invoke; scheduler is owned by the caller |
+| `skills/system-audit` | Bounded independent read-only review of coordination outcomes, workspace navigation, verified failures/guards, human unlocks, evidence coverage, decision friction and release boundaries | Description always; body on invoke; scheduler is owned by the caller |
 | `skills/task-history` | Sanitized owner-bound milestone evidence, deterministic views and resumption | Description always; body on invoke |
 | `skills/ask-assistant` | Old name; routes to agent-coordination | Description always; body on invoke |
 
