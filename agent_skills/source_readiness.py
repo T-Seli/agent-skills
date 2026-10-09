@@ -92,15 +92,19 @@ def runtime_capability_receipt(release_root, *, runtime, expected_commit, expect
                 not isinstance(entry.get("source"), str)):
             raise ValueError("invalid installed runtime route")
         path = Path(entry["route"])
-        source = root / entry["source"]
-        safe_source = source.resolve(strict=False).is_relative_to(root)
+        source_name = Path(entry["source"])
+        source = root / source_name
+        safe_source = (not source_name.is_absolute() and
+                       all(part not in {".", ".."} for part in source_name.parts) and
+                       source.resolve(strict=False).is_relative_to(root))
         route_checks[name] = bool(safe_source and source.exists() and path.is_symlink() and
                                   path.resolve() == source.resolve())
-        route_sources[name] = entry["source"]
+        route_sources[name] = source.resolve(strict=False) if safe_source else None
     sources = loaded_bundle.get("sources") if isinstance(loaded_bundle, dict) else None
     load_receipt = loaded_bundle.get("load_receipt") if isinstance(loaded_bundle, dict) else None
     load_checks = {}
     seen_sources = set()
+    resolved_sources = {}
     if isinstance(sources, list):
         for source in sources:
             if not isinstance(source, dict) or not isinstance(source.get("path"), str) or not isinstance(source.get("sha256"), str):
@@ -109,18 +113,29 @@ def runtime_capability_receipt(release_root, *, runtime, expected_commit, expect
             if source["path"] in seen_sources:
                 raise ValueError("duplicate loaded source path")
             seen_sources.add(source["path"])
-            candidate = root / source["path"]
-            safe = (not candidate.is_symlink() and candidate.resolve(strict=False).is_relative_to(root) and
+            source_name = Path(source["path"])
+            candidate = root / source_name
+            safe = (not source_name.is_absolute() and
+                    all(part not in {".", ".."} for part in source_name.parts) and
+                    not candidate.is_symlink() and candidate.resolve(strict=False).is_relative_to(root) and
                     candidate.is_file())
             load_checks[source["path"]] = safe and hashlib.sha256(candidate.read_bytes()).hexdigest() == source["sha256"]
+            resolved_sources[source["path"]] = candidate.resolve(strict=False) if safe else None
     receipt_ready = False
     if isinstance(load_receipt, dict) and set(load_receipt) == {
             "runtime", "session_id", "reader", "read_ref", "selected_path", "sha256"}:
         selected = next((source for source in (sources or [])
                          if isinstance(source, dict) and source.get("path") == load_receipt.get("selected_path")), None)
+        selected_value = load_receipt.get("selected_path")
+        selected_is_routed = False
+        if isinstance(selected_value, str) and selected_value and resolved_sources.get(selected_value):
+            selected_path = resolved_sources[selected_value]
+            selected_is_routed = any(
+                routed is not None and (selected_path == routed or selected_path.is_relative_to(routed))
+                for routed in route_sources.values())
         receipt_ready = bool(
             load_receipt.get("runtime") == runtime and selected and
-            load_receipt.get("selected_path") in route_sources.values() and
+            selected_is_routed and
             selected.get("sha256") == load_receipt.get("sha256") and
             load_checks.get(load_receipt.get("selected_path")) is True and
             all(isinstance(load_receipt.get(key), str) and load_receipt[key].strip()

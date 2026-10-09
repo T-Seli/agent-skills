@@ -27,7 +27,7 @@ Every skill reads this file first. It is the only home for the names, files, flo
 - `TASK` = `<tasks>/<date>-<slug>/` on the task branch, same name as its draft. `<tasks>` is `none`: `TASK` = `DRAFT`, the folder never leaves drafts, and the user deletes it once shipped.
 - Handoffs: `$MAIN/.claude/drafts/handoffs/<date>-<slug>.md`. Never pending or stale; `/handoff` keeps the newest `Handoffs kept`.
 - Follow-up: a regression found after shipping becomes `drafts/<date>-<slug>-r2/` (next free `-rN`). Its `action-items.md` starts `Follow-up to <original folder>` and uses the /action-items item format.
-- Temp worktrees: detached at `$MAIN/.claude/worktrees/_base-<shortsha>`, removed on every exit by the run that made them. Leftovers: the next `/test-review` start or `/deploy` cleanup removes them with `git worktree remove --force`.
+- Temp worktrees: detached at a run-unique `$MAIN/.claude/worktrees/_base-<shortsha>-<run-id>`. Only the creating run may remove one, without `--force`, after confirming its exact registered path has no tracked, untracked or ignored content. Leftovers are listed for the user; later runs never reuse or automatically remove them.
 - `LOCK` = `$(git rev-parse --path-format=absolute --git-common-dir)/deploy.lock/`; its `owner` file holds `<agent> <branch> <UTC time>`. Stale after `Deploy lock stale after`. Trunk flow takes it from `/implement` start to `/deploy` cleanup, so a second agent sees the tree is in use and stops.
 - **Stale** = a draft folder with no file changed within `Active-work window`, a task branch with no commit within it, or a stale `LOCK`. Stale work is listed for the user, never deleted by a skill.
 

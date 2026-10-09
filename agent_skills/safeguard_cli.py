@@ -4,7 +4,9 @@ import json
 import sys
 from pathlib import Path
 
+from .closeout import cleanup_gate, main_sync_gate
 from .code_state import code_state
+from .release_reconciliation import reconcile_release
 from .release_guard import capture_rollback, verify_release
 
 
@@ -25,6 +27,25 @@ def main(argv=None):
     rollback.add_argument('--release', required=True)
     rollback.add_argument('--repository', required=True)
     rollback.add_argument('--target', action='append', required=True)
+    reconcile = subs.add_parser('reconcile')
+    reconcile.add_argument('manifest')
+    reconcile.add_argument('state')
+    cleanup = subs.add_parser('cleanup')
+    cleanup.add_argument('main')
+    cleanup.add_argument('worktree')
+    cleanup.add_argument('--base', required=True)
+    cleanup.add_argument('--branch', required=True)
+    cleanup.add_argument('--completion-accepted', action='store_true')
+    cleanup.add_argument('--no-pending-effects', action='store_true')
+    cleanup.add_argument('--lock-path')
+    cleanup.add_argument('--expected-lock-owner')
+    cleanup.add_argument('--remote-base')
+    sync = subs.add_parser('main-sync')
+    sync.add_argument('main')
+    sync.add_argument('--base', required=True)
+    sync.add_argument('--repository', required=True)
+    sync.add_argument('--fetched-sha', required=True)
+    sync.add_argument('--lock-path', required=True)
     args = parser.parse_args(argv)
     try:
         if args.action == 'manifest':
@@ -34,12 +55,35 @@ def main(argv=None):
             if not result['ok']:
                 print(json.dumps(result, sort_keys=True))
                 return 1
-        else:
+        elif args.action == 'rollback-capture':
             targets = dict(item.split('=', 1) for item in args.target)
             if len(targets) != len(args.target):
                 raise ValueError('duplicate target')
             result = capture_rollback(Path(args.path), targets, task=args.task,
                                       release=args.release, repository=args.repository)
+        elif args.action == 'reconcile':
+            manifest = json.loads(Path(args.manifest).read_text(encoding='utf-8'))
+            state = json.loads(Path(args.state).read_text(encoding='utf-8'))
+            result = reconcile_release(manifest, state)
+            if not result['system_wide']:
+                print(json.dumps(result, sort_keys=True))
+                return 1
+        elif args.action == 'cleanup':
+            result = cleanup_gate(args.main, args.worktree, base=args.base, branch=args.branch,
+                                  completion_accepted=args.completion_accepted,
+                                  no_pending_effects=args.no_pending_effects,
+                                  lock_path=args.lock_path,
+                                  expected_lock_owner=args.expected_lock_owner,
+                                  remote_base=args.remote_base)
+            if not result['eligible']:
+                print(json.dumps(result, sort_keys=True))
+                return 1
+        else:
+            result = main_sync_gate(args.main, base=args.base, repository=args.repository,
+                                    fetched_sha=args.fetched_sha, lock_path=args.lock_path)
+            if not result['ready']:
+                print(json.dumps(result, sort_keys=True))
+                return 1
         print(json.dumps(result, sort_keys=True))
         return 0
     except (OSError, ValueError, RuntimeError) as exc:

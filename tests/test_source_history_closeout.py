@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_skills.closeout import cleanup_gate, completion_gate, handoff_gate
+from agent_skills.closeout import cleanup_gate, completion_gate, handoff_gate, main_sync_gate
 from agent_skills.history import append, read
 from agent_skills.source_readiness import (compare_receipt, installed_links,
                                            runtime_capability_receipt, source_receipt)
@@ -31,6 +31,30 @@ def sample():
 
 
 class SourceHistoryCloseoutTests(unittest.TestCase):
+    def test_main_sync_gate_requires_exact_clean_fetched_main_and_no_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, main = Path(tmp) / "origin.git", Path(tmp) / "main"
+            run("git", "init", "-q", "--bare", str(origin))
+            run("git", "clone", "-q", str(origin), str(main))
+            run("git", "-C", str(main), "checkout", "-qb", "main")
+            (main / "x").write_text("base")
+            run("git", "-C", str(main), "add", "x")
+            run("git", "-C", str(main), "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                "commit", "-qm", "base")
+            run("git", "-C", str(main), "push", "-q", "-u", "origin", "main")
+            sha = run("git", "-C", str(main), "rev-parse", "origin/main")
+            lock = main / ".git/deploy.lock"
+            self.assertTrue(main_sync_gate(main, base="main", repository="origin",
+                                           fetched_sha=sha, lock_path=lock)["ready"])
+            lock.mkdir()
+            self.assertFalse(main_sync_gate(main, base="main", repository="origin",
+                                            fetched_sha=sha, lock_path=lock)["ready"])
+            lock.rmdir()
+            (main / ".git/info/exclude").write_text("ignored.bin\n")
+            (main / "ignored.bin").write_text("keep")
+            self.assertFalse(main_sync_gate(main, base="main", repository="origin",
+                                            fetched_sha=sha, lock_path=lock)["ready"])
+
     def test_runtime_receipt_separates_installed_loaded_and_exercised_behavior(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / 'release'
@@ -106,6 +130,48 @@ class SourceHistoryCloseoutTests(unittest.TestCase):
                     loaded_bundle=duplicate,
                     behavior_checks=[{'id': 'selected-body-used', 'outcome': 'pass',
                                       'receipt_ref': 'fixture:behavior-1'}])
+
+    def test_runtime_receipt_accepts_loaded_file_under_linked_skill_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'release'
+            skill = root / 'skills' / 'fixture'
+            route_root = Path(tmp) / 'runtime'
+            skill.mkdir(parents=True)
+            route_root.mkdir()
+            body = skill / 'SKILL.md'
+            body.write_text('fixture\n')
+            commit, tree = 'a' * 40, 'b' * 40
+            (root / '.release-pin.json').write_text(json.dumps({
+                'source': 'T-Seli/agent-skills', 'commit': commit, 'tree': tree}))
+            route = route_root / 'fixture'
+            route.symlink_to(skill, target_is_directory=True)
+            digest = hashlib.sha256(body.read_bytes()).hexdigest()
+            result = runtime_capability_receipt(
+                root, runtime='codex', expected_commit=commit, expected_tree=tree,
+                installed_routes={'fixture': {'route': route, 'source': 'skills/fixture'}},
+                loaded_bundle={'sources': [{'path': 'skills/fixture/SKILL.md', 'sha256': digest}],
+                               'load_receipt': {'runtime': 'codex', 'session_id': 'session-1',
+                                                'reader': 'native-skill-reader', 'read_ref': 'read:fixture-1',
+                                                'selected_path': 'skills/fixture/SKILL.md', 'sha256': digest}},
+                behavior_checks=[{'id': 'selected-body-used', 'outcome': 'pass',
+                                  'receipt_ref': 'fixture:behavior-1'}])
+            self.assertTrue(result['ready'])
+            sibling = root / 'skills' / 'other.md'
+            sibling.write_text('not the routed skill\n')
+            sibling_digest = hashlib.sha256(sibling.read_bytes()).hexdigest()
+            escaped = runtime_capability_receipt(
+                root, runtime='codex', expected_commit=commit, expected_tree=tree,
+                installed_routes={'fixture': {'route': route, 'source': 'skills/fixture'}},
+                loaded_bundle={'sources': [{'path': 'skills/fixture/../other.md',
+                                            'sha256': sibling_digest}],
+                               'load_receipt': {'runtime': 'codex', 'session_id': 'session-1',
+                                                'reader': 'native-skill-reader', 'read_ref': 'read:escape',
+                                                'selected_path': 'skills/fixture/../other.md',
+                                                'sha256': sibling_digest}},
+                behavior_checks=[{'id': 'selected-body-used', 'outcome': 'pass',
+                                  'receipt_ref': 'fixture:behavior-escape'}])
+            self.assertFalse(escaped['loaded_ready'])
+            self.assertFalse(escaped['ready'])
 
     def test_bound_closeout_requires_current_independent_artifact_inspection(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -217,5 +283,25 @@ class SourceHistoryCloseoutTests(unittest.TestCase):
             run("git", "-C", str(main), "merge", "--ff-only", "feat/test")
             self.assertTrue(cleanup_gate(main, worktree, base="main", branch="feat/test",
                                          completion_accepted=True, no_pending_effects=True)["eligible"])
+            exclude = Path(run("git", "-C", str(worktree), "rev-parse", "--git-path", "info/exclude"))
+            exclude.write_text("ignored.bin\n")
+            (worktree / "ignored.bin").write_text("keep")
+            self.assertFalse(cleanup_gate(main, worktree, base="main", branch="feat/test",
+                                          completion_accepted=True, no_pending_effects=True)["eligible"])
+            (worktree / "ignored.bin").unlink()
+            lock = main / ".git/deploy.lock"
+            lock.mkdir()
+            (lock / "owner").write_text("agent feat/test 2026-10-09T00:00:00Z\n")
+            self.assertFalse(cleanup_gate(
+                main, worktree, base="main", branch="feat/test", completion_accepted=True,
+                no_pending_effects=True, lock_path=lock, expected_lock_owner="another owner")["eligible"])
+            self.assertTrue(cleanup_gate(
+                main, worktree, base="main", branch="feat/test", completion_accepted=True,
+                no_pending_effects=True, lock_path=lock,
+                expected_lock_owner="agent feat/test 2026-10-09T00:00:00Z",
+                remote_base=run("git", "-C", str(main), "rev-parse", "main"))["eligible"])
+            self.assertFalse(cleanup_gate(
+                main, worktree, base="main", branch="feat/test", completion_accepted=True,
+                no_pending_effects=True, remote_base="0" * 40)["eligible"])
             self.assertFalse(cleanup_gate(main, worktree, base="main", branch="feat/test",
                                           completion_accepted=False, no_pending_effects=True)["eligible"])

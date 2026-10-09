@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "targets": [
+    {
+      "id": "local-codex",
+      "adapter": "codex",
+      "runtime": "codex-cli",
+      "activation": "native-installer",
+      "required": true,
+      "manual_action": null,
+      "unsupported_reason": null
+    },
+    {
+      "id": "local-claude-code",
+      "adapter": "claude-code",
+      "runtime": "claude-code-cli",
+      "activation": "native-installer",
+      "required": true,
+      "manual_action": null,
+      "unsupported_reason": null
+    },
+    {
+      "id": "saved-cloud-codex",
+      "adapter": "codex",
+      "runtime": "saved-cloud-task",
+      "activation": "manual-republish",
+      "required": true,
+      "manual_action": "Use the supported Edit/Republish UI for the approved immutable release, then verify its pin and behavior in a fresh saved-cloud task.",
+      "unsupported_reason": null
+    },
+    {
+      "id": "built-in-dot-instructions",
+      "adapter": "dot",
+      "runtime": "host-built-in",
+      "activation": "unsupported",
+      "required": false,
+      "manual_action": null,
+      "unsupported_reason": "Publishing user-owned skills does not modify built-in instructions or grant tools."
+    }
+  ]
+}

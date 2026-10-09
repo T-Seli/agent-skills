@@ -26,12 +26,12 @@ Intent per commit: its action item in `TASK/action-items.md` (the log's `impleme
 ## 1. Tests (before reading any code)
 One `scout` runs this and returns ≤150 words: commands, pass/fail per side, new failing ids, red/green per fix test. Commands come from CLAUDE.md § Run & test; output per global CLAUDE.md § Verification. Test services only if that section defines them, with resource names and ports unique to this run; tear them down after.
 Codex: run these steps in this session itself; its scout is sandboxed read-only.
-Temp worktrees (contracts.md): first `git worktree prune` and remove leftovers. Each one this run makes is removed on every exit, stop or error included.
+Temp worktrees (contracts.md): use a run-unique path; list leftovers but never prune or remove another run's path. Each one this run makes is removed without force only when its exact registered path has no tracked, untracked or ignored content; otherwise keep and report it.
 1. **Branch:** reuse implement's logged results when the command matches and `git diff --quiet <logged head sha> <head> -- ':(top,exclude)<tasks>'` passes. Else run the full suite where the head is checked out (else in a temp worktree at it). Record the sorted failing ids.
-2. **Base:** reuse logged results for the same base sha and command. Else `git worktree add --detach "$MAIN/.claude/worktrees/_base-$(git rev-parse --short $BASE)" $BASE`, run the setup, copy in the branch's tests if § Run & test says tests are not tracked by git, run the suite, record failures.
+2. **Base:** reuse logged results for the same base sha and command. Else choose one run-unique id and `git worktree add --detach "$MAIN/.claude/worktrees/_base-$(git rev-parse --short $BASE)-<run-id>" $BASE`, run the setup, copy in the branch's tests if § Run & test says tests are not tracked by git, run the suite, record failures.
 3. **New failures** = branch minus base. Rerun each once on both sides; one that flips is flaky, not new.
 4. **Fix proof** (branch `fix/…` or any `fix` commit): in the base worktree, `git checkout <head> -- <new or changed test files>` (untracked: copy them) and run only those. Each must fail there on an assertion and pass on the branch. A compile, import or collection error at the base is "not shown".
-5. `git worktree remove --force` the temp worktrees.
+5. Remove only this run's clean temp worktrees without `--force`; keep and report any path whose identity or clean state is uncertain.
 
 ## 2. Commits
 Check each commit (skip record commits) against its intent and callers. Up to `Parallel sub-agents` `scout`s get the range, the intents and § Blockers verbatim, and return only blockers (≤150 words, `<short sha> <path:line> — what breaks, for whom — fix`, or "none"):

@@ -35,6 +35,29 @@ hashes, never local absolute paths.
 Private preferences can live outside this repo using `--profile-root
 /path/to/private-config --profile profile.json`; the shared catalog remains
 unchanged.
+
+## Release reconciliation
+
+`agent_skills/release-targets.json` is the one declared target set for a reviewed
+immutable release. At task entry, resume, reconnect, pre-activation or post-activation,
+record sanitized installed, loaded and behavior-verification observations in a
+task-local JSON file, then run:
+
+`python3 -m agent_skills.safeguard_cli reconcile agent_skills/release-targets.json <state.json>`
+
+The read-only gate fails until every required target matches the same commit and
+tree, has a rollback reference, and has receipt-backed load and behavior checks.
+It reports drift and the next bounded action. Active tasks keep their loaded pin;
+new workers use the approved pin, with no forced restart or silent mid-operation
+switch. Saved-cloud publication remains an explicit Edit/Republish UI step and
+needs a fresh-task receipt. Built-in instructions and tool grants are outside
+this user-owned release target set. The gate never fetches, installs, publishes,
+changes access, or schedules background work.
+
+Before treating a fetched `main` as the next release candidate, run `git fetch`
+and then `safeguard_cli main-sync` with the exact repository, base, fetched SHA
+and deploy-lock path. It requires an exact clean local/remote match, including no
+ignored content and no active lock; it never pulls or activates newer source.
 For an improvement, `propose` writes a JSON proposal to stdout; keep it in
 a private task folder. `review-proposal <file>` runs its fixture and reports
 whether human review is needed. Neither command edits or promotes a skill.
