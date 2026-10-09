@@ -1,6 +1,6 @@
 # Structured checkpoint intake
 
-`checkpoint_capture.py` accepts one explicit, task-authorized checkpoint from a trusted host adapter. The input JSON contains `authorization_ref`, the current `expected_digest`, and a complete event whose `approval_ref` matches that authorization. It validates the event with the central writer, checks the current record owner, and appends under the writer's lock. An identical retry returns `duplicate`.
+`checkpoint_capture.py` accepts one explicit, task-authorized checkpoint from a trusted host adapter. The input JSON contains `authorization_ref`, the current `expected_digest`, the staged task binding, and a complete event whose task, owner, kind, summary, approval and source evidence match that binding. `agent-coordination/scripts/tasks.py:history_checkpoint_packet` builds the packet from the owned task outbox. The intake validates the event with the central writer, checks the current record owner, and appends under the writer's lock. An identical retry returns `duplicate`.
 
 Example: `python3 skills/task-history/checkpoint_capture.py --repo <isolated-history-root> <checkpoint.json>`.
 

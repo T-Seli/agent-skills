@@ -53,6 +53,7 @@ def _coordination(work_item):
             "obligation_reconciliations": [], "evidence_cursors": {},
             "decisions": [], "execution_state": "not-started",
             "acceptance_state": "unreviewed", "deployment_state": None,
+            "source_publication_state": None,
             "user_delivery_state": "not-delivered",
             "history_publication_state": "not-published",
             "display_sync": {}, "watch_baselines": {}}
@@ -395,10 +396,16 @@ def communication_brief(record, *, priority_candidates, result, remaining, next_
         raise ValueError("remaining work must be a string list")
     coordination = _coord(record)
     decision = pending(record)
+    def matches(item):
+        required = {key: decision.get(key) for key in (
+            "action", "target", "scope", "revision", "contract_digest")
+                    if decision.get(key) is not None}
+        return all(item.get(key) == value for key, value in required.items())
     satisfied = (approved_parts(record, decision["parts"]) if decision.get("parts") else
-                 approved(record, decision.get("action"), decision.get("target")))
+                 any(matches(item) for item in record["approvals"]))
     approval_need = None if satisfied or not (decision.get("action") and decision.get("target")) else {
-        "need": decision.get("need"), "action": decision["action"], "target": decision["target"]}
+        "need": decision.get("need"), "action": decision["action"], "target": decision["target"],
+        "scope": decision.get("scope"), "revision": decision.get("revision")}
     return {"priorities": actionable_priorities(
                 priority_candidates, priority_source_ref=coordination.get("priority_source_ref") or "unspecified"),
             "approval_need": approval_need, "result": _text(result, "result"),
@@ -413,8 +420,7 @@ def assess_worker_return(record, *, deliverable_id, revision, contract_digest,
     active = (record.get("coordination") or {}).get("active_deliverable") or {}
     requested = active.get("requested_artifact")
     if binding != "current":
-        return {"status": binding, "execution": "reported", "acceptance": "unreviewed",
-                "user_delivery": "not-delivered", "history_publication": "not-published"}
+        return {"status": binding}
     if not isinstance(remaining, list) or not all(isinstance(x, str) and x.strip() for x in remaining):
         raise ValueError("remaining work must be a string list")
     details = {"artifact_kind": _text(artifact_kind, "artifact_kind"),
@@ -422,8 +428,7 @@ def assess_worker_return(record, *, deliverable_id, revision, contract_digest,
                "result": _text(result, "result"), "remaining": remaining.copy(),
                "next_owner": _text(next_owner, "next_owner")}
     status = "current-artifact" if requested is None or requested == details["artifact_kind"] else "adjacent-output"
-    return {"status": status, **details, "execution": "reported", "acceptance": "unreviewed",
-            "user_delivery": "not-delivered", "history_publication": "not-published"}
+    return {"status": status, **details}
 
 
 def record_user_delivery(record, *, artifact_ref, receipt_ref):
@@ -439,6 +444,27 @@ def record_user_delivery(record, *, artifact_ref, receipt_ref):
         raise ValueError("a different user delivery already exists")
     coordination["user_delivery"] = value
     coordination["user_delivery_state"] = "delivered"
+    return r
+
+
+def record_source_publication(record, *, local_commit, local_receipt,
+                              remote_state, remote_receipt=None):
+    """Keep a local commit distinct from remote source publication."""
+    if remote_state not in {"unpublished", "published"}:
+        raise ValueError("remote source state must be unpublished or published")
+    if remote_state == "published" and remote_receipt is None:
+        raise ValueError("published source requires a remote receipt")
+    r = copy.deepcopy(record)
+    state = {"local_commit": _hex(local_commit, "local_commit", {40, 64}),
+             "local_receipt": _text(local_receipt, "local_receipt"),
+             "remote_state": remote_state,
+             "remote_receipt": (_text(remote_receipt, "remote_receipt")
+                                if remote_receipt is not None else None)}
+    prior = _coord(r).get("source_publication_state")
+    if prior and (prior["local_commit"] != state["local_commit"] or
+                  (prior["remote_state"] == "published" and remote_state != "published")):
+        raise ValueError("source publication state cannot replace or regress")
+    _coord(r)["source_publication_state"] = state
     return r
 
 
@@ -463,7 +489,27 @@ def stage_history_checkpoint(record, *, source_id, transition, summary, evidence
             raise ValueError("history checkpoint id already names different content")
         return r, event_id
     r["history_outbox"].append(item)
+    _coord(r)["history_publication_state"] = "not-published"
     return r, event_id
+
+
+def history_checkpoint_packet(record, *, event_id, expected_digest, event):
+    """Bind an owner append packet to the exact staged checkpoint and task authorization."""
+    config = record.get("history_capture") or {}
+    item = next((x for x in record.get("history_outbox", []) if x["event_id"] == event_id), None)
+    if not item or not isinstance(event, dict):
+        raise ValueError("staged history checkpoint and event are required")
+    expected = {"event_id": item["event_id"], "task_id": record["task_id"],
+                "record_owner": config.get("record_owner"), "kind": item["transition"],
+                "summary": item["summary"], "approval_ref": config.get("authorization_ref")}
+    if any(event.get(key) != value for key, value in expected.items()):
+        raise ValueError("history event does not match the staged checkpoint")
+    if event.get("source_ref") not in item["evidence_refs"]:
+        raise ValueError("history event source is not staged evidence")
+    binding = {**expected, "evidence_refs": item["evidence_refs"].copy()}
+    return {"authorization_ref": config["authorization_ref"],
+            "expected_digest": _hex(expected_digest, "expected_digest", {64}),
+            "binding": binding, "event": copy.deepcopy(event)}
 
 
 def mark_history_checkpoint(record, *, event_id, stage, receipt_ref, digest_value=None):
@@ -481,15 +527,22 @@ def mark_history_checkpoint(record, *, event_id, stage, receipt_ref, digest_valu
     if target > current + 1:
         raise ValueError("history checkpoint stages cannot be skipped")
     receipt = _text(receipt_ref, "receipt_ref")
+    supplied_digest = _hex(digest_value, "digest", {64}) if digest_value is not None else None
+    if stage == "locally-appended" and supplied_digest is None:
+        raise ValueError("local history append requires its 64-hex digest")
+    if current >= HISTORY_STAGES.index("locally-appended") and not item.get("digest"):
+        raise ValueError("history checkpoint is missing its append digest")
+    if item.get("digest") and supplied_digest is not None and item["digest"] != supplied_digest:
+        raise ValueError("history digest does not match the local append")
     if target == current:
         if (item["receipts"].get(stage) != receipt or
-                (digest_value is not None and item.get("digest") != digest_value)):
+                (supplied_digest is not None and item.get("digest") != supplied_digest)):
             raise ValueError("history stage replay has a different receipt")
         return r
     item["stage"] = stage
     item["receipts"][stage] = receipt
-    if digest_value is not None:
-        item["digest"] = _hex(digest_value, "digest", {64})
+    if stage == "locally-appended":
+        item["digest"] = supplied_digest
     coordination = _coord(r)
     if stage == "published":
         coordination["history_publication_state"] = "published-unverified"
@@ -506,16 +559,19 @@ def consume_history_readback(record, *, task_id, record_owner, revision, digest_
         raise ValueError("history readback task or owner mismatch")
     if type(revision) is not int or revision < 1 or not isinstance(event_ids, list) or not event_ids:
         raise ValueError("invalid history readback")
+    digest_value = _hex(digest_value, "digest", {64})
     latest = record.get("history_outbox", [])[-1] if record.get("history_outbox") else None
     if latest and (latest["event_id"] not in event_ids or
                    latest["stage"] not in {"published", "readback-verified"}):
         raise ValueError("fresh readback must contain the latest published checkpoint")
+    if latest and latest.get("digest") != digest_value:
+        raise ValueError("fresh readback digest does not match the local append")
     r = copy.deepcopy(record)
     if latest:
         r = mark_history_checkpoint(r, event_id=latest["event_id"], stage="readback-verified",
                                     receipt_ref=readback_ref, digest_value=digest_value)
     r["canonical_history"] = {"task_id": task_id, "record_owner": record_owner,
-                              "revision": revision, "digest": _hex(digest_value, "digest", {64}),
+                              "revision": revision, "digest": digest_value,
                               "event_ids": event_ids.copy(),
                               "readback_ref": _text(readback_ref, "readback_ref")}
     return r
@@ -726,6 +782,10 @@ def _apply(r, kind, source, data, ts, event_id):
             return "rejected"
         r["pending_decision"] = {"need": data.get("need") or "unspecified",
                                  "action": data.get("action"), "target": data.get("target"),
+                                 **({"scope": data.get("scope")} if data.get("scope") else {}),
+                                 **({"revision": data.get("revision"),
+                                     "contract_digest": data.get("contract_digest")}
+                                    if data.get("revision") is not None else {}),
                                  **({"parts": copy.deepcopy(parts)} if parts is not None else {})}
         if data.get("action") and approved(r, data["action"], data.get("target")):
             r.setdefault("counts", {}).setdefault("unneeded_asks", 0)
@@ -782,8 +842,10 @@ def pending(record):
     """The pending decision as {need, action, target}; older records stored only the question text."""
     p = record.get("pending_decision")
     if p is None or isinstance(p, dict):
-        return {"need": None, "action": None, "target": None, **(p or {})}
-    return {"need": str(p), "action": None, "target": None}
+        return {"need": None, "action": None, "target": None, "scope": None,
+                "revision": None, "contract_digest": None, **(p or {})}
+    return {"need": str(p), "action": None, "target": None, "scope": None,
+            "revision": None, "contract_digest": None}
 
 
 def approved(record, action, target):
@@ -793,10 +855,15 @@ def approved(record, action, target):
 
 
 def approved_parts(record, parts):
-    """Every distinct action, target and scope in the pending direct request was admitted."""
+    """Every distinct pending part was admitted for the current contract binding."""
+    decision = pending(record)
+    binding = {key: decision.get(key) for key in ("revision", "contract_digest")
+               if decision.get(key) is not None}
     return valid_approval_parts(parts) and all(any(
         (a.get("action"), a.get("target"), a.get("scope")) ==
-        (p["action"], p["target"], p["scope"]) for a in record["approvals"])
+        (p["action"], p["target"], p["scope"]) and
+        all(a.get(key) == value for key, value in binding.items())
+        for a in record["approvals"])
         for p in parts)
 
 

@@ -18,6 +18,8 @@ from agent_skills.approval_handoff import matching_platform_terms, valid_approva
 PLAIN = ("Needs you", "In progress", "Monitoring", "Waiting on someone", "Done")
 NOTHING = "Nothing needed from you"
 PROGRESS_STATES = {"reported", "performed", "independently_verified", "unverified"}
+DESKTOP_INTENTS = {"instruction", "decision", "approval"}
+THREAD_INTENTS = {"status", "milestone", "blocker", "verified-completion", "focused-discussion"}
 # Shas (7+ hex mixing letters and digits, git's shortest default), uuids and message timestamps belong
 # in the details reply. Shorter fragments and other tasks' ids can't be told from words here.
 # Plain numbers ("Raise limit to 10000000") and hex-looking words ("Defaced") are ordinary text.
@@ -58,6 +60,50 @@ def material_status(*, progress, progress_state, next_action, next_owner, need_k
     return (f"Progress ({progress_state}): {fields['progress']}\n"
             f"Next: {fields['next_action']} · Owner: {fields['next_owner']}\n"
             f"Need from Thomas: {fields['need_from_user']}")
+
+
+def coordination_route(*, intent, work_item=None, desktop_surface="desktop main conversation",
+                       destination=None, destination_kind=None, thread=None,
+                       retired_destinations=()):
+    """Plan the user surface for one coordination event without sending or mutating anything."""
+    if intent in DESKTOP_INTENTS:
+        if not clean(desktop_surface):
+            raise ValueError("desktop decision surface is required")
+        return {"decision": "route", "surface": "desktop-main", "destination": desktop_surface,
+                "work_item": work_item}
+    if intent not in THREAD_INTENTS:
+        raise ValueError("unsupported coordination intent")
+    if destination in set(retired_destinations):
+        return {"decision": "reject-retired-destination", "surface": None,
+                "destination": destination, "work_item": work_item}
+    if (not clean(work_item) or destination_kind != "dm" or not isinstance(thread, dict) or
+            thread.get("channel") != destination or not thread.get("root_ts")):
+        raise ValueError("focused work needs its exact existing DM thread")
+    return {"decision": "route", "surface": "work-item-dm-thread", "destination": destination,
+            "work_item": work_item, "root_ts": thread["root_ts"]}
+
+
+def material_update_receipt(*, work_item, revision, result, remaining, next_owner):
+    """Fingerprint one complete work-item update so the same revision is routed once."""
+    if (not clean(work_item) or type(revision) is not int or revision < 1 or
+            not isinstance(remaining, list) or not all(clean(item) for item in remaining) or
+            not clean(result) or not clean(next_owner)):
+        raise ValueError("complete work-item result, remaining work and next owner required")
+    payload = {"work_item": clean(work_item), "revision": revision, "result": clean(result),
+               "remaining": [clean(item) for item in remaining], "next_owner": clean(next_owner)}
+    return {**payload, "fingerprint": hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}
+
+
+def plan_material_update(previous_fingerprint, receipt):
+    if not isinstance(receipt, dict) or set(receipt) != {
+            "work_item", "revision", "result", "remaining", "next_owner", "fingerprint"}:
+        raise ValueError("validated material update receipt required")
+    expected = material_update_receipt(**{key: receipt[key] for key in (
+        "work_item", "revision", "result", "remaining", "next_owner")})
+    if receipt != expected:
+        raise ValueError("material update receipt does not match its payload")
+    return "none" if previous_fingerprint == receipt["fingerprint"] else "send"
 
 
 def material_from_record(record, *, progress, progress_state, where):

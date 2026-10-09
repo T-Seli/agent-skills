@@ -14,7 +14,7 @@ import history
 import markdown
 
 
-REQUIRED = {"authorization_ref", "expected_digest", "event"}
+REQUIRED = {"authorization_ref", "expected_digest", "binding", "event"}
 ALLOWED = REQUIRED
 
 
@@ -28,6 +28,19 @@ def capture(repo, checkpoint):
     if not isinstance(event, dict) or event.get("approval_ref") != authorization:
         raise ValueError("event approval reference must match checkpoint authorization")
     history.validate(event)
+    binding = checkpoint["binding"]
+    required_binding = {"event_id", "task_id", "record_owner", "kind", "summary",
+                        "approval_ref", "evidence_refs"}
+    if (not isinstance(binding, dict) or set(binding) != required_binding or
+            not isinstance(binding.get("evidence_refs"), list) or
+            not binding["evidence_refs"] or
+            not all(isinstance(ref, str) and ref.strip() for ref in binding["evidence_refs"])):
+        raise ValueError("invalid staged checkpoint binding")
+    for key in required_binding - {"evidence_refs"}:
+        if event.get(key) != binding[key]:
+            raise ValueError("event does not match staged checkpoint binding")
+    if event.get("source_ref") not in binding["evidence_refs"]:
+        raise ValueError("event source is not staged evidence")
     rows, current = history.snapshot(repo, event["task_id"])
     if any(row == event for row in rows):
         result, digest = history.append(repo, event, checkpoint["expected_digest"])

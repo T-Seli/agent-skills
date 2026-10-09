@@ -2,6 +2,7 @@
 import hashlib
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -61,7 +62,11 @@ def installed_links(root, home):
 
 def runtime_capability_receipt(release_root, *, runtime, expected_commit, expected_tree,
                                installed_routes, loaded_bundle, behavior_checks):
-    """Bind installed routes, loaded bodies and exercised behavior for one runtime."""
+    """Bind installed routes, a runtime-specific body read and exercised behavior.
+
+    The load receipt is still evidence supplied by the supported reader; this helper validates
+    its binding and never upgrades a filesystem hash alone into native runtime adoption.
+    """
     if runtime not in {"codex", "claude"}:
         raise ValueError("unsupported runtime")
     if (not isinstance(expected_commit, str) or not isinstance(expected_tree, str) or
@@ -79,12 +84,21 @@ def runtime_capability_receipt(release_root, *, runtime, expected_commit, expect
     if not isinstance(installed_routes, dict) or not installed_routes:
         raise ValueError("installed runtime routes required")
     route_checks = {}
-    for name, route in installed_routes.items():
-        if not isinstance(name, str) or not name or not isinstance(route, (str, Path)):
+    route_sources = {}
+    for name, entry in installed_routes.items():
+        if (not isinstance(name, str) or not name or not isinstance(entry, dict) or
+                set(entry) != {"route", "source"} or
+                not isinstance(entry.get("route"), (str, Path)) or
+                not isinstance(entry.get("source"), str)):
             raise ValueError("invalid installed runtime route")
-        path = Path(route)
-        route_checks[name] = path.is_symlink() and path.resolve().is_relative_to(root)
+        path = Path(entry["route"])
+        source = root / entry["source"]
+        safe_source = source.resolve(strict=False).is_relative_to(root)
+        route_checks[name] = bool(safe_source and source.exists() and path.is_symlink() and
+                                  path.resolve() == source.resolve())
+        route_sources[name] = entry["source"]
     sources = loaded_bundle.get("sources") if isinstance(loaded_bundle, dict) else None
+    load_receipt = loaded_bundle.get("load_receipt") if isinstance(loaded_bundle, dict) else None
     load_checks = {}
     if isinstance(sources, list):
         for source in sources:
@@ -95,6 +109,18 @@ def runtime_capability_receipt(release_root, *, runtime, expected_commit, expect
             safe = (not candidate.is_symlink() and candidate.resolve(strict=False).is_relative_to(root) and
                     candidate.is_file())
             load_checks[source["path"]] = safe and hashlib.sha256(candidate.read_bytes()).hexdigest() == source["sha256"]
+    receipt_ready = False
+    if isinstance(load_receipt, dict) and set(load_receipt) == {
+            "runtime", "session_id", "reader", "read_ref", "selected_path", "sha256"}:
+        selected = next((source for source in (sources or [])
+                         if isinstance(source, dict) and source.get("path") == load_receipt.get("selected_path")), None)
+        receipt_ready = bool(
+            load_receipt.get("runtime") == runtime and selected and
+            load_receipt.get("selected_path") in route_sources.values() and
+            selected.get("sha256") == load_receipt.get("sha256") and
+            all(isinstance(load_receipt.get(key), str) and load_receipt[key].strip()
+                for key in ("session_id", "reader", "read_ref", "selected_path", "sha256")) and
+            re.fullmatch(r"[0-9a-f]{64}", load_receipt["sha256"]))
     if not isinstance(behavior_checks, list) or not behavior_checks:
         raise ValueError("runtime behavior checks required")
     behavior = []
@@ -106,12 +132,13 @@ def runtime_capability_receipt(release_root, *, runtime, expected_commit, expect
             raise ValueError("invalid runtime behavior check")
         behavior.append(dict(check))
     routes_ready = all(route_checks.values())
-    load_ready = bool(load_checks) and all(load_checks.values())
+    load_ready = bool(load_checks) and all(load_checks.values()) and receipt_ready
     behavior_ready = all(check["outcome"] == "pass" for check in behavior)
     return {"runtime": runtime, "commit": expected_commit, "tree": expected_tree,
             "release_root": str(root), "identity_ready": identity_ready,
             "installed_routes": route_checks, "installed_ready": routes_ready,
-            "loaded_sources": load_checks, "loaded_ready": load_ready,
+            "loaded_sources": load_checks, "load_receipt": load_receipt,
+            "load_receipt_ready": receipt_ready, "loaded_ready": load_ready,
             "behavior_checks": behavior, "behavior_ready": behavior_ready,
             "ready": identity_ready and routes_ready and load_ready and behavior_ready}
 

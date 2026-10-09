@@ -44,23 +44,55 @@ class SourceHistoryCloseoutTests(unittest.TestCase):
                 'source': 'T-Seli/agent-skills', 'commit': commit, 'tree': tree}))
             route = route_root / 'fixture'
             route.symlink_to(body)
-            bundle = {'sources': [{'path': 'skills/fixture.md',
-                                   'sha256': hashlib.sha256(body.read_bytes()).hexdigest()}]}
+            digest = hashlib.sha256(body.read_bytes()).hexdigest()
+            bundle = {'sources': [{'path': 'skills/fixture.md', 'sha256': digest}],
+                      'load_receipt': {'runtime': 'codex', 'session_id': 'session-1',
+                                       'reader': 'native-skill-reader', 'read_ref': 'read:fixture-1',
+                                       'selected_path': 'skills/fixture.md', 'sha256': digest}}
             ready = runtime_capability_receipt(
                 root, runtime='codex', expected_commit=commit, expected_tree=tree,
-                installed_routes={'fixture': route}, loaded_bundle=bundle,
+                installed_routes={'fixture': {'route': route, 'source': 'skills/fixture.md'}},
+                loaded_bundle=bundle,
                 behavior_checks=[{'id': 'selected-body-used', 'outcome': 'pass',
                                   'receipt_ref': 'fixture:behavior-1'}])
             self.assertTrue(ready['ready'])
+            claude_bundle = {**bundle, 'load_receipt': {**bundle['load_receipt'],
+                                                        'runtime': 'claude',
+                                                        'session_id': 'session-2'}}
             blocked = runtime_capability_receipt(
                 root, runtime='claude', expected_commit=commit, expected_tree=tree,
-                installed_routes={'fixture': route}, loaded_bundle=bundle,
+                installed_routes={'fixture': {'route': route, 'source': 'skills/fixture.md'}},
+                loaded_bundle=claude_bundle,
                 behavior_checks=[{'id': 'fresh-session-readback', 'outcome': 'blocked',
                                   'receipt_ref': 'fixture:no-native-reader'}])
             self.assertTrue(blocked['installed_ready'])
             self.assertTrue(blocked['loaded_ready'])
             self.assertFalse(blocked['behavior_ready'])
             self.assertFalse(blocked['ready'])
+            for invalid in ({'sources': bundle['sources']},
+                            {**bundle, 'load_receipt': {**bundle['load_receipt'], 'runtime': 'claude'}},
+                            {**bundle, 'load_receipt': {**bundle['load_receipt'], 'sha256': '0' * 64}}):
+                with self.subTest(invalid=invalid):
+                    result = runtime_capability_receipt(
+                        root, runtime='codex', expected_commit=commit, expected_tree=tree,
+                        installed_routes={'fixture': {'route': route, 'source': 'skills/fixture.md'}},
+                        loaded_bundle=invalid,
+                        behavior_checks=[{'id': 'selected-body-used', 'outcome': 'pass',
+                                          'receipt_ref': 'fixture:behavior-1'}])
+                    self.assertFalse(result['loaded_ready'])
+                    self.assertFalse(result['ready'])
+            wrong = root / 'skills' / 'other.md'
+            wrong.write_text('other\n')
+            route.unlink()
+            route.symlink_to(wrong)
+            mismatch = runtime_capability_receipt(
+                root, runtime='codex', expected_commit=commit, expected_tree=tree,
+                installed_routes={'fixture': {'route': route, 'source': 'skills/fixture.md'}},
+                loaded_bundle=bundle,
+                behavior_checks=[{'id': 'selected-body-used', 'outcome': 'pass',
+                                  'receipt_ref': 'fixture:behavior-1'}])
+            self.assertFalse(mismatch['installed_ready'])
+            self.assertFalse(mismatch['ready'])
 
     def test_bound_closeout_requires_current_independent_artifact_inspection(self):
         with tempfile.TemporaryDirectory() as tmp:

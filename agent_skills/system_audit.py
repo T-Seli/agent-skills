@@ -462,6 +462,8 @@ def finding(*, finding_id, finding_key, angle, claim_level, cause_basis, confide
 def _fingerprint(value):
     """Stable mechanism identity; reviewer-local finding IDs are retained only as aliases."""
     fields = {k: value.get(k) for k in ("finding_key", "acceptance_test", "scope_ref")}
+    if not all(fields.values()) and re.fullmatch(r"[0-9a-f]{64}", str(value.get("mechanism_fingerprint") or "")):
+        return value["mechanism_fingerprint"]
     return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
 
 
@@ -477,8 +479,8 @@ def _sources(source_manifest):
         source = _text(item.get("source"), "source")
         if source in seen:
             raise ValueError("duplicate audit source")
-        if item["state"] == "observed" and not item.get("receipt_ref"):
-            raise ValueError("observed audit source requires a receipt")
+        if item["state"] in {"observed", "unavailable", "not-applicable"} and not item.get("receipt_ref"):
+            raise ValueError("observed, unavailable and not-applicable audit sources require receipts")
         seen.add(source)
         result.append({"source": source, "state": item["state"],
                        "receipt_ref": _text(item.get("receipt_ref"), "receipt_ref", optional=True)})
@@ -509,6 +511,8 @@ def synthesize(findings, *, source_manifest, prior_findings=(), required_sources
             results.append({"finding_id": aliases[0], "finding_aliases": aliases,
                             "mechanism_fingerprint": fingerprint,
                             "finding_key": items[0]["finding_key"],
+                            "acceptance_test": items[0]["acceptance_test"],
+                            "scope_ref": items[0]["scope_ref"],
                             "state": "disputed", "reviewer_count": len(items),
                             "findings": items})
             continue
@@ -527,6 +531,8 @@ def synthesize(findings, *, source_manifest, prior_findings=(), required_sources
         results.append({"finding_id": aliases[0], "finding_aliases": aliases,
                         "mechanism_fingerprint": fingerprint,
                         "finding_key": items[0]["finding_key"],
+                        "acceptance_test": items[0]["acceptance_test"],
+                        "scope_ref": items[0]["scope_ref"],
                         "state": "supported", "reviewer_count": len(items),
                         "findings": items})
     results.sort(key=lambda x: x["finding_id"])

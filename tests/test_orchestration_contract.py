@@ -88,6 +88,10 @@ class OrchestrationReplayTests(unittest.TestCase):
             history_base(), source_id='start-revision-1', transition='start',
             summary='Synthetic task started', evidence_refs=['task:revision-1'])
         digest_value = 'd' * 64
+        with self.assertRaisesRegex(ValueError, 'requires its 64-hex digest'):
+            tasks.mark_history_checkpoint(
+                record, event_id=event_id, stage='locally-appended',
+                receipt_ref='history:append-without-digest')
         for stage, receipt in (
                 ('locally-appended', 'history:append-1'),
                 ('view-rendered', 'history:view-1'),
@@ -102,6 +106,10 @@ class OrchestrationReplayTests(unittest.TestCase):
             record, task_id='task-123', record_owner='history-owner', revision=1,
             digest_value=digest_value, event_ids=[event_id], readback_ref='fresh-clone:1')
         self.assertEqual(record['coordination']['history_publication_state'], 'readback-verified')
+        with self.assertRaisesRegex(ValueError, 'does not match'):
+            tasks.consume_history_readback(
+                record, task_id='task-123', record_owner='history-owner', revision=2,
+                digest_value='e' * 64, event_ids=[event_id], readback_ref='fresh-clone:wrong')
         record = tasks.consume_history_readback(
             record, task_id='task-123', record_owner='history-owner', revision=1,
             digest_value=digest_value, event_ids=[event_id], readback_ref='fresh-clone:1')
@@ -110,6 +118,11 @@ class OrchestrationReplayTests(unittest.TestCase):
             summary='Synthetic task started', evidence_refs=['task:revision-1'])
         self.assertEqual(replayed_id, event_id)
         self.assertEqual(replayed['history_outbox'][0]['stage'], 'readback-verified')
+        record, next_event_id = tasks.stage_history_checkpoint(
+            record, source_id='milestone-revision-1', transition='test',
+            summary='Synthetic test passed', evidence_refs=['test:fixture-1'])
+        self.assertNotEqual(next_event_id, event_id)
+        self.assertEqual(record['coordination']['history_publication_state'], 'not-published')
         record = bind(record, requested_artifact='pdf-report')
         with self.assertRaisesRegex(ValueError, 'latest canonical history'):
             acknowledge(record)
@@ -121,12 +134,18 @@ class OrchestrationReplayTests(unittest.TestCase):
         self.assertEqual(tasks.result_binding(record, **current_binding(record)), 'current')
 
     def test_missing_history_publication_does_not_block_unrelated_authorized_work(self):
-        record, _ = tasks.stage_history_checkpoint(
+        history_record, _ = tasks.stage_history_checkpoint(
             history_base(), source_id='start-revision-1', transition='start',
             summary='Synthetic task started', evidence_refs=['task:revision-1'])
-        record = acknowledge(bind(record))
-        self.assertEqual(tasks.result_binding(record, **current_binding(record)), 'current')
-        self.assertEqual(record['coordination']['history_publication_state'], 'not-published')
+        unrelated_base = tasks.new_task(
+            'task-456', 'unrelated-synthetic', worker_kind='local', owner='assistant',
+            repo='example/repo', worktree='other-worktree')
+        unrelated = acknowledge(bind(unrelated_base, deliverable='unrelated-fixture'),
+                                deliverable='unrelated-fixture')
+        self.assertEqual(tasks.result_binding(unrelated, **current_binding(unrelated)), 'current')
+        self.assertEqual(history_record['coordination']['history_publication_state'], 'not-published')
+        self.assertNotEqual(unrelated['task_id'], history_record['task_id'])
+        self.assertNotIn('history_capture', unrelated)
 
     def test_worker_return_must_match_requested_artifact_and_keeps_state_layers_separate(self):
         record = approve_release(acknowledge(bind(base(), requested_artifact='pdf-report')))
@@ -168,18 +187,63 @@ class OrchestrationReplayTests(unittest.TestCase):
             verified, artifact_ref='report.pdf', receipt_ref='delivery:parent-1')
         self.assertEqual(delivered['coordination']['user_delivery_state'], 'delivered')
         self.assertEqual(delivered['coordination']['history_publication_state'], 'not-published')
+        self.assertNotIn('acceptance', delivered['worker_return'])
+        self.assertNotIn('user_delivery', delivered['worker_return'])
+        self.assertEqual(delivered['coordination']['acceptance_state'], 'verified')
+
+    def test_implementation_contract_preserves_prior_work_and_separates_local_commit_from_push(self):
+        record = approve_release(acknowledge(bind(
+            base(), requested_artifact='source-commit-and-push')))
+        record = bind(
+            record, revision=2, requested_artifact='source-commit-and-push',
+            displaced_reason='Expanded implementation and publication criteria')
+        record = acknowledge(record, revision=2)
+        binding = current_binding(record)
+        record = tasks.begin_dispatch(record, 'implementation-dispatch', resume=False)
+        record = tasks.settle_dispatch(record, 'implementation-dispatch', 'sent')
+        for event in (
+                {'id': 'implementation-dispatch', 'task': 'task-123', 'ts': 1790000060,
+                 'source': 'adapter', 'kind': 'dispatched', 'data': {}},
+                {'id': 'implementation-dispatch:running', 'task': 'task-123', 'ts': 1790000061,
+                 'source': 'worker', 'kind': 'running', 'data': binding}):
+            record, outcome = tasks.apply(record, event)
+            self.assertEqual(outcome, 'applied')
+        guidance = {'id': 'implementation-dispatch:guidance', 'task': 'task-123',
+                    'ts': 1790000062, 'source': 'worker', 'kind': 'ready',
+                    'data': {'commit': 'c' * 40, 'final_diff_digest': 'd' * 64,
+                             'tests': 'passed', 'artifact_kind': 'provisioning-guidance',
+                             'artifact_ref': 'handoff.md', 'result': 'Guidance only.',
+                             'remaining': ['Implementation and push remain.'],
+                             'next_owner': 'worker-1', **binding}}
+        rejected, outcome = tasks.apply(record, guidance)
+        self.assertEqual((outcome, rejected['status']), ('unsupported', 'running'))
+        implementation = {**guidance, 'id': 'implementation-dispatch:ready', 'ts': 1790000063,
+                          'data': {**guidance['data'],
+                                   'artifact_kind': 'source-commit-and-push',
+                                   'artifact_ref': 'commit:c',
+                                   'result': 'Implementation committed locally.',
+                                   'remaining': ['Remote push is unpublished.']}}
+        ready, outcome = tasks.apply(record, implementation)
+        self.assertEqual(outcome, 'applied')
+        ready = tasks.record_source_publication(
+            ready, local_commit='c' * 40, local_receipt='git:show:c',
+            remote_state='unpublished')
+        coordination = ready['coordination']
+        self.assertEqual(coordination['source_publication_state']['remote_state'], 'unpublished')
+        self.assertEqual(coordination['history_publication_state'], 'not-published')
+        self.assertEqual(coordination['user_delivery_state'], 'not-delivered')
+        self.assertEqual([(x['id'], x['revision']) for x in coordination['obligations']],
+                         [('fixture', 1)])
+        self.assertEqual(ready['approvals'][0]['revision'], 1)
 
     def test_communication_brief_filters_priorities_and_does_not_repeat_valid_approval(self):
         record = bind(base())
-        record, _ = tasks.apply(record, {
-            'id': 'brief-dispatch', 'task': 'task-123', 'ts': 1790000050,
-            'source': 'adapter', 'kind': 'dispatched', 'data': {}})
-        record, _ = tasks.apply(record, {
-            'id': 'brief-blocked', 'task': 'task-123', 'ts': 1790000051,
-            'source': 'worker', 'kind': 'blocked',
-            'data': {'need': 'Approve exact publish', 'action': 'push', 'target': 'reviewed commit',
-                     **current_binding(record)}})
         active = record['coordination']['active_deliverable']
+        record['status'] = 'blocked'
+        record['pending_decision'] = {
+            'need': 'Approve exact publish', 'action': 'push', 'target': 'reviewed commit',
+            'scope': 'fixture only', 'revision': 1,
+            'contract_digest': active['contract_digest']}
         record, outcome = tasks.apply(record, {
             'id': 'brief-approval', 'task': 'task-123', 'ts': 1790000052,
             'source': 'user', 'kind': 'approval',
@@ -201,6 +265,22 @@ class OrchestrationReplayTests(unittest.TestCase):
         self.assertIsNone(brief['approval_need'])
         self.assertEqual((brief['result'], brief['remaining'], brief['next_owner']),
                          ('Exact approval already exists.', ['Push and verify.'], 'source-owner'))
+        stale = json.loads(json.dumps(record))
+        stale['approvals'][0]['revision'] = 0
+        stale_brief = tasks.communication_brief(
+            stale, priority_candidates=[], result='Prior approval is stale.',
+            remaining=['Current revision approval remains.'], next_owner='user')
+        self.assertEqual(stale_brief['approval_need']['revision'], 1)
+
+        multipart = json.loads(json.dumps(record))
+        multipart['pending_decision']['parts'] = [
+            {'action': 'push', 'target': 'reviewed commit', 'scope': 'fixture only',
+             'wording': 'Approve the exact push?'}]
+        multipart['approvals'][0]['revision'] = 0
+        multipart_brief = tasks.communication_brief(
+            multipart, priority_candidates=[], result='Prior multipart approval is stale.',
+            remaining=['Current contract approval remains.'], next_owner='user')
+        self.assertEqual(multipart_brief['approval_need']['revision'], 1)
 
     def test_stale_worker_task_drift_preserves_displaced_obligation(self):
         record = acknowledge(bind(base()))

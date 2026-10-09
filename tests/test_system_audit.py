@@ -161,6 +161,12 @@ class SystemAuditTests(unittest.TestCase):
                               required_sources=['task-record'])
         self.assertEqual(len(separate['findings']), 2)
 
+        next_run = synthesize([equivalent], source_manifest=SOURCES,
+                              prior_findings=grouped['findings'],
+                              required_sources=['task-record'])
+        self.assertEqual(next_run['findings'], [])
+        self.assertEqual(next_run['unchanged'][0]['prior_finding_id'], 'reviewer-a-cursor')
+
     def test_scope_bound_coverage_rejects_omitted_prerequisites(self):
         omitted = synthesize([], source_manifest=SOURCES,
                              required_sources=['task-record', 'release-receipt'])

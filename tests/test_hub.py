@@ -97,6 +97,36 @@ class RenderTests(unittest.TestCase):
 
 
 class UpdateTests(unittest.TestCase):
+    def test_operating_surfaces_and_deduplicated_work_item_updates(self):
+        desktop = h.coordination_route(intent='approval', work_item='wi-1')
+        self.assertEqual((desktop['surface'], desktop['destination']),
+                         ('desktop-main', 'desktop main conversation'))
+        th = n.thread('1790819911.865269', channel='D1', inside=True, chat='Team Chat')
+        focused = h.coordination_route(intent='milestone', work_item='wi-1', destination='D1',
+                                       destination_kind='dm', thread=th,
+                                       retired_destinations=('C-RETIRED',))
+        self.assertEqual((focused['surface'], focused['root_ts']),
+                         ('work-item-dm-thread', '1790819911.865269'))
+        retired = h.coordination_route(intent='status', work_item='wi-2',
+                                       destination='C-RETIRED', destination_kind='channel',
+                                       thread=None, retired_destinations=('C-RETIRED',))
+        self.assertEqual(retired['decision'], 'reject-retired-destination')
+        with self.assertRaises(ValueError):
+            h.coordination_route(intent='status', work_item='wi-1', destination='D1',
+                                 destination_kind='channel', thread=th)
+
+        receipt = h.material_update_receipt(
+            work_item='wi-1', revision=3, result='Fixture passed.',
+            remaining=['Independent acceptance remains.'], next_owner='reviewer')
+        self.assertEqual(h.plan_material_update(None, receipt), 'send')
+        self.assertEqual(h.plan_material_update(receipt['fingerprint'], receipt), 'none')
+        with self.assertRaisesRegex(ValueError, 'does not match'):
+            h.plan_material_update(receipt['fingerprint'], {**receipt, 'result': 'Tampered.'})
+        changed = h.material_update_receipt(
+            work_item='wi-1', revision=4, result='Fixture passed.',
+            remaining=['Independent acceptance remains.'], next_owner='reviewer')
+        self.assertNotEqual(receipt['fingerprint'], changed['fingerprint'])
+
     def test_only_meaningful_changes_update_and_roots_are_never_duplicated(self):
         s = summ(record('running'))
         self.assertEqual(h.plan_update(None, s), 'post-root')

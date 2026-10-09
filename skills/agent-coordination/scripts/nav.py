@@ -175,3 +175,25 @@ def session_details(ref):
     if ref["resume"]:
         parts.append(f"resume: `{ref['resume']}`")
     return " · ".join(parts)
+
+
+def workspace_lifecycle_assessment(capabilities):
+    """Report native visibility/grouping/archive support; never performs a lifecycle action."""
+    names = ("visibility", "grouping", "archive")
+    if not isinstance(capabilities, dict) or set(capabilities) != set(names):
+        raise ValueError("visibility, grouping and archive capability observations required")
+    observed = {}
+    for name in names:
+        item = capabilities[name]
+        if (not isinstance(item, dict) or set(item) != {"state", "receipt_ref"} or
+                item.get("state") not in {"verified", "unavailable", "unknown"}):
+            raise ValueError("invalid workspace capability observation")
+        receipt = item.get("receipt_ref")
+        if item["state"] != "unknown" and not (isinstance(receipt, str) and receipt.strip()):
+            raise ValueError("verified and unavailable capabilities require a receipt")
+        observed[name] = {"state": item["state"], "receipt_ref": receipt}
+    return {"capabilities": observed,
+            "visibility": "verified" if observed["visibility"]["state"] == "verified" else "unverified",
+            "grouping": "verified" if observed["grouping"]["state"] == "verified" else "unverified",
+            "archive": "available" if observed["archive"]["state"] == "verified" else "unverified",
+            "actions": [], "mutated": False}

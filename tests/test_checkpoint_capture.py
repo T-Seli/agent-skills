@@ -26,13 +26,18 @@ class CheckpointCaptureTest(unittest.TestCase):
                "session_id": "fixture-session", "revision": 1, "record_owner": "fixture-owner",
                "at_utc": "2026-10-05T00:00:00Z", "observed_at_utc": "2026-10-05T00:00:00Z",
                "kind": "start", "status": "active", "summary": "Synthetic checkpoint",
-               "approval_ref": "task-specific-fixture-approval"}
+               "approval_ref": "task-specific-fixture-approval", "source_ref": "fixture:source-1"}
         return dict(row, **changes)
 
     def checkpoint(self, event=None, **changes):
+        event = event or self.event()
         return dict({"authorization_ref": "task-specific-fixture-approval",
                      "expected_digest": history.digest(self.repo / "events" / "fixture-task.jsonl"),
-                     "event": event or self.event()}, **changes)
+                     "binding": {"event_id": event["event_id"], "task_id": event["task_id"],
+                                 "record_owner": event["record_owner"], "kind": event["kind"],
+                                 "summary": event["summary"], "approval_ref": event["approval_ref"],
+                                 "evidence_refs": [event["source_ref"]]},
+                     "event": event}, **changes)
 
     def test_append_replay_and_identical_retry(self):
         packet = self.checkpoint()
@@ -54,6 +59,12 @@ class CheckpointCaptureTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "record owner"):
             capture.capture(self.repo, self.checkpoint(event=changed))
 
+    def test_rejects_event_that_does_not_match_staged_binding(self):
+        packet = self.checkpoint()
+        packet["event"] = dict(packet["event"], summary="Different summary")
+        with self.assertRaisesRegex(ValueError, "staged checkpoint binding"):
+            capture.capture(self.repo, packet)
+
     def test_rejects_stale_digest_and_non_start_first_event(self):
         non_start = self.event(kind="implementation")
         non_start.pop("status")
@@ -64,7 +75,8 @@ class CheckpointCaptureTest(unittest.TestCase):
         next_event = self.event(event_id="fixture-next-002", revision=2, kind="implementation")
         next_event.pop("status")
         with self.assertRaisesRegex(ValueError, "stale checkpoint digest"):
-            capture.capture(self.repo, dict(packet, event=next_event))
+            capture.capture(self.repo, dict(
+                self.checkpoint(event=next_event), expected_digest=packet["expected_digest"]))
 
 
 if __name__ == "__main__":

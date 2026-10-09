@@ -64,10 +64,14 @@ class CoordinationHistoryLifecycleTest(unittest.TestCase):
             record, source_id="start-revision-1", transition="start",
             summary="Synthetic lifecycle fixture", evidence_refs=["fixture:revision-1"])
         event = self.event(event_id)
-        packet = {"authorization_ref": "fixture-approval",
-                  "expected_digest": history.digest(
-                      self.owner / "events" / "fixture-lifecycle.jsonl"),
-                  "event": event}
+        packet = tasks.history_checkpoint_packet(
+            record, event_id=event_id,
+            expected_digest=history.digest(self.owner / "events" / "fixture-lifecycle.jsonl"),
+            event=event)
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            tasks.history_checkpoint_packet(
+                record, event_id=event_id, expected_digest=packet["expected_digest"],
+                event={**event, "summary": "Different event"})
         appended = checkpoint_capture.capture(self.owner, packet)
         duplicate = checkpoint_capture.capture(self.owner, packet)
         self.assertEqual((appended["result"], duplicate["result"]),

@@ -282,6 +282,29 @@ class DestinationTests(unittest.TestCase):
         self.assertEqual((why, o, r['approvals'], r['status']), ('proposes-approval', 'noted', [], 'blocked'))
 
 
+class WorkspaceLifecycleTests(unittest.TestCase):
+    def test_native_workspace_capabilities_fail_closed_and_never_mutate(self):
+        unknown = n.workspace_lifecycle_assessment({
+            'visibility': {'state': 'unknown', 'receipt_ref': None},
+            'grouping': {'state': 'unavailable', 'receipt_ref': 'native:no-grouping-api'},
+            'archive': {'state': 'unknown', 'receipt_ref': None}})
+        self.assertEqual((unknown['visibility'], unknown['grouping'], unknown['archive']),
+                         ('unverified', 'unverified', 'unverified'))
+        self.assertEqual((unknown['actions'], unknown['mutated']), ([], False))
+        verified = n.workspace_lifecycle_assessment({
+            'visibility': {'state': 'verified', 'receipt_ref': 'native:visible-read-1'},
+            'grouping': {'state': 'verified', 'receipt_ref': 'native:group-read-1'},
+            'archive': {'state': 'verified', 'receipt_ref': 'native:archive-capability-1'}})
+        self.assertEqual((verified['visibility'], verified['grouping'], verified['archive']),
+                         ('verified', 'verified', 'available'))
+        self.assertEqual((verified['actions'], verified['mutated']), ([], False))
+        with self.assertRaises(ValueError):
+            n.workspace_lifecycle_assessment({
+                'visibility': {'state': 'verified', 'receipt_ref': None},
+                'grouping': {'state': 'unknown', 'receipt_ref': None},
+                'archive': {'state': 'unknown', 'receipt_ref': None}})
+
+
 class ChannelBindingTests(unittest.TestCase):
     def event(self, msg, th, task=None):
         return c.reply_event(msg, th, task or blocked(), human_user_id=HUMAN, sent_ts={SUMMARY}, workspace=WS)
