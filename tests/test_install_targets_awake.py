@@ -31,11 +31,18 @@ class TargetAndAwakeTests(unittest.TestCase):
             entrypoint = Path(home) / ".agents/skills/workflow-contracts/scripts/safeguard-cli"
             head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
                                   check=True, capture_output=True, text=True).stdout.strip()
+            status_before = subprocess.run(
+                ["git", "-C", str(ROOT), "status", "--porcelain=v1", "--untracked-files=all"],
+                check=True, capture_output=True, text=True).stdout
             result = subprocess.run(
                 [str(entrypoint), "release", str(ROOT), head, head], cwd=cwd,
                 env={**env, "PYTHONPATH": str(stale)}, capture_output=True, text=True)
+            status_after = subprocess.run(
+                ["git", "-C", str(ROOT), "status", "--porcelain=v1", "--untracked-files=all"],
+                check=True, capture_output=True, text=True).stdout
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(f'"reviewed_commit": "{head}"', result.stdout)
+            self.assertEqual(status_after, status_before)
             self.assertNotIn("stale PYTHONPATH imported", result.stderr)
             self.assertNotIn("stale CWD imported", result.stderr)
             self.assertNotIn("stale sitecustomize imported", result.stderr)

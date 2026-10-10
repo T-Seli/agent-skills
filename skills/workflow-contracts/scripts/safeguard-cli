@@ -9,7 +9,7 @@ if [ ! -f "$RELEASE_ROOT/agent_skills/safeguard_cli.py" ]; then
   exit 127
 fi
 
-exec python3 -I -c '
+exec python3 -I -B -c '
 import runpy
 import sys
 
