@@ -79,6 +79,13 @@ def packet(*, task_id, revision, owner, scope, exclusions, baseline, deliverable
                 ("evidence_binding" in x and not _binding(x["evidence_binding"])) for x in acceptance) or
             len({x["id"] for x in acceptance}) != len(acceptance)):
         raise ValueError("unique acceptance criteria required")
+    outcomes = {}
+    for criterion in acceptance:
+        binding = criterion.get("evidence_binding") or {}
+        if "outcome" in binding:
+            identity = (binding["candidate"], binding["environment"])
+            if outcomes.setdefault(binding["outcome"], identity) != identity:
+                raise ValueError("outcome stages must bind the same candidate and environment")
     for hashes in (source_hashes, package_hashes):
         if not isinstance(hashes, dict) or not hashes or not all(
                 isinstance(k, str) and k and isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v)
@@ -270,7 +277,8 @@ def _outcome_readiness(value, missing):
         binding = criterion.get("evidence_binding") or {}
         if "outcome" not in binding:
             continue
-        outcome = outcomes.setdefault(binding["outcome"], {"verdict": "EVIDENCE-COMPLETE", "stages": {}})
+        outcome = outcomes.setdefault(binding["outcome"], {"verdict": "EVIDENCE-COMPLETE", "stages": {},
+            "candidate": binding["candidate"], "environment": binding["environment"]})
         stage = binding["stage"]
         verdict = "HOLD" if criterion["id"] in missing else "EVIDENCE-COMPLETE"
         if outcome["stages"].get(stage) != "HOLD":

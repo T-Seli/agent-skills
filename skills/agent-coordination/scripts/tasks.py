@@ -378,7 +378,8 @@ def release_gate(record, *, head, final_diff_digest, scope, approved_scope, revi
     if revision != active.get("revision"):
         reasons.append("stale-revision")
     if result_binding(r, deliverable_id=active.get("id"), revision=revision,
-                      contract_digest=active.get("contract_digest")) != "current":
+                      contract_digest=active.get("contract_digest"),
+                      decision_source_ref=active.get("source_ref")) != "current":
         reasons.append("missing-current-readback")
     if scope != approved_scope:
         reasons.append("scope-mismatch")
@@ -504,6 +505,7 @@ def communication_brief(record, *, priority_candidates, result, remaining, next_
             "remaining": remaining.copy(), "next_owner": _text(next_owner, "next_owner"),
             "subdeliverables": subdeliverables,
             "outcome_readiness": copy.deepcopy(assessment.get("outcome_readiness", {})),
+            "readiness_receipt": assessment.get("receipt_ref"),
             "material_facts": copy.deepcopy((record.get("worker_return") or {}).get("material_facts", [])),
             "return_loop": {"decision_source_ref": active.get("source_ref"),
                             "worker_ack": active.get("readback_ref"),
@@ -863,10 +865,12 @@ def _apply(r, kind, source, data, ts, event_id):
             return "unsupported"
         assessment = assess_completion(packet, data["completion_report"], data["verifier_report"],
                                        artifact_root=r.get("worktree"))
-        r["reported_acceptance_assessment"] = assessment
-        if (assessment["status"] != "evidence-complete-awaiting-acceptance" or
-                any(c.get("evidence_binding") and c["evidence_binding"]["candidate"] != data.get("commit")
-                    for c in packet["acceptance"])):
+        candidate_matches = not any(c.get("evidence_binding") and c["evidence_binding"]["candidate"] != data.get("commit")
+                                    for c in packet["acceptance"])
+        assessment["receipt_ref"] = event_id
+        if assessment["status"] != "evidence-complete-awaiting-acceptance" or not candidate_matches:
+            if candidate_matches and assessment["status"] == "claimed-unverified":
+                r["reported_acceptance_assessment"] = assessment
             return "unsupported"
     if kind == "ready" and not (data.get("commit") and data.get("tests")):
         return "unsupported"  # a completion claim without a commit and tests is not ready for review
@@ -939,6 +943,7 @@ def _apply(r, kind, source, data, ts, event_id):
         r["pending_decision"] = None
         r["resume_after"] = len(r["outbox"])  # only a later resume receipt can prove new execution
     if kind == "ready" and packet:
+        r["reported_acceptance_assessment"] = assessment
         r["acceptance_assessment"] = assessment
         r["acceptance_completion_report"] = data["completion_report"]
         r["acceptance_review_sha256"] = digest(data["verifier_report"])

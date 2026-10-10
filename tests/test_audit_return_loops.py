@@ -66,6 +66,22 @@ def returned():
 
 
 class ReturnLoops(unittest.TestCase):
+    def test_scoped_release_consumes_source_without_weakening_approval_gates(self):
+        record = returned()
+        record, outcome = tasks.apply(record, event(record, 'verified', 1790000102, source='verifier',
+            commit=HEAD, final_diff_digest=HASH, tests_passed=True))
+        self.assertEqual(outcome, 'applied')
+        args = dict(head=HEAD, final_diff_digest=HASH, scope='caller only', approved_scope='caller only',
+            revision=1, approval_action='release', approval_target='caller', lock_owner='same-owner',
+            expected_owner='same-owner', pause_required=False)
+        _, verdict = tasks.release_gate(record, **args)
+        self.assertEqual(verdict, 'blocked')
+        record, _ = tasks.apply(record, event(record, 'approval', 1790000103, source='user',
+            channel='chat', text='Approve exact caller release', action='release', target='caller', scope='caller only'))
+        updated, verdict = tasks.release_gate(record, **args)
+        self.assertEqual(verdict, 'admitted')
+        self.assertEqual(updated['coordination']['deployment_state']['reasons'], [])
+
     def test_admission_does_not_consume_original_decision(self):
         record = bind(base())
         record, _ = tasks.apply(record, event(record, 'dispatched', 1790000001, source='adapter'))
@@ -195,6 +211,21 @@ class OutcomeEvidence(unittest.TestCase):
         self.assertEqual(brief(record)['outcome_readiness']['can create and onboard']['verdict'], 'HOLD')
         self.assertEqual(record['status'], 'delivered')
 
+    def test_wrong_outer_candidate_cannot_leak_positive_readiness_to_parent(self):
+        value = self.packet()
+        report, verifier = self.reports(value)
+        record = tasks.new_task('task-current', 'outcome', worker_kind='local', owner='assistant',
+            repo='synthetic', worktree=str(self.root), acceptance_packet=value)
+        record, _ = tasks.apply(record, {'id': 'd', 'task': 'task-current', 'ts': 1790000001,
+            'source': 'adapter', 'kind': 'dispatched', 'data': {}})
+        record, outcome = tasks.apply(record, {'id': 'wrong-candidate', 'task': 'task-current', 'ts': 1790000002,
+            'source': 'verifier', 'kind': 'ready', 'data': {'commit': 'e' * 40, 'tests': 'pass',
+                'completion_report': report, 'verifier_report': verifier}})
+        self.assertEqual(outcome, 'unsupported')
+        self.assertEqual(brief(record)['outcome_readiness']['can create and onboard']['verdict'], 'HOLD')
+        self.assertIsNone(brief(record)['readiness_receipt'])
+        self.assertEqual(brief(record)['outcome_readiness']['can create and onboard']['candidate'], HEAD)
+
     def test_positive_and_denied_composed_paths_pass_without_proving_first_login(self):
         value = self.packet()
         report, verifier = self.reports(value)
@@ -212,8 +243,6 @@ class OutcomeEvidence(unittest.TestCase):
             self.assertIn('composed-route', assess_completion(value, changed, verifier, artifact_root=self.root)['missing'])
 
     def test_manual_waiver_is_not_positive_evidence_even_for_legacy_criterion(self):
-        value = self.packet()
-        legacy = copy.deepcopy(value)
         # Legacy packets remain usable; a waiver must still not pass their criterion.
         criterion = {'id': 'manual', 'check': 'ordinary manager route succeeds'}
         legacy = packet(task_id='task-current', revision=1, owner='same-owner', scope='route check',
@@ -223,6 +252,7 @@ class OutcomeEvidence(unittest.TestCase):
             criterion_evidence={'manual': {'reference': 'user:waiver', 'check_result': 'pass',
                 'commit': HEAD, 'environment': 'isolated', 'evidence_type': 'manual-waiver'}})
         self.assertEqual(assess_completion(legacy, report)['missing'], ['manual'])
+        value = self.packet()
         report, verifier = self.reports(value)
         report['criterion_evidence']['composed-route']['evidence_type'] = 'manual-waiver'
         self.assertIn('composed-route', assess_completion(value, report, verifier, artifact_root=self.root)['missing'])
