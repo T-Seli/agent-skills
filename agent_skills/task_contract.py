@@ -8,6 +8,7 @@ import struct
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 MILESTONES = {"blocker-cleared", "verified-commit", "verified-deploy",
               "scope-changed", "monitor-verdict", "completion"}
+OUTCOME_STAGES = {"component-tests", "composed-route", "provisioning", "access", "first-login"}
 
 
 def digest(value):
@@ -23,8 +24,17 @@ def _words(values, name, *, nonempty=False):
 def _binding(value):
     if not isinstance(value, dict) or not {"surface", "fixture", "environment", "candidate", "artifact_kinds"} <= set(value) or not set(value) <= {
             "surface", "fixture", "environment", "candidate", "artifact_kinds",
-            "production_reference_sha256", "coverage_ids", "mounted_entry_points"}:
+            "production_reference_sha256", "coverage_ids", "mounted_entry_points",
+            "outcome", "stage", "expected_results"}:
         return False
+    outcome_keys = {"outcome", "stage", "expected_results"}
+    if outcome_keys & set(value):
+        if (not outcome_keys <= set(value) or not isinstance(value["outcome"], str) or
+                not value["outcome"].strip() or not isinstance(value["stage"], str) or value["stage"] not in OUTCOME_STAGES or
+                not isinstance(value["expected_results"], dict) or not value["expected_results"] or
+                not all(isinstance(k, str) and k.strip() and isinstance(v, str) and v.strip()
+                        for k, v in value["expected_results"].items())):
+            return False
     if not all(isinstance(value[k], str) and value[k].strip() for k in
                ("surface", "fixture", "environment", "candidate")):
         return False
@@ -176,7 +186,9 @@ def assess_completion(value, report, verifier_report=None, *, artifact_root=None
     """Evidence complete is not human acceptance, deployment, or verified live behavior."""
     validate_packet(value)
     if not isinstance(report, dict):
-        return {"status": "claimed-unverified", "missing": [c["id"] for c in value["acceptance"]]}
+        missing = [c["id"] for c in value["acceptance"]]
+        return {"status": "claimed-unverified", "missing": missing,
+                "outcome_readiness": _outcome_readiness(value, missing)}
     if (report.get("task_id"), report.get("revision"), report.get("packet_sha256")) != (
             value["task_id"], value["revision"], value["packet_sha256"]):
         return {"status": "stale-or-foreign", "missing": []}
@@ -188,7 +200,7 @@ def assess_completion(value, report, verifier_report=None, *, artifact_root=None
     for criterion in value["acceptance"]:
         item = evidence.get(criterion["id"])
         if not isinstance(item, dict) or not all(item.get(k) for k in (
-                "reference", "check_result", "commit", "environment")) or item.get("check_result") != "pass":
+                "reference", "check_result", "commit", "environment")) or item.get("check_result") != "pass" or item.get("evidence_type") == "manual-waiver":
             missing.append(criterion["id"])
             continue
         binding = criterion.get("evidence_binding")
@@ -203,6 +215,13 @@ def assess_completion(value, report, verifier_report=None, *, artifact_root=None
         point_receipts = item.get("entry_point_receipts")
         verified_point_receipts = (verified or {}).get("entry_point_receipts")
         if binding and (root is None or
+                        ("outcome" in binding and (
+                            any(item.get(k) != binding[k] for k in ("outcome", "stage")) or
+                            item.get("observed_results") != binding["expected_results"] or
+                            not isinstance(verified, dict) or
+                            any(verified.get(k) != binding[k] for k in ("outcome", "stage")) or
+                            verified.get("observed_results") != binding["expected_results"] or
+                            verified.get("evidence_type") == "manual-waiver")) or
                         any(_artifact_hash(root, paths.get(kind)) != hashes.get(kind)
                             for kind in binding["artifact_kinds"]) or
                         any("screenshot" in kind and not _png_image(root, paths.get(kind))
@@ -241,7 +260,24 @@ def assess_completion(value, report, verifier_report=None, *, artifact_root=None
                          item.get("production_reference_sha256") != binding["production_reference_sha256"])):
             missing.append(criterion["id"])
     return {"status": "evidence-complete-awaiting-acceptance" if not missing else "claimed-unverified",
-            "missing": missing, "unverified_limits": report.get("unverified_limits", [])}
+            "missing": missing, "outcome_readiness": _outcome_readiness(value, missing),
+            "unverified_limits": report.get("unverified_limits", [])}
+
+
+def _outcome_readiness(value, missing):
+    outcomes = {}
+    for criterion in value["acceptance"]:
+        binding = criterion.get("evidence_binding") or {}
+        if "outcome" not in binding:
+            continue
+        outcome = outcomes.setdefault(binding["outcome"], {"verdict": "EVIDENCE-COMPLETE", "stages": {}})
+        stage = binding["stage"]
+        verdict = "HOLD" if criterion["id"] in missing else "EVIDENCE-COMPLETE"
+        if outcome["stages"].get(stage) != "HOLD":
+            outcome["stages"][stage] = verdict
+        if verdict == "HOLD":
+            outcome["verdict"] = "HOLD"
+    return outcomes
 
 
 def milestone(value, *, event_id, kind, reported_status, verified_status, evidence_refs):

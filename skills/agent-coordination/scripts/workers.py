@@ -28,6 +28,11 @@ REPORT_SCHEMA = {
         "artifact_kind": {"type": "string"}, "artifact_ref": {"type": "string"},
         "result": {"type": "string"}, "remaining": {"type": "array", "items": {"type": "string"}},
         "next_owner": {"type": "string"},
+        "decision_source_ref": {"type": "string"},
+        "material_facts": {"type": "array", "items": {"type": "object",
+            "additionalProperties": False, "required": ["fact", "source_ref", "evidence_level"],
+            "properties": {"fact": {"type": "string"}, "source_ref": {"type": "string"},
+                "evidence_level": {"enum": ["reported", "performed", "independently_verified", "unverified"]}}}},
     },
 }
 
@@ -120,7 +125,7 @@ def events(task_id, dispatch_id, parsed, started, finished):
         "commit", "tests", "summary", "need", "action", "target", "task_id",
         "deliverable_id", "revision", "contract_digest", "next_action", "packet_sha256",
         "final_diff_digest", "completion_report", "verifier_report", "artifact_kind",
-        "artifact_ref", "result", "remaining", "next_owner")}
+        "artifact_ref", "result", "remaining", "next_owner", "decision_source_ref", "material_facts")}
     out.append({"id": f"{dispatch_id}:{sid}:{digest}", "task": task_id, "ts": finished, "source": "worker",
                 "kind": rep["status"], "data": data})
     return out

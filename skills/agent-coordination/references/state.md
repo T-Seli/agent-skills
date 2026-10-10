@@ -9,6 +9,10 @@ Use one durable record per work item. The compact envelope below supplements the
 - `active_deliverable`: `{id, revision, acceptance_ref, environment, changed_criteria, next_action, source_ref, requested_artifact, readback_ref, history_readback}`; revisions increase monotonically and an exact replay preserves state.
 - `obligations`: displaced acknowledged deliverables retained as `queued` or `superseded`, with reason and source. Never silently drop one.
 
+The existing brief projects active, displaced and completed subdeliverables separately: `{id, revision, owner, task_id, requested_artifact, artifact_ref, authority_ref, source_ref, latest_receipt, gates, material_facts}`. Two subdeliverables under one owner/task retain their own scope and gates; caller validation cannot close a separate source patch. Preserve original decision and authority references when displacing work. Do not create another registry or copy transcripts into the brief. Legacy records with missing bindings remain labeled unknown until reconciled.
+
+For local records, `bind_task_contract(..., authority_ref, artifact_ref, gates)` pins this scope into the existing active contract and digest. `acknowledge_task_contract(..., decision_source_ref)` must name the original changed-criterion source, and `current_task_binding` carries that reference into the result. A wrong historical inner deliverable stays rejected even when the outer task matches; preserve actual effects and route recovery to the existing owner.
+
 Only one deliverable is active. Changed criteria require a new revision. Before accepting worker progress on it, require a readback naming its ID, revision, changed criteria, environment and next action. Old results remain evidence but are labeled stale.
 
 ## Evidence cursor
@@ -30,6 +34,12 @@ Track independently:
 - display sync per surface: `current | stale | unknown`, plus a receipt when current.
 
 A pause request becomes effective only after the canonical execution owner confirms it. Release requires the current revision readback, matching recorded approval and scope, exact accepted head and final-diff identity, expected owner lock and any required pause receipt. Deployment success is not functional acceptance, and stale display does not change canonical state.
+
+## Material return loop
+
+Keep useful facts inline, each with `{fact, source_ref, evidence_level}`, and the obligation's remaining gates. On a callback, read the latest exact worker result, page deeper only for missing or conflicting evidence, reconcile the brief, and answer from current scope. An inaccessible artifact link leaves inline facts usable but its unseen contents unverified.
+
+For a changed dependency criterion, carry the original decision source and revision to the same owner/task. Record separately: admission; source-bound worker acknowledgment; matching result; parent read receipt and answer. `reconcile_parent_readback` checks the current binding, original decision source and exact result receipt before recording parent consumption. It neither accepts the artifact nor authenticates host authorship. A new revision invalidates the old loop; message delivery alone never closes it. Native consumption needs an actual supported host receipt, separately from these local library calls. Label server timestamps and reported clocks separately; do not infer consumption latency from gaps.
 
 ## Watches and milestones
 

@@ -18,3 +18,4 @@ Write for a reader who hasn't seen the code.
 - **Sub-agents:** relay their conclusions in your own words; never paste their transcripts or file dumps.
 - **Progress updates:** one line — what finished, what's next.
 - **Report faithfully.** A failure comes with its actual output, trimmed to the relevant lines. A skipped step is named as skipped. Done and verified is said plainly, without hedging.
+- **Keep current scope visible.** Answer from the brief's exact subdeliverable, owner/task, revision, authority, latest receipt and gates; retrieve deeper evidence when needed. Retain inline material facts when links cannot be opened. Report component tests, composed routes, provisioning and first login separately; a manual waiver is no technical proof. Read and reconcile matching worker results before claiming consumption or closing a dependency loop.
