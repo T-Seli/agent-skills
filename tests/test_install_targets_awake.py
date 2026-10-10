@@ -23,6 +23,11 @@ class TargetAndAwakeTests(unittest.TestCase):
                 (package / "__init__.py").write_text("")
                 (package / "safeguard_cli.py").write_text(
                     f"raise SystemExit({message!r})\n")
+            (stale / "sitecustomize.py").write_text(
+                "import agent_skills.safeguard_cli\n"
+                "raise SystemExit('stale sitecustomize imported')\n")
+            (Path(cwd) / "json.py").write_text(
+                "raise SystemExit('caller CWD dependency imported')\n")
             entrypoint = Path(home) / ".agents/skills/workflow-contracts/scripts/safeguard-cli"
             head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
                                   check=True, capture_output=True, text=True).stdout.strip()
@@ -33,6 +38,8 @@ class TargetAndAwakeTests(unittest.TestCase):
             self.assertIn(f'"reviewed_commit": "{head}"', result.stdout)
             self.assertNotIn("stale PYTHONPATH imported", result.stderr)
             self.assertNotIn("stale CWD imported", result.stderr)
+            self.assertNotIn("stale sitecustomize imported", result.stderr)
+            self.assertNotIn("caller CWD dependency imported", result.stderr)
 
         with tempfile.TemporaryDirectory() as home:
             missing = Path(home) / ".agents/skills/workflow-contracts/scripts/safeguard-cli"
