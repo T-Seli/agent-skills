@@ -9,4 +9,11 @@ if [ ! -f "$RELEASE_ROOT/agent_skills/safeguard_cli.py" ]; then
   exit 127
 fi
 
-PYTHONPATH="$RELEASE_ROOT${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m agent_skills.safeguard_cli "$@"
+exec python3 -c '
+import runpy
+import sys
+
+root = sys.argv.pop(1)
+sys.path.insert(0, root)
+runpy.run_module("agent_skills.safeguard_cli", run_name="__main__")
+' "$RELEASE_ROOT" "$@"

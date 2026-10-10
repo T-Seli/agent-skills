@@ -17,10 +17,12 @@ class TargetAndAwakeTests(unittest.TestCase):
                                        env=env, capture_output=True, text=True)
             self.assertEqual(installed.returncode, 0, installed.stderr)
             stale = Path(cwd) / "stale"
-            (stale / "agent_skills").mkdir(parents=True)
-            (stale / "agent_skills/__init__.py").write_text("")
-            (stale / "agent_skills/safeguard_cli.py").write_text(
-                "raise SystemExit('stale PYTHONPATH imported')\n")
+            for package, message in ((stale / "agent_skills", "stale PYTHONPATH imported"),
+                                     (Path(cwd) / "agent_skills", "stale CWD imported")):
+                package.mkdir(parents=True)
+                (package / "__init__.py").write_text("")
+                (package / "safeguard_cli.py").write_text(
+                    f"raise SystemExit({message!r})\n")
             entrypoint = Path(home) / ".agents/skills/workflow-contracts/scripts/safeguard-cli"
             head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
                                   check=True, capture_output=True, text=True).stdout.strip()
@@ -30,6 +32,7 @@ class TargetAndAwakeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(f'"reviewed_commit": "{head}"', result.stdout)
             self.assertNotIn("stale PYTHONPATH imported", result.stderr)
+            self.assertNotIn("stale CWD imported", result.stderr)
 
         with tempfile.TemporaryDirectory() as home:
             missing = Path(home) / ".agents/skills/workflow-contracts/scripts/safeguard-cli"
