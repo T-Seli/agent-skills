@@ -17,7 +17,17 @@ REPORT_SCHEMA = {
         "tests": {"type": "string"}, "need": {"type": "string"},
         # For a blocked report: the exact action and target the user would approve.
         "action": {"type": "string"}, "target": {"type": "string"},
+        # Present for a bound task. The reducer rejects an active result unless every value
+        # echoes its current task/deliverable tuple.
+        "task_id": {"type": "string"}, "deliverable_id": {"type": "string"},
+        "revision": {"type": "integer"}, "contract_digest": {"type": "string"},
+        "next_action": {"type": "string"}, "packet_sha256": {"type": "string"},
+        "final_diff_digest": {"type": "string"},
         "completion_report": {"type": "object"},
+        "verifier_report": {"type": "object"},
+        "artifact_kind": {"type": "string"}, "artifact_ref": {"type": "string"},
+        "result": {"type": "string"}, "remaining": {"type": "array", "items": {"type": "string"}},
+        "next_owner": {"type": "string"},
     },
 }
 
@@ -106,7 +116,11 @@ def events(task_id, dispatch_id, parsed, started, finished):
         out.append({"id": f"{dispatch_id}:no-report", "task": task_id, "ts": finished, "source": "adapter", "kind": "idle"})
         return out
     digest = hashlib.sha256(json.dumps(rep, sort_keys=True).encode()).hexdigest()[:16]
-    data = {k: rep.get(k) or None for k in ("commit", "tests", "summary", "need", "action", "target", "completion_report")}
+    data = {k: rep.get(k) if rep.get(k) is not None else None for k in (
+        "commit", "tests", "summary", "need", "action", "target", "task_id",
+        "deliverable_id", "revision", "contract_digest", "next_action", "packet_sha256",
+        "final_diff_digest", "completion_report", "verifier_report", "artifact_kind",
+        "artifact_ref", "result", "remaining", "next_owner")}
     out.append({"id": f"{dispatch_id}:{sid}:{digest}", "task": task_id, "ts": finished, "source": "worker",
                 "kind": rep["status"], "data": data})
     return out

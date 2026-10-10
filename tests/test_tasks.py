@@ -312,6 +312,49 @@ CODEX_OUT = '\n'.join(json.dumps(e) for e in [
 
 
 class AdapterTests(unittest.TestCase):
+    def test_adapter_preserves_current_task_and_final_acceptance_binding(self):
+        report = {'status': 'ready', 'summary': 'done', 'commit': 'a' * 40,
+                  'tests': 'passed', 'need': '', 'action': '', 'target': '',
+                  'task_id': TASK, 'deliverable_id': 'audit-fix', 'revision': 3,
+                  'contract_digest': 'b' * 64, 'next_action': 'review exact candidate',
+                  'packet_sha256': 'c' * 64, 'final_diff_digest': 'd' * 64}
+        event = w.events(TASK, 'binding', {'session_id': 's-1', 'error': False,
+                                          'report': report}, BASE + 1, BASE + 2)[1]
+        for key in ('task_id', 'deliverable_id', 'revision', 'contract_digest',
+                    'next_action', 'packet_sha256', 'final_diff_digest'):
+            self.assertEqual(event['data'][key], report[key])
+
+    def test_adapter_result_is_consumed_only_for_the_current_deliverable(self):
+        record = t.bind_task_contract(
+            fresh(), user_goal='Verify audit repair', constraints=['fixture only'],
+            priority_source_ref='audit:priority', canonical_issue_ref='audit:item',
+            canonical_owner='worker-1', deliverable_id='audit-fix', revision=1,
+            acceptance_ref='audit:acceptance', environment='local-test',
+            changed_criteria='current task binding', next_action='return reviewed fixture',
+            source_ref='audit:revision-1')
+        record = t.acknowledge_task_contract(
+            record, deliverable_id='audit-fix', revision=1,
+            changed_criteria='current task binding', next_action='return reviewed fixture',
+            environment='local-test', receipt_ref='audit:readback-1')
+        binding = t.current_task_binding(record)
+        wrong = {'status': 'ready', 'summary': 'old result', 'commit': 'a' * 40,
+                 'tests': 'passed', 'need': '', 'action': '', 'target': '',
+                 'final_diff_digest': 'b' * 64, **binding,
+                 'deliverable_id': 'historical-release'}
+        events = w.events(TASK, 'adapter-current', {
+            'session_id': 's-1', 'error': False, 'report': wrong}, BASE + 1, BASE + 2)
+        delivered, first = t.apply(record, events[0])
+        rejected, second = t.apply(delivered, events[1])
+        self.assertEqual((first, second, rejected['status']),
+                         ('applied', 'unsupported', 'delivered'))
+
+        current = {**wrong, 'summary': 'current result', 'deliverable_id': 'audit-fix'}
+        event = w.events(TASK, 'adapter-current', {
+            'session_id': 's-1', 'error': False, 'report': current}, BASE + 1, BASE + 3)[1]
+        accepted, outcome = t.apply(delivered, event)
+        self.assertEqual((outcome, accepted['status']), ('applied', 'ready-for-review'))
+        self.assertEqual(t.contract_consumption(accepted)['final']['receipt_ref'], event['id'])
+
     def test_claude_fixes_the_session_id_and_resumes_by_it(self):
         c = w.Claude()
         fresh_argv = c.command('do it', session_id='s-1', resume=False)

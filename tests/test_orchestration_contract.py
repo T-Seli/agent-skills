@@ -44,9 +44,7 @@ def acknowledge(record, revision=1, deliverable='fixture'):
 
 
 def current_binding(record):
-    active = record['coordination']['active_deliverable']
-    return dict(deliverable_id=active['id'], revision=active['revision'],
-                contract_digest=active['contract_digest'])
+    return tasks.current_task_binding(record)
 
 
 def approve_release(record, scope='fixture only'):
@@ -75,7 +73,8 @@ def verify_active(record):
          'data': {'commit': head, 'final_diff_digest': diff, 'tests': 'passed', **binding}},
         {'id': 'release-verified', 'task': 'task-123', 'ts': 1790000013,
          'source': 'verifier', 'kind': 'verified',
-         'data': {'commit': head, 'final_diff_digest': diff, 'tests_passed': True}})
+         'data': {'commit': head, 'final_diff_digest': diff, 'tests_passed': True,
+                  **binding}})
     for event in events:
         record, outcome = tasks.apply(record, event)
         assert outcome == 'applied'
@@ -181,7 +180,7 @@ class OrchestrationReplayTests(unittest.TestCase):
             'id': 'artifact-verified', 'task': 'task-123', 'ts': 1790000044,
             'source': 'verifier', 'kind': 'verified',
             'data': {'commit': 'a' * 40, 'final_diff_digest': 'b' * 64,
-                     'tests_passed': True}})
+                     'tests_passed': True, **binding}})
         self.assertEqual(outcome, 'applied')
         delivered = tasks.record_user_delivery(
             verified, artifact_ref='report.pdf', receipt_ref='delivery:parent-1')
@@ -291,6 +290,70 @@ class OrchestrationReplayTests(unittest.TestCase):
                          'stale-revision')
         self.assertEqual(record['coordination']['obligations'][0]['state'], 'superseded')
         self.assertEqual(record['coordination']['execution_state'], 'awaiting-readback')
+
+    def test_result_boundary_rejects_stale_task_next_action_and_uncertain_dispatch(self):
+        record = acknowledge(bind(base()))
+        binding = current_binding(record)
+        record, outcome = tasks.apply(record, {
+            'id': 'dispatch-current', 'task': 'task-123', 'ts': 1790000001,
+            'source': 'adapter', 'kind': 'dispatched', 'data': {}})
+        self.assertEqual(outcome, 'applied')
+        for key, value in (('task_id', 'old-task'), ('deliverable_id', 'old-deliverable'),
+                           ('next_action', 'publish old result'),
+                           ('packet_sha256', 'a' * 64)):
+            stale = {**binding, key: value}
+            rejected, outcome = tasks.apply(record, {
+                'id': f'stale-{key}', 'task': 'task-123', 'ts': 1790000002,
+                'source': 'worker', 'kind': 'running', 'data': stale})
+            self.assertEqual((outcome, rejected['status']), ('unsupported', 'delivered'))
+
+        uncertain = tasks.begin_dispatch(record, 'dispatch-uncertain', resume=False)
+        rejected, outcome = tasks.apply(uncertain, {
+            'id': 'uncertain-result', 'task': 'task-123', 'ts': 1790000002,
+            'source': 'worker', 'kind': 'running', 'data': binding})
+        self.assertEqual((outcome, rejected['status']), ('unsupported', 'delivered'))
+
+    def test_audit_only_contract_rejects_an_out_of_scope_final(self):
+        record = bind(base(), next_action='inspect audit evidence only')
+        record = tasks.acknowledge_task_contract(
+            record, deliverable_id='fixture', revision=1,
+            changed_criteria='criteria revision 1',
+            next_action='inspect audit evidence only', environment='local-test',
+            receipt_ref='task:audit-readback')
+        binding = {**current_binding(record), 'next_action': 'publish old result'}
+        record, _ = tasks.apply(record, {
+            'id': 'audit-dispatch', 'task': 'task-123', 'ts': 1790000001,
+            'source': 'adapter', 'kind': 'dispatched', 'data': {}})
+        rejected, outcome = tasks.apply(record, {
+            'id': 'audit-final', 'task': 'task-123', 'ts': 1790000002,
+            'source': 'worker', 'kind': 'ready',
+            'data': {'commit': 'a' * 40, 'final_diff_digest': 'b' * 64,
+                     'tests': 'passed', **binding}})
+        self.assertEqual((outcome, rejected['status']), ('unsupported', 'delivered'))
+
+    def test_contract_consumption_distinguishes_library_calls_from_native_enforcement(self):
+        record = bind(base())
+        self.assertEqual(tasks.contract_consumption(record)['final']['state'],
+                         'helper-only-unconsumed')
+        record = acknowledge(record)
+        consumed = tasks.contract_consumption(record)
+        self.assertEqual(consumed['dispatch']['caller'],
+                         'tasks.acknowledge_task_contract')
+        self.assertFalse(consumed['dispatch']['native_enforcement'])
+
+        binding = current_binding(record)
+        record, _ = tasks.apply(record, {
+            'id': 'consume-dispatch', 'task': 'task-123', 'ts': 1790000010,
+            'source': 'adapter', 'kind': 'dispatched', 'data': {}})
+        record, outcome = tasks.apply(record, {
+            'id': 'consume-final', 'task': 'task-123', 'ts': 1790000011,
+            'source': 'worker', 'kind': 'ready',
+            'data': {'commit': 'a' * 40, 'final_diff_digest': 'b' * 64,
+                     'tests': 'passed', **binding}})
+        self.assertEqual(outcome, 'applied')
+        consumed = tasks.contract_consumption(record)
+        self.assertEqual(consumed['final']['receipt_ref'], 'consume-final')
+        self.assertFalse(consumed['final']['native_enforcement'])
 
     def test_completed_obligation_cannot_be_reopened_by_stale_narrative(self):
         record = acknowledge(bind(base()))
@@ -431,6 +494,10 @@ class OrchestrationReplayTests(unittest.TestCase):
         self.assertEqual(gate, 'admitted')
         self.assertEqual(released['coordination']['deployment_state']['pause_ack_ref'],
                          'task:pause-ack')
+        consumption = tasks.contract_consumption(released)['release']
+        self.assertEqual((consumption['caller'], consumption['outcome'],
+                          consumption['native_enforcement']),
+                         ('tasks.release_gate', 'admitted', False))
 
         mismatch, gate = tasks.release_gate(
             record, head='c' * 40, final_diff_digest='d' * 64, scope='fixture only',

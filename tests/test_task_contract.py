@@ -110,7 +110,10 @@ class BoundEvidenceTests(unittest.TestCase):
                     'surface': 'lead-alert-drop rows', 'fixture': 'call-42 dropped state',
                     'environment': 'local', 'candidate': 'b' * 40,
                     'artifact_kinds': ['timeline-screenshot', 'row-inspection'],
-                    'coverage_ids': ['lead', 'alert', 'drop']}},
+                    'coverage_ids': ['lead', 'alert', 'drop'],
+                    'mounted_entry_points': [
+                        'GET /timeline as manager -> 200',
+                        'GET /timeline as viewer -> 403']}},
                 {'id': 'header', 'check': 'production header parity', 'evidence_binding': {
                     'surface': 'timeline header', 'fixture': 'call-42 dropped state',
                     'environment': 'local', 'candidate': 'b' * 40,
@@ -129,6 +132,9 @@ class BoundEvidenceTests(unittest.TestCase):
                 'surface': binding['surface'], 'fixture': binding['fixture'],
                 'artifact_hashes': {kind: self.sha(kind) for kind in binding['artifact_kinds']},
                 'artifacts': {kind: kind for kind in binding['artifact_kinds']},
+                **({'entry_point_receipts': {point: f'receipt:{index}' for index, point in
+                    enumerate(binding['mounted_entry_points'])}}
+                   if 'mounted_entry_points' in binding else {}),
                 **({'production_reference': 'baseline.png',
                     'production_reference_sha256': self.sha('baseline.png')} if 'production_reference_sha256' in binding else {})}
         return {'task_id': value['task_id'], 'revision': value['revision'],
@@ -141,6 +147,9 @@ class BoundEvidenceTests(unittest.TestCase):
                     'inspection_result': 'pass', 'artifact_hashes': item['artifact_hashes'],
                     'artifacts': item['artifacts'],
                     **({'observed_coverage_ids': ['lead', 'alert', 'drop']} if key == 'timeline' else {}),
+                    **({'observed_entry_points': list(item['entry_point_receipts']),
+                        'entry_point_receipts': item['entry_point_receipts']}
+                       if 'entry_point_receipts' in item else {}),
                     'surface': item['surface'], 'fixture': item['fixture'],
                     'environment': item['environment'], 'candidate': item['commit'],
                     **({'production_reference_sha256': item['production_reference_sha256']}
@@ -153,6 +162,22 @@ class BoundEvidenceTests(unittest.TestCase):
         report['criterion_evidence']['timeline']['surface'] = 'one call-card node'
         report['criterion_evidence']['timeline']['artifact_hashes'] = {'http-200': H}
         self.assertIn('timeline', assess_completion(value, report, self.verifier(report), artifact_root=self.root)['missing'])
+
+    def test_every_mounted_positive_and_negative_entry_point_needs_a_matching_receipt(self):
+        value = self.bound()
+        report = self.evidence(value)
+        verifier = self.verifier(report)
+        missing = 'GET /timeline as viewer -> 403'
+        del report['criterion_evidence']['timeline']['entry_point_receipts'][missing]
+        self.assertIn('timeline', assess_completion(
+            value, report, verifier, artifact_root=self.root)['missing'])
+
+        report = self.evidence(value)
+        verifier = self.verifier(report)
+        verifier['criterion_evidence']['timeline']['observed_entry_points'][0] = (
+            'GET /unmounted as manager -> 200')
+        self.assertIn('timeline', assess_completion(
+            value, report, verifier, artifact_root=self.root)['missing'])
 
     def test_each_binding_and_production_baseline_must_match(self):
         value = self.bound()

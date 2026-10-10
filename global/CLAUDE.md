@@ -16,6 +16,7 @@ Tenant = whatever varies per install (customer, site, deployment). § Tenancy `n
 - Prompts (if the project ships them): shared text holds logic, per-install facts come via variables; harden an existing line before adding one; drop conflicting or redundant lines; never show end users internal tool names.
 
 ## Safety
+- After interruption or compaction, reread the latest task id, revision, exclusions and next action before acting or answering; completed grants are history.
 - Production data is read-only unless asked. A script, job, backfill or migration that writes to production asserts its target first; writes in normal request handlers are exempt. Allow-list DDL; migrations are idempotent with a down path.
 - Secrets: env or gitignored config only, never in source, URLs, logs, screenshots or sub-agent prompts. Strip PII before third-party LLM calls.
 - Shared external config (webhooks, DNS, vendor dashboards): additive changes only, snapshot first.

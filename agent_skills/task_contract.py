@@ -23,7 +23,7 @@ def _words(values, name, *, nonempty=False):
 def _binding(value):
     if not isinstance(value, dict) or not {"surface", "fixture", "environment", "candidate", "artifact_kinds"} <= set(value) or not set(value) <= {
             "surface", "fixture", "environment", "candidate", "artifact_kinds",
-            "production_reference_sha256", "coverage_ids"}:
+            "production_reference_sha256", "coverage_ids", "mounted_entry_points"}:
         return False
     if not all(isinstance(value[k], str) and value[k].strip() for k in
                ("surface", "fixture", "environment", "candidate")):
@@ -37,6 +37,12 @@ def _binding(value):
     if "coverage_ids" in value:
         ids = value["coverage_ids"]
         if not isinstance(ids, list) or not ids or not all(isinstance(x, str) and x.strip() for x in ids) or len(ids) != len(set(ids)):
+            return False
+    if "mounted_entry_points" in value:
+        points = value["mounted_entry_points"]
+        if (not isinstance(points, list) or not points or
+                not all(isinstance(x, str) and x.strip() and "\n" not in x for x in points) or
+                len(points) != len(set(points))):
             return False
     return "production_reference_sha256" not in value or (
         isinstance(value["production_reference_sha256"], str) and bool(re.fullmatch(
@@ -193,6 +199,9 @@ def assess_completion(value, report, verifier_report=None, *, artifact_root=None
         hashes = hashes if isinstance(hashes, dict) else {}
         paths = item.get("artifacts")
         paths = paths if isinstance(paths, dict) else {}
+        expected_points = binding.get("mounted_entry_points", []) if binding else []
+        point_receipts = item.get("entry_point_receipts")
+        verified_point_receipts = (verified or {}).get("entry_point_receipts")
         if binding and (root is None or
                         any(_artifact_hash(root, paths.get(kind)) != hashes.get(kind)
                             for kind in binding["artifact_kinds"]) or
@@ -207,6 +216,13 @@ def assess_completion(value, report, verifier_report=None, *, artifact_root=None
                         verified.get("artifact_hashes") != hashes or
                         verified.get("artifacts") != paths or
                         ("coverage_ids" in binding and verified.get("observed_coverage_ids") != binding["coverage_ids"]) or
+                        (expected_points and (
+                            not isinstance(point_receipts, dict) or
+                            set(point_receipts) != set(expected_points) or
+                            not all(isinstance(receipt, str) and receipt.strip()
+                                    for receipt in point_receipts.values()) or
+                            verified.get("observed_entry_points") != expected_points or
+                            verified_point_receipts != point_receipts)) or
                         any(verified.get(key) != binding[key] for key in
                             ("surface", "fixture", "environment")) or
                         verified.get("candidate") != binding["candidate"] or

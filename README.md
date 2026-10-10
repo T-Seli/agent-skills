@@ -43,7 +43,7 @@ immutable release. At task entry, resume, reconnect, pre-activation or post-acti
 record sanitized installed, loaded and behavior-verification observations in a
 task-local JSON file, then run:
 
-`python3 -m agent_skills.safeguard_cli reconcile agent_skills/release-targets.json <state.json>`
+`./skills/workflow-contracts/scripts/safeguard-cli reconcile agent_skills/release-targets.json <state.json>`
 
 The read-only gate fails until every required target matches the same commit and
 tree, has a rollback reference, and has receipt-backed load and behavior checks.
@@ -55,8 +55,7 @@ this user-owned release target set. The gate never fetches, installs, publishes,
 changes access, or schedules background work.
 
 For one explicitly approved maintenance action, a lifecycle owner can run
-`python3 -m agent_skills.safeguard_cli maintain-release <manifest.json>
-<state.json> <request.json>`. The request binds one action, authorization reference,
+`./skills/workflow-contracts/scripts/safeguard-cli maintain-release <manifest.json> <state.json> <request.json>`. The request binds one action, authorization reference,
 immutable source/commit/tree, lifecycle checkpoint, expected and observed approval
 reviewer mode, and action parameters. `fast-forward-main` requires a fresh fetched
 SHA equal to the approved commit, an exact deploy-lock owner, a clean tracked and

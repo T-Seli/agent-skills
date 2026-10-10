@@ -1,0 +1,12 @@
+#!/bin/sh
+# Run the helper from the exact checkout/release that owns this installed skill link.
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
+RELEASE_ROOT=$(CDPATH= cd -P "$SCRIPT_DIR/../../.." && pwd)
+if [ ! -f "$RELEASE_ROOT/agent_skills/safeguard_cli.py" ]; then
+  echo "safeguard helper unavailable at resolved release root: $RELEASE_ROOT" >&2
+  exit 127
+fi
+
+PYTHONPATH="$RELEASE_ROOT${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m agent_skills.safeguard_cli "$@"

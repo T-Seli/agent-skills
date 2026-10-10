@@ -44,6 +44,7 @@ ACCEPTANCE_STATES = ("unreviewed", "rejected", "ready", "verified", "accepted")
 DISPLAY_STATES = ("current", "stale", "unknown")
 HISTORY_STAGES = ("pending", "locally-appended", "view-rendered", "index-updated",
                   "published", "readback-verified")
+_UNSET = object()
 
 
 def _coordination(work_item):
@@ -56,7 +57,7 @@ def _coordination(work_item):
             "source_publication_state": None,
             "user_delivery_state": "not-delivered",
             "history_publication_state": "not-published",
-            "display_sync": {}, "watch_baselines": {}}
+            "display_sync": {}, "watch_baselines": {}, "contract_consumption": {}}
 
 
 def _coord(record):
@@ -154,7 +155,8 @@ def acknowledge_task_contract(record, *, deliverable_id, revision, changed_crite
                               history_revision=None, history_digest=None):
     """Record a worker's exact current-revision readback before accepting new work."""
     r = copy.deepcopy(record)
-    active = _coord(r).get("active_deliverable")
+    coordination = _coord(r)
+    active = coordination.get("active_deliverable")
     actual = (deliverable_id, revision, changed_criteria, next_action, environment)
     expected = ((active or {}).get("id"), (active or {}).get("revision"),
                 (active or {}).get("changed_criteria"), (active or {}).get("next_action"),
@@ -170,20 +172,42 @@ def acknowledge_task_contract(record, *, deliverable_id, revision, changed_crite
             "revision": history_revision, "digest": history_digest,
             "readback_ref": canonical["readback_ref"]}
     active["readback_ref"] = _text(receipt_ref, "receipt_ref")
-    _coord(r)["execution_state"] = "admitted"
+    coordination["execution_state"] = "admitted"
+    _record_contract_consumption(
+        coordination, "dispatch", "tasks.acknowledge_task_contract", active["readback_ref"])
     return r
 
 
-def result_binding(record, *, deliverable_id, revision, contract_digest=None):
+def current_task_binding(record):
+    """Return the tuple a current worker result must echo; this does not dispatch it."""
+    active = (record.get("coordination") or {}).get("active_deliverable")
+    if not active:
+        raise ValueError("no active deliverable")
+    packet = record.get("acceptance_packet") or {}
+    return {"task_id": record["task_id"], "deliverable_id": active["id"],
+            "revision": active["revision"], "contract_digest": active["contract_digest"],
+            "next_action": active["next_action"],
+            "packet_sha256": packet.get("packet_sha256")}
+
+
+def result_binding(record, *, deliverable_id, revision, contract_digest=None,
+                   task_id=_UNSET, next_action=_UNSET, packet_sha256=_UNSET):
     active = (record.get("coordination") or {}).get("active_deliverable")
     if not active:
         return "unbound"
+    if task_id is not _UNSET and task_id != record.get("task_id"):
+        return "stale-task"
     if deliverable_id != active["id"]:
         return "stale-deliverable"
     if revision != active["revision"]:
         return "stale-revision"
     if contract_digest != active.get("contract_digest"):
         return "stale-contract"
+    if next_action is not _UNSET and next_action != active.get("next_action"):
+        return "stale-next-action"
+    expected_packet = (record.get("acceptance_packet") or {}).get("packet_sha256")
+    if packet_sha256 is not _UNSET and packet_sha256 != expected_packet:
+        return "stale-packet"
     if not active.get("readback_ref"):
         return "missing-current-readback"
     canonical = record.get("canonical_history")
@@ -192,6 +216,28 @@ def result_binding(record, *, deliverable_id, revision, contract_digest=None):
             active.get("history_readback", {}).get("digest") != canonical.get("digest")):
         return "stale-history-readback"
     return "current"
+
+
+def contract_consumption(record):
+    """Expose local library calls without claiming that a native host invoked them."""
+    empty = {"state": "helper-only-unconsumed", "caller": None,
+             "receipt_ref": None, "native_enforcement": False}
+    consumed = (record.get("coordination") or {}).get("contract_consumption") or {}
+    return {stage: {**empty, **copy.deepcopy(consumed.get(stage, {}))}
+            for stage in ("dispatch", "final", "acceptance", "release")}
+
+
+def _record_contract_consumption(coordination, stage, caller, receipt_ref, outcome="applied"):
+    coordination.setdefault("contract_consumption", {})[stage] = {
+        "state": "consumed-by-library-caller", "caller": caller,
+        "receipt_ref": receipt_ref, "outcome": outcome, "native_enforcement": False}
+
+
+def _event_result_binding(record, data):
+    return result_binding(
+        record, task_id=data.get("task_id"), deliverable_id=data.get("deliverable_id"),
+        revision=data.get("revision"), contract_digest=data.get("contract_digest"),
+        next_action=data.get("next_action"), packet_sha256=data.get("packet_sha256"))
 
 
 def evidence_page(record, *, source, receipt_ids, has_more):
@@ -338,6 +384,9 @@ def release_gate(record, *, head, final_diff_digest, scope, approved_scope, revi
              "pause_ack_ref": deployment.get("pause_ack_ref"),
              "gate": "admitted" if not reasons else "blocked", "reasons": reasons}
     coordination["deployment_state"] = state
+    _record_contract_consumption(
+        coordination, "release", "tasks.release_gate",
+        f"release-gate:{state['head']}:{state['final_diff_digest']}", outcome=state["gate"])
     return r, state["gate"]
 
 
@@ -706,15 +755,12 @@ def _apply(r, kind, source, data, ts, event_id):
     if source not in sources or r["status"] not in leaves:
         return "ignored"
     active = (r.get("coordination") or {}).get("active_deliverable")
-    if active and kind in ("running", "blocked", "ready"):
-        if result_binding(r, deliverable_id=data.get("deliverable_id"),
-                          revision=data.get("revision"),
-                          contract_digest=data.get("contract_digest")) != "current":
-            return "unsupported"
-    if active and kind == "verified" and result_binding(
-            r, deliverable_id=active.get("id"), revision=active.get("revision"),
-            contract_digest=active.get("contract_digest")) != "current":
+    if (source in ("worker", "verifier") and kind in ("running", "blocked", "ready", "verified") and
+            any(item.get("state") == "uncertain" for item in r.get("outbox", []))):
         return "unsupported"
+    if active and kind in ("running", "blocked", "ready", "verified"):
+        if _event_result_binding(r, data) != "current":
+            return "unsupported"
     if kind in ("running", "blocked", "ready") and r["status"] == "awaiting-worker" and not any(
         o["state"] == "sent" and event_id.startswith(o["id"] + ":")
         for o in r["outbox"][r.get("resume_after", len(r["outbox"])):]
@@ -813,6 +859,12 @@ def _apply(r, kind, source, data, ts, event_id):
         r["acceptance_completion_report"] = None
         r["acceptance_review_sha256"] = None
     coordination = _coord(r)
+    if active and kind == "ready":
+        _record_contract_consumption(
+            coordination, "final", "tasks.apply:ready", event_id)
+    elif active and kind == "verified":
+        _record_contract_consumption(
+            coordination, "acceptance", "tasks.apply:verified", event_id)
     if kind in ("dispatched", "accepted"):
         coordination["execution_state"] = ("awaiting-readback" if active and
                                              not active.get("readback_ref") else "admitted")

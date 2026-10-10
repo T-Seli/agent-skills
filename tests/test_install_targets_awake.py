@@ -10,6 +10,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class TargetAndAwakeTests(unittest.TestCase):
+    def test_installed_safeguard_entrypoint_binds_the_linked_release_from_an_unrelated_cwd(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as cwd:
+            env = dict(os.environ, HOME=home)
+            installed = subprocess.run([str(ROOT / "install.sh"), "--target=codex"],
+                                       env=env, capture_output=True, text=True)
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+            stale = Path(cwd) / "stale"
+            (stale / "agent_skills").mkdir(parents=True)
+            (stale / "agent_skills/__init__.py").write_text("")
+            (stale / "agent_skills/safeguard_cli.py").write_text(
+                "raise SystemExit('stale PYTHONPATH imported')\n")
+            entrypoint = Path(home) / ".agents/skills/workflow-contracts/scripts/safeguard-cli"
+            head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                                  check=True, capture_output=True, text=True).stdout.strip()
+            result = subprocess.run(
+                [str(entrypoint), "release", str(ROOT), head, head], cwd=cwd,
+                env={**env, "PYTHONPATH": str(stale)}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f'"reviewed_commit": "{head}"', result.stdout)
+            self.assertNotIn("stale PYTHONPATH imported", result.stderr)
+
+        with tempfile.TemporaryDirectory() as home:
+            missing = Path(home) / ".agents/skills/workflow-contracts/scripts/safeguard-cli"
+            with self.assertRaises(FileNotFoundError):
+                subprocess.run([str(missing), "--help"], check=False)
+
     def _transaction_entries(self, home):
         return list(Path(home).glob(".claude/backup-*/transaction/entry-*"))
 
