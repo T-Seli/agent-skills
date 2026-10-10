@@ -58,12 +58,38 @@ class WireSchema(unittest.TestCase):
 
     def test_binding_fields_remain_required_and_non_nullable(self):
         wire = self.wire()
-        for name in ('task_id', 'deliverable_id', 'revision', 'contract_digest', 'next_action', 'packet_sha256', 'decision_source_ref'):
+        for name in ('task_id', 'deliverable_id', 'revision', 'contract_digest', 'next_action', 'decision_source_ref'):
             with self.subTest(field=name):
                 self.assertIn(name, wire['required'])
                 self.assertEqual(wire['properties'][name]['type'], 'integer' if name == 'revision' else 'string')
         for name in w.REPORT_SCHEMA['required']:
             self.assertNotIsInstance(wire['properties'][name]['type'], list)
+
+    def test_packet_is_required_but_null_only_matches_no_packet_binding(self):
+        from test_tasks import t, fresh
+        from agent_skills.task_contract import packet
+        wire = self.wire()
+        self.assertIn('packet_sha256', wire['required'])
+        self.assertEqual(wire['properties']['packet_sha256']['type'], ['string', 'null'])
+        record = t.bind_task_contract(fresh(), user_goal='communication', constraints=['synthetic'],
+            priority_source_ref='decision:r1', canonical_issue_ref='synthetic', canonical_owner='owned',
+            deliverable_id='communication', revision=1, acceptance_ref='synthetic', environment='synthetic',
+            changed_criteria='return source-bound facts', next_action='return facts', source_ref='decision:r1')
+        record = t.acknowledge_task_contract(record, deliverable_id='communication', revision=1,
+            changed_criteria='return source-bound facts', next_action='return facts', environment='synthetic', receipt_ref='actual:ack')
+        binding = t.current_task_binding(record)
+        self.assertIsNone(binding['packet_sha256'])
+        parsed = w.Codex().parse(stdout(binding))['report']
+        self.assertEqual(t._event_result_binding(record, parsed), 'current')
+        p = packet(task_id=record['task_id'], revision=1, owner='owned', scope='synthetic',
+            exclusions=['writes'], baseline='a' * 40, deliverables=['communication'],
+            acceptance=[{'id':'fact','check':'exact fact'}], context_refs=['synthetic'],
+            source_hashes={'synthetic':'b' * 64}, package_hashes={'synthetic':'b' * 64},
+            stop_conditions=['stop'], escalation_conditions=['unsupported'])
+        record = t.bind_packet(record, p)
+        self.assertEqual(t._event_result_binding(record, parsed), 'stale-packet')
+        parsed['packet_sha256'] = p['packet_sha256']
+        self.assertEqual(t._event_result_binding(record, parsed), 'current')
 
     def test_wire_generation_does_not_mutate_claude_schema(self):
         before = copy.deepcopy(w.REPORT_SCHEMA)

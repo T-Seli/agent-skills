@@ -39,7 +39,7 @@ REPORT_SCHEMA = {
 
 
 def codex_report_schema():
-    """Strict wire schema; keep binding fields typed and present, not nullable.
+    """Strict wire schema; keep binding fields typed and present.
 
     Structured Outputs requires closed objects with every property required.
     The two evidence reports contain task-defined dictionaries, so transport them
@@ -50,8 +50,11 @@ def codex_report_schema():
     properties = schema["properties"]
     properties["status"]["type"] = "string"
     properties["material_facts"]["items"]["properties"]["evidence_level"]["type"] = "string"
+    # A scoped communication task can have no acceptance packet. Its exact
+    # current_task_binding has packet_sha256=None; packet-bound tasks still
+    # require their exact hash in the unchanged reducer.
     binding = {"task_id", "deliverable_id", "revision", "contract_digest",
-               "next_action", "packet_sha256", "decision_source_ref"}
+               "next_action", "decision_source_ref"}
     for name, field in properties.items():
         if name in ("completion_report", "verifier_report"):
             properties[name] = {"type": ["string", "null"],
