@@ -3,6 +3,7 @@ injectable runner and turn output into task events. They never attach to, interr
 running interactive session: a session is resumed only when the task record says this layer owns it.
 """
 import hashlib
+import copy
 import json
 import subprocess
 from pathlib import Path
@@ -35,6 +36,30 @@ REPORT_SCHEMA = {
                 "evidence_level": {"enum": ["reported", "performed", "independently_verified", "unverified"]}}}},
     },
 }
+
+
+def codex_report_schema():
+    """Strict wire schema; keep binding fields typed and present, not nullable.
+
+    Structured Outputs requires closed objects with every property required.
+    The two evidence reports contain task-defined dictionaries, so transport them
+    as JSON strings and decode them before the existing evidence checks.
+    Claude's report schema and the reducer's object contract remain unchanged.
+    """
+    schema = copy.deepcopy(REPORT_SCHEMA)
+    properties = schema["properties"]
+    properties["status"]["type"] = "string"
+    properties["material_facts"]["items"]["properties"]["evidence_level"]["type"] = "string"
+    binding = {"task_id", "deliverable_id", "revision", "contract_digest",
+               "next_action", "packet_sha256", "decision_source_ref"}
+    for name, field in properties.items():
+        if name in ("completion_report", "verifier_report"):
+            properties[name] = {"type": ["string", "null"],
+                                "description": "JSON-encoded report object; null when not applicable."}
+        elif name not in schema["required"] and name not in binding:
+            field["type"] = [field["type"], "null"]
+    schema["required"] = list(properties)
+    return schema
 
 
 class Claude:
@@ -70,6 +95,11 @@ class Codex:
     def __init__(self, sandbox="read-only", model=None):
         self.sandbox, self.model = sandbox, model
 
+    @staticmethod
+    def write_schema(schema_file):
+        """Write the adapter's strict schema to the caller's task-owned file."""
+        Path(schema_file).write_text(json.dumps(codex_report_schema()) + "\n")
+
     def command(self, prompt, *, cwd, schema_file, session_id=None):
         """The thread id is known only after start, so an interrupted fresh launch stays uncertain."""
         # The user's config can load connectors, plugins and data tools; a worker never inherits them
@@ -93,8 +123,15 @@ class Codex:
             error = error or e.get("type") in ("error", "turn.failed")
         try:
             report = json.loads(text) if text else None
+            if isinstance(report, dict):
+                for key in ("completion_report", "verifier_report"):
+                    if isinstance(report.get(key), str):
+                        report[key] = json.loads(report[key])
+                        if not isinstance(report[key], dict):
+                            raise ValueError("evidence report must decode to an object")
         except ValueError:
             report = None
+            error = True
         return {"session_id": session_id, "error": error, "report": report}
 
 
