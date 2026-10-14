@@ -8,6 +8,8 @@ argument-hint: "[bug, feature, question, or list]"
 
 Answer a question, or turn a problem into one recommended, verifiable plan. **Read-only:** the only file written is Plan mode's `plan.md`. First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`: names, draft folders, pending, the chain, consent, report caps and the defaults named below are per it.
 
+For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`: reconcile the latest user decision and carry the current matrix/source identity, existing capabilities, producer paths, exceptions and decision-brief fields.
+
 ## Contract
 - No repo edits, no git mutations, no state-changing calls (database writes, restarts, deploys, mutating APIs). Reads, read-only queries and logs are fine. Scratch files go in the session scratchpad, else a `mktemp -d` dir removed at the end.
 - Something urgent turns up → lead the reply with it and wait. Naming a fix is in scope; applying it is not. Blueprint stays read-only whatever the reply; what runs next, and on which words, is per contracts.md § Chain and § Consent.
@@ -65,6 +67,7 @@ Answer a question, or turn a problem into one recommended, verifiable plan. **Re
    Type: <type> · Slug: <slug> · Class: <class> · Base: <branch, only if not the project's> · Updated: <UTC>
    ## Question
    ## Facts            proven / inferred / unknown, each with path:line or source
+   ## Current behavior matrix   identity, existing capability, approved rows, producer paths, exceptions; per behavior.md
    ## Recommendation   approach, and why it won (a list gets one subsection per cluster)
    ## Changes          file or module → what changes
    ## Adoption · ## System fit · ## Risks

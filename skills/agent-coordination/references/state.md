@@ -33,7 +33,7 @@ Track independently:
 - deployment: exact head, final-diff digest, scope, revision, lock owner, pause state and release-gate reasons;
 - display sync per surface: `current | stale | unknown`, plus a receipt when current.
 
-A pause request becomes effective only after the canonical execution owner confirms it. Release requires the current revision readback, matching recorded approval and scope, exact accepted head and final-diff identity, expected owner lock and any required pause receipt. Deployment success is not functional acceptance, and stale display does not change canonical state.
+A pause request becomes effective only after the canonical execution owner confirms it. Release requires the current revision readback, matching recorded approval and scope, exact accepted head and final-diff identity, expected owner lock and any required pause receipt. Deployment success is not functional acceptance, and stale display does not change canonical state. A failed card write leaves display sync `stale` or `unknown` until a successful readback. Reconcile the latest authenticated task decision before updating a view or dispatching again; older summaries cannot restore superseded scope. Track promised replies, holds and manual/customer follow-through as separate existing gates/obligations, with owner and next action, so implementation or deployment cannot hide them. Use the current matrix/artifact identity from `workflow-contracts/behavior.md`.
 
 ## Material return loop
 

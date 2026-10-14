@@ -19,6 +19,7 @@ Turn the source into items the user can approve and tick off, and that `/impleme
 3. Order by dependency (an item comes after what it needs), then quickest win first.
 4. Code items keep the paths from the source; `/implement` needs them. Tag an item `parallel-safe` when no other open item touches its files. A bug's reproduction test and its fix are one item.
 5. Every item and step gets a `Done when` that a person or a test can check. "It works" is not a check.
+6. For behavior changes, carry the current approved matrix/source identity per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`; retain existing capabilities, producer paths, exceptions and per-task approval boundaries. Split implementation, deployment, observed behavior and promised manual follow-through into their relevant completion checks. Keep unsent replies, holds and deferrals open with their owner and next action.
 
 ## Item format
 ```
@@ -44,7 +45,7 @@ Drop what doesn't apply: `Where` only for code, `after` only when something bloc
 ## Writing rules
 - Plain words for someone on a phone who hasn't seen the code; one sentence per line. Paths are the only jargon allowed, and only in `Where`.
 - Examples must be real (a date, an input, what actually happened). Never invent one; drop it if the source has none.
-- On a re-run after progress, keep the numbers, tick finished items `[x]`, and leave the rest as they were.
+- On a re-run, reconcile the latest authenticated decision before preserving old scope. Keep numbers and verified completion; revise superseded items with their decision source, retaining deferrals and holds. Tick only the condition actually satisfied; an implementation check cannot tick an unsent reply or unobserved behavior.
 - Don't start the work.
 
 ## Report

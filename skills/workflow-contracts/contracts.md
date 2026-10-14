@@ -72,7 +72,7 @@ Every skill reads this file first. It is the only home for the names, files, flo
 - Only `/deploy`'s record commit on `<base>` adds § Deploy `Skip-deploy marker` (if set), so the log commit does not redeploy. Never put the marker on a commit that ships code.
 
 ## Plan scope
-Outside the plan = a file, dependency, schema, config, external call or behaviour that the approved plan and action items do not name.
+Outside the plan = a file, dependency, schema, config, external call or behaviour that the approved plan and action items do not name. For behavior changes, decisions and completion, use [behavior.md](behavior.md): one current approved matrix/source identity, explicit customer-flow steps, exclusions, reply holds and separate completion conditions.
 
 ## Scheduler
 - Claude: load via ToolSearch `select:mcp__scheduled-tasks__create_scheduled_task,mcp__scheduled-tasks__list_scheduled_tasks,mcp__scheduled-tasks__update_scheduled_task,mcp__scheduled-tasks__delete_scheduled_task`; tasks run only while the app is open, so say so. Codex: its automation tool. Id `monitor-<repo>-<slug>` in both; cron in this machine's zone.

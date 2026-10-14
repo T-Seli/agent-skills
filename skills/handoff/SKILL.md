@@ -29,6 +29,7 @@ Write one prompt a new session can paste and act on with no memory of this one. 
    - done + verified: checked this session against the real thing; cite the command and result;
    - done + unverified: never exercised, or believed but not checked; say how to confirm. Built ≠ deployed ≠ proven;
    - not started.
+   Carry the current approved behavior matrix per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`, with exact source/artifact identity, producer paths, exceptions and the one owner/next-action pointer. Keep promised replies, holds and manual/customer steps open separately from implementation, deployment and behavior acceptance.
 3. **Mark every decision** `(user)` when the user made or approved it, else `(proposed, awaiting user)`; never upgrade one. Abandoned approaches go under Decisions as `Rejected:` with why, so they aren't retried.
 4. **Fill the template.**
    - Task mode: line 1 points at the folder. Add only what it lacks: work after its last log entry, unlogged decisions, the half-done item.
@@ -39,7 +40,7 @@ Write one prompt a new session can paste and act on with no memory of this one. 
    - Length: the whole report fits the handoff cap in contracts.md § Report (lines and words). Over it → cut detail and point to files.
    - Content: no secrets, tokens, customer data or pasted logs and code; reference the file or command instead.
    - Format: no code fences inside; commands go in backticks.
-   - Self-contained: no "as discussed"; name every file, branch and command.
+   - Self-contained: no "as discussed"; name every file, branch and command. Verify the destination can read the artifact through its supported surface; otherwise inline essentials and label inaccessible detail. Count the actual block: <=40 lines and <=450 words, including inline matrix rows.
 6. **Save** the block's contents to `$MAIN/.claude/drafts/handoffs/<date>-<slug>.md` in both modes (conversation mode: slug from the goal). Read a file of the same name before replacing it. Then keep only the newest `Handoffs kept` files there (`ls -t`), deleting the older ones. Keep `.claude/drafts/` excluded per contracts.md.
 
 ## Report (cap per contracts.md § Report)
@@ -58,6 +59,8 @@ State:
 - Done + unverified: <change or belief> — confirm by <check>
 - Not started: <item>
 Open questions for the user: <question — options, which you'd pick> | none
+Current contract: <matrix artifact/revision/source identity; approved behavior, exceptions and producer paths; inline essentials if inaccessible>
+Open completion conditions: <implementation / deployment / observed behavior / promised manual follow-through; owner, hold and next action>
 Key files: <path:line — why it matters>, …
 Git (run <UTC time>): branch <name> (<n unpushed | no upstream>) · <base> vs origin: ahead <n>, behind <n> · <n> uncommitted · worktree <path | main checkout>
 Recent commits: <sha subject> · <sha subject> · <sha subject>

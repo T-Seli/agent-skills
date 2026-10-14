@@ -24,13 +24,14 @@ Intent per commit: its action item in `TASK/action-items.md` (the log's `impleme
 **Tests mode** (`/test-review tests`): run **Tests** only, then reply with the report's Tests line. No commit review, verdict, log or chain.
 
 ## 1. Tests (before reading any code)
+Classify changed paths and risk first. For small prompt/KB/instruction fixes, use semantic synthetic cases and producer-path checks per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`; exact generated wording is not the acceptance oracle. Reuse relevant evidence only after comparing its source, tests, dependencies and environment, and cite that comparison. Do not repeat paid/live simulations merely for freshness; new external runs need the applicable scoped authority. Consent, integrity, exact-source and shared-release checks remain required.
 One `scout` runs this and returns ≤150 words: commands, pass/fail per side, new failing ids, red/green per fix test. Commands come from CLAUDE.md § Run & test; output per global CLAUDE.md § Verification. Test services only if that section defines them, with resource names and ports unique to this run; tear them down after.
 Codex: run these steps in this session itself; its scout is sandboxed read-only.
 Temp worktrees (contracts.md): use a run-unique path; list leftovers but never prune or remove another run's path. Each one this run makes is removed without force only when its exact registered path has no tracked, untracked or ignored content; otherwise keep and report it.
-1. **Branch:** reuse implement's logged results when the command matches and `git diff --quiet <logged head sha> <head> -- ':(top,exclude)<tasks>'` passes. Else run the full suite where the head is checked out (else in a temp worktree at it). Record the sorted failing ids.
+1. **Branch:** reuse implement's logged results when the command matches and `git diff --quiet <logged head sha> <head> -- ':(top,exclude)<tasks>'` passes. For an instruction-only change, the compared relevant paths may justify reusing earlier code-test evidence plus fresh bounded semantic checks; name the paths and limits. Otherwise run the applicable suite where the head is checked out (else in a temp worktree at it), including project-required aggregate release checks. Record the sorted failing ids.
 2. **Base:** reuse logged results for the same base sha and command. Else choose one run-unique id and `git worktree add --detach "$MAIN/.claude/worktrees/_base-$(git rev-parse --short $BASE)-<run-id>" $BASE`, run the setup, copy in the branch's tests if § Run & test says tests are not tracked by git, run the suite, record failures.
 3. **New failures** = branch minus base. Rerun each once on both sides; one that flips is flaky, not new.
-4. **Fix proof** (branch `fix/…` or any `fix` commit): in the base worktree, `git checkout <head> -- <new or changed test files>` (untracked: copy them) and run only those. Each must fail there on an assertion and pass on the branch. A compile, import or collection error at the base is "not shown".
+4. **Instruction fix proof:** compare base and candidate on neutral realistic scenarios without giving evaluators the desired answer; assess decisions and retained constraints, not identical prose. If base already passes, report preserved behavior rather than inventing a regression. **Code fix proof** (branch `fix/…` or any `fix` commit): in the base worktree, `git checkout <head> -- <new or changed test files>` (untracked: copy them) and run only those. Each must fail there on an assertion and pass on the branch. A compile, import or collection error at the base is "not shown".
 5. Remove only this run's clean temp worktrees without `--force`; keep and report any path whose identity or clean state is uncertain.
 
 ## 2. Commits
@@ -49,7 +50,7 @@ Report only these: no nice-to-haves, style, refactor or dedupe suggestions, no "
 6. **Unplanned:** anything outside the plan (compare `git diff --name-only $BASE <head>` with the plan and action items).
 
 ## Log
-Entry `test-review: <YES|NO>` per contracts.md, holding `Reviewed: <head sha> <YES|NO>` and the Tests line.
+Before publishing a release-ready YES, persist the review evidence: `test-review: <YES|NO>` per contracts.md, holding `Reviewed: <head sha> <YES|NO>`, exact tree/manifest identity, the Tests line and relevant reused-evidence comparison. Read the saved receipt back and recheck the candidate identity. A failed/unconfirmed log write is a recording gap, not release evidence; use an authorized task-local equivalent if the normal log is unavailable, otherwise hold release. Do not require another test run solely to repair receipt storage.
 - PR mode: append to `$MAIN/.claude/drafts/<date>-pr-<n>/log.md` (the newest existing `drafts/*-pr-<n>/` if any), so `/deploy` finds it. No commit.
 - `TASK` on the branch: append to `TASK/log.md` and make a record commit of only that file, subject `review <slug>`.
 - Otherwise: append to `DRAFT/log.md`.
@@ -58,7 +59,7 @@ Entry `test-review: <YES|NO>` per contracts.md, holding `Reviewed: <head sha> <Y
 Same review for a PR, plus its summary line in the report and its own log (§ Log). Post the report as a PR comment only if the user asks; never approve or request changes.
 
 ## Report (readable markdown for someone who hasn't seen the code; never a fenced block)
-Print it in full before any other action (the log entry, a deploy the user already asked for, the implement loop). Caps per contracts.md § Report. These lines, in order; nothing else:
+After saving and reading back § Log, print the verdict before any authorized deploy or implementation loop. Include the review receipt reference; a preliminary chat YES alone is not release evidence. Caps per contracts.md § Report. These lines, in order; nothing else:
 
 1. PR mode only: **What it does:** two plain sentences, the problem and then the change, from the PR body and diff.
 2. **Ready to deploy: YES.** or **Not ready to deploy: <k> blocker(s).** plus a short clause, e.g. "each needs a small fix".
@@ -66,7 +67,7 @@ Print it in full before any other action (the log entry, a deploy the user alrea
 4. **Tests:** <n> pass on the branch. New failures vs `<base>`: <k> (name them, or "none"). <m> other failures also fail on base. Fix proof: <ok | n/a (why) | not shown: <test>>. Clean: <the checks that found nothing, e.g. callers, secrets, tenant logic, scope>.
 5. **Next:** YES: deploying now (go-ahead given) or "say deploy". NO: what happens next per contracts.md § Chain.
 
-Then write the log entry, then follow contracts.md § Chain: YES → deploy if a go-ahead was given, else ask once; NO → the implement loop.
+With the persisted exact-candidate review receipt available, follow contracts.md § Chain: YES → deploy if a go-ahead was given, else ask once; NO → the implement loop.
 
 Use a fenced, paste-ready block only when the user asks for one (e.g. to post as a PR comment).
 

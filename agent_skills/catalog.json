@@ -37,7 +37,8 @@
         "skills/workflow-contracts/contracts.md",
         "skills/agent-coordination/references/routing.md",
         "skills/agent-coordination/references/tasks.md",
-        "skills/agent-coordination/references/state.md"
+        "skills/agent-coordination/references/state.md",
+        "skills/workflow-contracts/behavior.md"
       ]
     },
     {
@@ -94,7 +95,8 @@
       ],
       "body": "skills/blueprint/SKILL.md",
       "requires": [
-        "skills/workflow-contracts/contracts.md"
+        "skills/workflow-contracts/contracts.md",
+        "skills/workflow-contracts/behavior.md"
       ]
     },
     {
@@ -111,7 +113,8 @@
       ],
       "body": "skills/test-review/SKILL.md",
       "requires": [
-        "skills/workflow-contracts/contracts.md"
+        "skills/workflow-contracts/contracts.md",
+        "skills/workflow-contracts/behavior.md"
       ]
     },
     {
@@ -129,7 +132,8 @@
       ],
       "body": "skills/handoff/SKILL.md",
       "requires": [
-        "skills/workflow-contracts/contracts.md"
+        "skills/workflow-contracts/contracts.md",
+        "skills/workflow-contracts/behavior.md"
       ]
     },
     {
