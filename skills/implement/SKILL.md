@@ -16,13 +16,13 @@ Turn approved action items into tested commits per `<flow>`: **branch** commits 
 
 Consent is the user's go-ahead per contracts.md § Consent (typing `/implement` is one). `<type>` and `<slug>` come from the `plan.md` header, else the folder name and items.
 
-**One-line plan** (a single approved instruction with no draft): create a new draft folder `<date>-<slug>` holding a two-line `plan.md` (`# <goal>`, then `Done when: <check>`) and a one-item `action-items.md` in the /action-items item format, whose `Where` names every file the change needs (read the code first to find them). Then run from **Sync** as normal.
+**One-line plan** (a single approved instruction with no draft): create a new draft folder `<date>-<slug>` holding a two-line `plan.md` (`# <goal>`, then `Done when: <check>`) and a one-item `action-items.md` in the /action-items item format, whose `Where` names every file the change needs (read the code first to find them). Then start **Steps**, including **Deployment readiness** when applicable.
 
 **Item kinds:** code | prompt | config, from the paths in the item's `Where`. A prompt item (a prompt, knowledge base or agent config) records a before/after diff of the changed text under What changed in its log entry, and runs § Run & test `Prompt checks` in **Loop** step 2: in addition to `Fast tests` when it also touches code, instead of them otherwise.
 
 **Clean check** (trunk): `git -C "$MAIN" status --porcelain` shows no changes outside the current item's paths and pending `log.md` changes. Else stop and name the other paths.
 
-**Resume** (branch: branch `<type>/<slug>` exists; trunk: `TASK/action-items.md` on `<base>` has open items): branch: enter its worktree (`EnterWorktree` as in **Workspace**) and `git rebase origin/<base>` (conflict: `git rebase --abort` and stop); trunk: take `LOCK` and run the **Clean check** as in **Workspace**. Then rerun the full suite (its failing ids become the baseline), append newly approved items (e.g. review fixes from test-review) to `TASK/action-items.md`, and continue at **Loop** from the first open item.
+**Resume**: complete **Deployment readiness** first when applicable. Then (branch: branch `<type>/<slug>` exists; trunk: `TASK/action-items.md` on `<base>` has open items): branch: enter its worktree (`EnterWorktree` as in **Workspace**) and `git rebase origin/<base>` (conflict: `git rebase --abort` and stop); trunk: take `LOCK` and run the **Clean check** as in **Workspace**. Then rerun the full suite (its failing ids become the baseline), append newly approved items (e.g. review fixes from test-review) to `TASK/action-items.md`, and continue at **Loop** from the first open item.
 
 ## Steps
 0. **Deployment readiness.** Before deployment-related implementation starts or resumes, perform contracts.md's read-only deployment-readiness preflight. Reuse still-current source-bound evidence; retain unknown/blocked checks and continue independent authorized work. Readiness never adds deployment approval or permissions.
