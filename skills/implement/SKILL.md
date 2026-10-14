@@ -25,6 +25,7 @@ Consent is the user's go-ahead per contracts.md § Consent (typing `/implement` 
 **Resume** (branch: branch `<type>/<slug>` exists; trunk: `TASK/action-items.md` on `<base>` has open items): branch: enter its worktree (`EnterWorktree` as in **Workspace**) and `git rebase origin/<base>` (conflict: `git rebase --abort` and stop); trunk: take `LOCK` and run the **Clean check** as in **Workspace**. Then rerun the full suite (its failing ids become the baseline), append newly approved items (e.g. review fixes from test-review) to `TASK/action-items.md`, and continue at **Loop** from the first open item.
 
 ## Steps
+0. **Deployment readiness.** Before deployment-related implementation starts or resumes, perform contracts.md's read-only deployment-readiness preflight. Reuse still-current source-bound evidence; retain unknown/blocked checks and continue independent authorized work. Readiness never adds deployment approval or permissions.
 1. **Sync.** No remote: skip. Else `git fetch origin`, then `git rev-list --left-right --count <base>...origin/<base>`:
    - Behind only: fast-forward. In the worktree that has `<base>` checked out, `git merge --ff-only origin/<base>`; if none has it, `git fetch origin <base>:<base>`. If the ff refuses because of local edits: branch, leave it (the task branches from origin anyway) and say so; trunk, stop and name the edits.
    - Ahead or diverged: stop and name the local-only commits.

@@ -2,7 +2,7 @@
 
 The project `CLAUDE.md` holds project facts and wins conflicts. Orchestrate: delegate reading, searching and bulk writing to sub-agents (`scout` for read-only questions), in parallel.
 
-Skills share names, file contracts and defaults in `contracts.md` inside the `workflow-contracts` skill; every skill reads it first.
+Read `workflow-contracts/contracts.md` first for shared names, contracts and defaults. At deployment-related task entry/resume, perform its deployment-readiness preflight.
 
 Tenant = whatever varies per install (customer, site, deployment). § Tenancy `none` ⇒ tenant rules don't apply.
 

@@ -16,6 +16,7 @@ Brief a fresh session on this repo's state and its tasks: never production data.
 ## Steps
 1. **Project CLAUDE.md** is already in context; don't re-read it.
    - Check for each section in the contracts.md list. List the missing ones.
+   - For deployment-related work, perform contracts.md's read-only deployment-readiness preflight at task entry/resume; include its per-check status and material gaps in Gates/Flags. Unknown or blocked deployment readiness does not stop independent authorized read-only work.
    - Pull out hard gates: authorization rules, forbidden operations, named constraints.
    - If `AGENTS.md` is more than a pointer, read it for gates. Note project `.claude/skills/` that add to or shadow the global skills.
 2. **Git state.**
