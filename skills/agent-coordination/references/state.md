@@ -44,3 +44,13 @@ For a changed dependency criterion, carry the original decision source and revis
 ## Watches and milestones
 
 A watch starts from `{watch_id, scope, digest, observed_at, source_ref}` and emits only on a changed digest or a stated deadline; an actual current wake/readback receipt is required to call it armed, and zero traffic is inconclusive. Milestones sent to the designated history owner are sanitized summaries of a contract revision/readback, decision, material blocker, release gate or acceptance result. `history_outbox` advances only through `pending → locally-appended → view-rendered → index-updated → published → readback-verified`; those stages carry receipts and never imply acceptance. They carry evidence references, never raw sessions, transcripts, secrets or customer data.
+
+## Local operating checkpoints
+
+Use the existing record/store APIs with `record_checkpoint` for priority, blocker, next action and due time; displaced obligations keep that checkpoint and owner. `record_watch_checkpoint` and `record_watch_result` record due times and actual wake/readback evidence against the baseline. They create no schedule or process. Overdue checks mean continuation is unverified; they do not prove process death. Historical completed checks remain visible separately from current arming and functional acceptance.
+
+Watch ownership remains pinned to the recorded execution owner when the outer task changes owner. Automatic watch ownership transfer is unsupported; reconcile the actual existing observer and its receipts before adopting a new owner. A baseline reset is not proof that an observer transferred or started.
+
+`record_claim` appends explicit corrections naming the superseded claim receipt; briefs omit precisely referenced displaced facts. Use per-fact references: the helper cannot infer contradictions in arbitrary prose. Decision replacements preserve history and reject previously superseded sources. Neither interface authenticates a source or grants authority.
+
+`record_execution_context` scopes sanitized host, shell, executable, identity and configuration references to labeled probe receipts. `capture_provenance` binds the existing Git code-state digest to a caller-supplied test receipt. Reconcile actual probe/test evidence separately; these interfaces do not run it. Inspect a saved record read-only with `python3 -m agent_skills.safeguard_cli task-status <record.json>`. The same projection feeds `communication_brief` and `attention`; native callers must explicitly invoke it. Local fresh/resumed consumers do not establish native host or model adoption.

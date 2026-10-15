@@ -552,7 +552,8 @@ def synthesize(findings, *, source_manifest, prior_findings=(), required_sources
 def monitoring_verdict(*, wake_receipt, readback_receipt, expires_at_utc,
                        observed_at_utc, traffic_count, functional_results):
     """A configured watch is not armed without current wake and readback receipts."""
-    if type(traffic_count) is not int or traffic_count < 0 or not isinstance(functional_results, list):
+    if (type(traffic_count) is not int or traffic_count < 0 or not isinstance(functional_results, list) or
+            any(type(value) is not bool for value in functional_results)):
         raise ValueError("invalid monitoring evidence")
     observed = _utc(observed_at_utc, "observed_at_utc")
     expires = _utc(expires_at_utc, "expires_at_utc") if expires_at_utc else None

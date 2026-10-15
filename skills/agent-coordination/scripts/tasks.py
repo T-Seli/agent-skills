@@ -17,6 +17,11 @@ from pathlib import Path
 
 from agent_skills.task_contract import assess_completion, digest, validate_packet
 from agent_skills.approval_handoff import valid_approval_parts
+from agent_skills.task_checkpoint import (
+    record_checkpoint, record_claim, record_watch_checkpoint, record_watch_result,
+    record_execution_context, capture_provenance, operating_view, current_material_facts,
+    validate_baseline_advance,
+)
 
 STATUSES = ("delivered", "accepted", "running", "blocked", "awaiting-worker", "ready-for-review", "verified-done")
 # kind: (allowed sources, statuses it may leave, status it enters)
@@ -124,9 +129,14 @@ def bind_task_contract(record, *, user_goal, constraints, priority_source_ref,
                       **copy.deepcopy(previous), "state": displaced_state,
                       "reason": _text(displaced_reason, "displaced_reason"),
                       "displacement_source_ref": values["source_ref"]}
+        collection = "obligations"
+        if r['status'] == 'verified-done':
+            collection = "completed_obligations"
+            obligation['state'] = 'completed'
+            obligation['completion_ref'] = (coordination.get('contract_consumption', {}).get('acceptance') or {}).get('receipt_ref')
         if not any((x["id"], x["revision"]) == (obligation["id"], obligation["revision"])
-                   for x in coordination["obligations"]):
-            coordination["obligations"].append(obligation)
+                   for x in coordination[collection]):
+            coordination[collection].append(obligation)
     elif previous:
         expected = {"id": values["deliverable_id"], "revision": revision,
                     "acceptance_ref": values["acceptance_ref"], "environment": values["environment"],
@@ -338,6 +348,20 @@ def set_decision_frame(record, *, decision_id, rank, scope, target, prerequisite
     decision.update({"rank": rank, "prerequisites": prerequisites.copy(),
                      "activation_state": activation_state})
     decisions = _coord(r).setdefault("decisions", [])
+    previous = next((x for x in decisions if x["id"] == decision["id"]), None)
+    history = _coord(r).setdefault("decision_history", [])
+    if previous == decision:
+        return r
+    if previous and previous['priority_source_ref'] == decision['priority_source_ref']:
+        if any(previous[key] != value for key, value in decision.items() if key != 'activation_state'):
+            raise ValueError("changed substantive decision needs a new source")
+    if previous and previous['priority_source_ref'] != decision['priority_source_ref']:
+        if any(x['decision']['id'] == decision['id'] and
+               x['decision']['priority_source_ref'] == decision['priority_source_ref'] for x in history):
+            raise ValueError("superseded decision source cannot become current")
+    if previous:
+        history.append({'decision': copy.deepcopy(previous),
+                        'superseded_by': decision['priority_source_ref']})
     if any(x["rank"] == rank and x["id"] != decision["id"] for x in decisions):
         raise ValueError("independent decisions need distinct ranks")
     decisions[:] = [x for x in decisions if x["id"] != decision["id"]]
@@ -431,11 +455,21 @@ def set_display_sync(record, *, surface_ref, state, receipt_ref=None):
 
 
 def set_watch_baseline(record, *, watch_id, scope, digest_value, observed_at, source_ref):
+    watch_id = _text(watch_id, 'watch_id')
     r = copy.deepcopy(record)
-    _coord(r)["watch_baselines"][_text(watch_id, "watch_id")] = {
+    baselines = _coord(r)["watch_baselines"]
+    value = {
         "scope": _text(scope, "scope"), "digest": _text(digest_value, "digest"),
         "observed_at": _text(observed_at, "observed_at"),
         "source_ref": _text(source_ref, "source_ref")}
+    old = baselines.get(watch_id)
+    if old and all(old.get(key) == val for key, val in value.items()):
+        return r
+    history = [x for x in _coord(r).get('watch_history', []) if x['id'] == watch_id]
+    validate_baseline_advance(old, value, history)
+    if old:
+        _coord(r).setdefault('watch_history', []).append({'id': watch_id, **copy.deepcopy(old)})
+    baselines[_text(watch_id, 'watch_id')] = value
     return r
 
 
@@ -469,7 +503,7 @@ def actionable_priorities(candidates, *, priority_source_ref):
     return sorted(result, key=lambda item: (item["rank"], item["id"]))
 
 
-def communication_brief(record, *, priority_candidates, result, remaining, next_owner):
+def communication_brief(record, *, priority_candidates, result, remaining, next_owner, now=None):
     """Build one concise checkpoint without repeating an already valid approval."""
     if not isinstance(remaining, list) or not all(isinstance(x, str) and x.strip() for x in remaining):
         raise ValueError("remaining work must be a string list")
@@ -495,7 +529,7 @@ def communication_brief(record, *, priority_candidates, result, remaining, next_
             "authority_ref": scope.get("authority_ref"), "source_ref": item["source_ref"],
             "latest_receipt": item.get("completion_ref") or item.get("result_receipt_ref") or item.get("readback_ref"),
             "gates": scope.get("gates", [item["acceptance_ref"]]),
-            "material_facts": copy.deepcopy(item.get("material_facts", []))})
+            "material_facts": current_material_facts(record, item.get("material_facts", []))})
     assessment = record.get("reported_acceptance_assessment") or record.get("acceptance_assessment")
     if not assessment:
         assessment = assess_completion(record["acceptance_packet"], None) if record.get("acceptance_packet") else {}
@@ -506,7 +540,8 @@ def communication_brief(record, *, priority_candidates, result, remaining, next_
             "subdeliverables": subdeliverables,
             "outcome_readiness": copy.deepcopy(assessment.get("outcome_readiness", {})),
             "readiness_receipt": assessment.get("receipt_ref"),
-            "material_facts": copy.deepcopy((record.get("worker_return") or {}).get("material_facts", [])),
+            "material_facts": current_material_facts(record, (record.get("worker_return") or {}).get("material_facts", [])),
+            "operating_state": operating_view(record, now=now),
             "return_loop": {"decision_source_ref": active.get("source_ref"),
                             "worker_ack": active.get("readback_ref"),
                             "worker_result": active.get("result_receipt_ref"),
@@ -1053,10 +1088,21 @@ def settle_dispatch(record, dispatch_id, state):
     return r
 
 
-def attention(records):
+def attention(records, *, now=None):
     """What the user should hear about: decisions, reviews, unavailable workers, unresolved launches."""
     out = []
-    for r in records:
+    def rank(record):
+        rows = operating_view(record, now=now)['retained_obligations']
+        return min((x['rank'] for x in rows if x['critical']), default=float('inf'))
+    for r in sorted(records, key=rank):
+        view = operating_view(r, now=now)
+        for item in view['retained_obligations']:
+            if item['critical']:
+                condition = 'overdue' if item['overdue'] else 'retained'
+                out.append((r['task_id'], f"critical {condition}: {item['id']} owner={item['owner']} next={item['next_action']}"))
+        for watch in view['monitors']:
+            if watch.get('missed_check'):
+                out.append((r['task_id'], f"monitor check overdue: {watch['id']}; continuation unverified"))
         uncertain = any(o["state"] == "uncertain" for o in r["outbox"])
         if r["status"] == "blocked" and not uncertain:
             p = pending(r)

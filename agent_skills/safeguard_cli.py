@@ -9,11 +9,15 @@ from .code_state import code_state
 from .release_reconciliation import reconcile_release
 from .release_guard import capture_rollback, verify_release
 from .release_maintenance import maintain_release
+from .task_checkpoint import operating_view
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
     subs = parser.add_subparsers(dest='action', required=True)
+    task = subs.add_parser('task-status')
+    task.add_argument('record', help='Existing task-local JSON record; read only')
+    task.add_argument('--now', help='Explicit UTC time for reproducible overdue checks')
     manifest = subs.add_parser('manifest')
     manifest.add_argument('repo')
     manifest.add_argument('--include', action='append', default=[])
@@ -53,7 +57,9 @@ def main(argv=None):
     sync.add_argument('--lock-path', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.action == 'manifest':
+        if args.action == 'task-status':
+            result = operating_view(json.loads(Path(args.record).read_text(encoding='utf-8')), now=args.now)
+        elif args.action == 'manifest':
             result = code_state(args.repo, untracked=args.include, excluded=args.exclude_private)
         elif args.action == 'release':
             result = verify_release(args.repo, args.reviewed_sha, args.deployed_sha)

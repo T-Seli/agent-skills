@@ -173,3 +173,5 @@ Then merge settings by hand: `settings.snippet.json` into `~/.claude/settings.js
 ## Source and task-history readiness draft
 
 The offline [source, history and closeout contract](agent_skills/SOURCE-HISTORY-ROLLOUT.md) adds read-only source/version checks, a private append-only task timeline, and handoff/completion/cleanup eligibility checks. It has no source transfer, cloud activation, installation, or deletion side effects. Run the tests with `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_source_history_closeout`.
+
+The [coordination state contract](skills/agent-coordination/references/state.md#local-operating-checkpoints) documents local obligation, monitor and correction checkpoints plus execution context and Git/test provenance. `python3 -m agent_skills.safeguard_cli task-status <record.json>` renders their current state without changing the record. These library interfaces require caller adoption; they do not install hooks, launch observers or enforce native host behavior.
