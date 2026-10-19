@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -173,6 +174,21 @@ class TargetAndAwakeTests(unittest.TestCase):
             self.assertEqual(os.readlink(target), str(custom_source))
             self.assertFalse((home_path / ".codex").exists())
 
+    def test_claude_install_seeds_the_worker_config_once(self):
+        with tempfile.TemporaryDirectory() as home:
+            env = dict(os.environ, HOME=home)
+            command = [str(ROOT / "install.sh"), "--target=claude"]
+            first = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            config = Path(home) / ".config/agent-skills/workers.json"
+            example = ROOT / "agent_skills/delegate_config.example.json"
+            self.assertEqual(config.read_text(), example.read_text())
+            self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+            config.write_text('{"edited": true}\n')
+            again = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertEqual(config.read_text(), '{"edited": true}\n')
+
     def test_critical_wrapper_bounds_assertion_and_returns_child_status(self):
         with tempfile.TemporaryDirectory() as temp:
             fake = Path(temp) / "caffeinate"
@@ -183,9 +199,16 @@ class TargetAndAwakeTests(unittest.TestCase):
             script = str(ROOT / "scripts" / "critical-local-work.sh")
             result = subprocess.run([script, "task-1", "60", "--", "/bin/sh", "-c", "exit 7"], env=env)
             self.assertEqual(result.returncode, 7)
+            for _ in range(50):  # caffeinate runs beside the command; give it a moment to record
+                if capture.exists() and capture.read_text().count("\n") >= 5:
+                    break
+                time.sleep(0.05)
             args = capture.read_text().splitlines()
             self.assertEqual(args[:4], ["-i", "-t", "60", "-w"])
             self.assertTrue(args[4].isdigit())
+            piped = subprocess.run([script, "task-1", "60", "--", "cat"], env=env, input=b"brief\n",
+                                   capture_output=True)
+            self.assertEqual(piped.stdout, b"brief\n")
             for value in ("0", "14401", "oops"):
                 result = subprocess.run([script, "task-1", value, "--", "/bin/true"],
                                         env=env, capture_output=True)

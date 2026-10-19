@@ -19,13 +19,8 @@ case "$seconds" in ''|*[!0-9]*) usage ;; esac
 [ "$seconds" -ge 1 ] && [ "$seconds" -le 14400 ] || usage
 command -v caffeinate >/dev/null 2>&1 || { echo "caffeinate unavailable" >&2; exit 69; }
 
-# caffeinate ignores -t when it runs the command itself, so it watches the pid instead:
-# the assertion ends when the command exits (-w) or the window passes (-t), whichever is first.
-"$@" &
-child=$!
-caffeinate -i -t "$seconds" -w "$child" &
-awake=$!
-status=0
-wait "$child" || status=$?
-wait "$awake" || true  # returns at once: the watched pid has exited
-exit "$status"
+# caffeinate ignores -t when it runs the command itself, so it watches this shell's pid, which exec
+# hands to the command (keeping its stdin): the assertion ends when the command exits (-w) or the
+# window passes (-t), whichever is first.
+caffeinate -i -t "$seconds" -w $$ &
+exec "$@"
