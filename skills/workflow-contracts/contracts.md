@@ -74,8 +74,8 @@ Every skill reads this file first. It is the only home for the names, files, flo
 Outside the plan = a file, dependency, schema, config, external call or behaviour that the approved plan and action items do not name. For behavior changes, decisions and completion, use [behavior.md](behavior.md): one current approved matrix/source identity, explicit customer-flow steps, exclusions, reply holds and separate completion conditions.
 
 ## Scheduler
-- Claude: load via ToolSearch `select:mcp__scheduled-tasks__create_scheduled_task,mcp__scheduled-tasks__list_scheduled_tasks,mcp__scheduled-tasks__update_scheduled_task,mcp__scheduled-tasks__delete_scheduled_task`; tasks run only while the app is open, so say so. Codex: its automation tool. Id `monitor-<repo>-<slug>` in both; cron in this machine's zone.
-- Record `Scheduler: <runtime> <id>` in the log. After deleting, list the schedules and report `deleted` only if the id is gone.
+- Claude: load via ToolSearch `select:mcp__scheduled-tasks__create_scheduled_task,mcp__scheduled-tasks__list_scheduled_tasks,mcp__scheduled-tasks__update_scheduled_task`; tasks run only while the app is open, so say so. Codex: its automation tool. Id `monitor-<repo>-<slug>` in both; cron in this machine's zone; the description carries `Deadline: <UTC ISO>` (`YYYY-MM-DDTHH:MMZ`).
+- Record `Scheduler: <runtime> <id>` in the log. An ended schedule is disabled, never deleted: list the schedules and report `disabled` only if the id lists as disabled. A daily janitor run (/monitor § 7) disables every enabled schedule past its `Deadline:`.
 - Unavailable: skip scheduling and end the report with the next recheck time and the `/monitor <MAIN> <TASK> <sha>` command.
 
 ## Defaults

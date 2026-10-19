@@ -51,14 +51,15 @@ On a regression, also create the follow-up folder (contracts.md) with one action
 ## 7. Keep or end the schedule
 Load the scheduler tools (contracts.md). Task id: from the args, else the log's `Scheduler:` line, else the id per contracts.md in `list_scheduled_tasks`.
 - **Ownership:** only the runtime named in the `Scheduler:` line updates or deletes the schedule. Running in the other runtime: change nothing; report `owned by <runtime> <id>, left` and what the owner should do.
-- **Delete:** delete, then verify per contracts.md § Scheduler. Still listed: report `still exists: <id>`, log it, never `deleted`.
+- **End:** give the final report, then `update_scheduled_task({ taskId, enabled: false })` (never delete) and verify per contracts.md § Scheduler that it lists as disabled; still enabled: report `still enabled: <id>`, never `disabled`. Refused in an unattended run: log `disable refused: <id>`; the daily janitor retries.
 
 There is no push tool: the alert is the report's first line, which the task's completion notice carries. Alert once per finding: if an earlier `monitor:` entry already reported it, list it under Problems without leading with it.
 - **Regressed:** alert (what broke, impact, one line) and keep the schedule.
-- **All confirmed:** note it in the entry and call `delete_scheduled_task({ taskId })`.
+- **All confirmed:** note it in the entry, then **End**.
 - **Anything not yet exercised:** keep the schedule.
-- **Past the deadline** (from the args): final report, delete the task, alert if anything is unverified.
-- Manual run, something pending, nothing scheduled: first check the log for a `Scheduler:` line and the list for the id, so none is duplicated. Neither exists: create it with `/deploy`'s fields (recheck times, deadline = deploy + `Monitor window`) and append `Scheduler: <runtime> <id>` to the entry. Scheduler unavailable: end with the next recheck time and the command (contracts.md).
+- **Past the deadline** (from the args): alert if anything is unverified, then **End**.
+- Manual run, something pending, nothing scheduled: first check the log for a `Scheduler:` line and the list for the id, so none is duplicated. Neither exists: create it with `/deploy`'s fields (recheck times, deadline = deploy + `Monitor window`), `Deadline: <YYYY-MM-DDTHH:MMZ>` in the task description, and append `Scheduler: <runtime> <id>` to the entry. Scheduler unavailable: end with the next recheck time and the command (contracts.md).
+- **Janitor run:** a daily scheduled run lists the schedules and passes them, with now in UTC, to `agent_skills.task_reconciliation.expired_monitors` via `python3 -c` (repo root on `PYTHONPATH`: `cd -P "${CLAUDE_SKILL_DIR}/../.."`). It ends each expired one per **End** with a final verdict line `<id>: past deadline <deadline>, disabled`, and reports the unparsed ids as lacking a `Deadline:`.
 
 ## Report (≤8 lines, skeleton per contracts.md § Report)
 ```
@@ -66,7 +67,7 @@ There is no push tool: the alert is the report's first line, which the task's co
 Confirmed: <change>: <evidence with count, n>
 Not yet exercised: <change>: <why; when>
 Problems: <issue>: <impact>; <caused by change | pre-existing | unrelated>
-Record: <log path> · Follow-up: <r2 folder> · Schedule: kept, next <local time> (<runtime> <id>) | deleted | still exists: <id> | owned by <runtime> <id>, left | none: next <time>, run `/monitor …`
+Record: <log path> · Follow-up: <r2 folder> · Schedule: kept, next <local time> (<runtime> <id>) | disabled | still enabled: <id> | disable refused: <id> | owned by <runtime> <id>, left | none: next <time>, run `/monitor …`
 Decide: 1. <improvement>: <evidence>; <smallest fix> (default: <…>)
 Next: say "look into it" (/blueprint) | next recheck <local time> | nothing
 ```

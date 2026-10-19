@@ -1,5 +1,11 @@
 """Bounded, caller-supplied evidence assessment. Never dispatches or grants authority."""
+import re
 from .task_checkpoint import operating_view, _time
+
+# A time without `Z` is rejected rather than read as end of day.
+_WHEN = r'(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})Z|(?![T ]?\d))'
+_DEADLINES = (re.compile(r'\bdeadline:\s*' + _WHEN, re.I),
+              re.compile(r'\b(?:until|deadline)\s+' + _WHEN, re.I))
 
 
 def keep_awake_assessment(receipt, *, now, owner):
@@ -96,3 +102,26 @@ def reconcile_tasks(snapshot, *, now):
             'missing_task_ids': missing, 'unexpected_task_ids': unexpected,
             'unmatched_observation_ids': sorted(set(obs_ids) - set(ids)),
             'assessment_only': True, 'tasks': rows}
+
+
+def _deadline(description):
+    """Structured `Deadline:` first, then legacy `until`/`deadline`; a bare date ends at 23:59Z."""
+    for pattern in _DEADLINES:
+        m = pattern.search(description)
+        if m:
+            return _time(f"{m[1]}T{m[2] or '23:59'}Z")
+    return None
+
+
+def expired_monitors(tasks, *, now):
+    """Enabled recurring schedules past the deadline in their description, and those without one."""
+    expired, unparsed = [], []
+    for task in tasks:
+        if not task['enabled'] or task.get('fireAt'):
+            continue
+        deadline = _deadline(task['description'])
+        if deadline is None:
+            unparsed.append(task['taskId'])
+        elif deadline < now:
+            expired.append({'taskId': task['taskId'], 'deadline': deadline.strftime('%Y-%m-%dT%H:%MZ')})
+    return sorted(expired, key=lambda e: e['taskId']), sorted(unparsed)

@@ -1,10 +1,11 @@
 """Offline recovery assessment regressions; no hosts, credentials or dispatch."""
 import copy
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import unittest
 from test_operating_checkpoints import bound, tasks, checkpoint_shape, T0, T1, DUE, LATE, EXP
-from agent_skills.task_reconciliation import reconcile_tasks, keep_awake_assessment
+from agent_skills.task_reconciliation import reconcile_tasks, keep_awake_assessment, expired_monitors
 from agent_skills.worker_execution import select_route, bind_route
 
 
@@ -110,3 +111,45 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(main(['task-reconcile', str(path), '--now', LATE]), 1)
         s = self.snapshot(); s['observations'][0]['required_operations'] = 'provider:get'
         with self.assertRaises(ValueError): reconcile_tasks(s, now=LATE)
+
+
+def schedule(task_id, description, enabled=True, **extra):
+    return dict(taskId=task_id, description=description, enabled=enabled, cronExpression='0 9 * * *', **extra)
+
+
+MONITORS = [
+    schedule('monitor-backend-chat-capacity-carry-tg-r2', 'Recheck 182d3c55 (TG carried availability reaches the status block) daily until 2026-10-23 23:08Z.'),
+    schedule('monitor-voice-status-update-yes-no', 'Recheck 1ff41bcc (TG inbound yes/no status-update question) until 2026-10-16 23:30Z'),
+    schedule('monitor-backend-dropped-call-first-text', 'Recheck backend 202b83d8 (dropped-call replies flagged; never-texted leads get the intro first) on live traffic until 2026-10-18 18:00Z'),
+    schedule('monitor-backend-lsa-cadence-repeat-guard', 'Recheck 406a90f7 (follow-up repeat guard: writer rewrite on all channels, Google skip + send gate) daily until 2026-10-18 22:24Z.'),
+    dict(taskId='monitor-voice-operator-transfer', enabled=False, fireAt='2026-10-19T17:00:00.000Z',
+         description='One-time check of e7bba3d1: bare "operator"/"agent" requests on TG inbound now get a transfer attempt'),
+    schedule('monitor-backend-client-release', 'Hourly (business hours) monitor: client release (Fri 10-16) + service-key coexist (Sun 10-18) + agent account fix (Voice 1e520369) + booked-without-job flag fix (ccm c2da542a), both Mon 10-19; deadline 2026-10-21 22:10Z'),
+    schedule('monitor-backend-boiler-service-keys', 'Client boiler pre-paid on service keys (applied 10-19 18:41Z): check first touches Wed 10-22 to Fri 10-24, twice a day'),
+    schedule('monitor-backend-lsa-phone-lead-flag', 'Recheck 68c9b5e9 (+ c06ad0cb): Google LSA phone-call leads get flagged for staff and get no Google send, from the AI or an operator; until 2026-10-22 21:05Z.'),
+]
+NOW = datetime(2026, 10, 19, 22, 0, tzinfo=timezone.utc)
+
+
+class MonitorJanitorTests(unittest.TestCase):
+    def test_todays_schedules(self):
+        expired, unparsed = expired_monitors(MONITORS, now=NOW)
+        self.assertEqual(expired, [
+            {'taskId': 'monitor-backend-dropped-call-first-text', 'deadline': '2026-10-18T18:00Z'},
+            {'taskId': 'monitor-backend-lsa-cadence-repeat-guard', 'deadline': '2026-10-18T22:24Z'},
+            {'taskId': 'monitor-voice-status-update-yes-no', 'deadline': '2026-10-16T23:30Z'}])
+        self.assertEqual(unparsed, ['monitor-backend-boiler-service-keys'])
+
+    def test_structured_deadline_wins_over_legacy_phrase(self):
+        for text in ('Deadline: 2026-10-20T06:00Z. Recheck daily until 2026-10-18 18:00Z',
+                     'Recheck daily until 2026-10-18 18:00Z. Deadline: 2026-10-20T06:00Z'):
+            with self.subTest(text=text):
+                self.assertEqual(expired_monitors([schedule('m', text)], now=NOW), ([], []))
+        self.assertEqual(expired_monitors([schedule('m', 'deadline: 2026-10-19T21:59Z')], now=NOW)[0],
+                         [{'taskId': 'm', 'deadline': '2026-10-19T21:59Z'}])
+
+    def test_date_only_deadline_ends_at_end_of_day(self):
+        task = [schedule('m', 'Recheck until 2026-10-19')]
+        self.assertEqual(expired_monitors(task, now=datetime(2026, 10, 19, 23, 59, tzinfo=timezone.utc)), ([], []))
+        self.assertEqual(expired_monitors(task, now=datetime(2026, 10, 20, 0, 0, tzinfo=timezone.utc))[0],
+                         [{'taskId': 'm', 'deadline': '2026-10-19T23:59Z'}])

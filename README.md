@@ -129,7 +129,7 @@ Each skill starts from the user's plain words and starts the next one itself; th
 | `skills/implement` | One-line plans, sync, locked worktree, collision check, env setup, per-item commits, resume | Description always; body on invoke |
 | `skills/test-review` | Ready-to-deploy YES/NO: tests vs base first, fix proof, per-commit blocker check; `tests` and PR modes | Description always; body on invoke |
 | `skills/deploy` | Lock, review gate, push, staged targets, 3-way sync, record commit, cleanup, rechecks; PR, local, release and rollback modes in `references/modes.md` | Description always; body on invoke; outward steps need § Consent |
-| `skills/monitor` | Recheck against live traffic, alert, keep or delete the schedule, `-r2` follow-ups | Description always; body on invoke |
+| `skills/monitor` | Recheck against live traffic, alert, keep or disable the schedule, `-r2` follow-ups | Description always; body on invoke |
 | `skills/handoff` | Mid-task transfer prompt, saved to the handoffs folder | Description always; body on invoke |
 | `skills/agent-coordination` | Work items across worker sessions and the orchestrator assistant: durable local task records, worker adapters, one thread per item, correlated replies | Description always; body on invoke |
 | `skills/approval-handoff` | Classify worker blockers, relay matching scoped authority, and route an actual direct-session approval with verified navigation and wording | Description always; body on invoke |
