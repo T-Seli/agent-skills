@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(sftp:*)",
+      "Bash(psql:*)",
+      "Read(**/.env)",
+      "Read(**/.env.local)",
+      "Read(**/.env.production)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Edit(~/.claude/**)",
+      "Edit(~/.codex/**)",
+      "Edit(~/.agents/**)",
+      "Edit(~/.config/agent-skills/**)",
+      "Edit(**/.git/config)",
+      "Edit(**/.git/hooks/**)",
+      "Edit(**/.claude/settings*.json)",
+      "Edit(**/.mcp.json)"
+    ]
+  }
+}
