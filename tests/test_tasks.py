@@ -356,19 +356,26 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(t.contract_consumption(accepted)['final']['receipt_ref'], event['id'])
 
     def test_claude_fixes_the_session_id_and_resumes_by_it(self):
-        c = w.Claude(model="fixture-claude", effort="medium")
-        fresh_argv = c.command('do it', session_id='s-1', resume=False)
+        c = w.Claude(model="fixture-claude", effort="medium", settings="guard.json", max_turns=50, name="t-1")
+        fresh_argv = c.command(session_id='s-1', resume=False)
         self.assertEqual(fresh_argv[fresh_argv.index('--session-id') + 1], 's-1')
-        self.assertIn('dontAsk', fresh_argv)
+        self.assertEqual(fresh_argv[fresh_argv.index('--permission-mode') + 1], 'bypassPermissions')
+        self.assertEqual(fresh_argv[fresh_argv.index('--settings') + 1], 'guard.json')
+        self.assertEqual(fresh_argv[fresh_argv.index('--max-turns') + 1], '50')
+        self.assertNotIn('dontAsk', fresh_argv)
         self.assertNotIn('--allowedTools', fresh_argv)
         self.assertEqual(fresh_argv[fresh_argv.index('--strict-mcp-config') + 2], '{"mcpServers":{}}')
-        again = c.command('next', session_id='s-1', resume=True)
+        with self.assertRaises(ValueError):  # bypass without the guard would run anything
+            w.Claude(model="fixture-claude", effort="medium").command(session_id='s-1', resume=False)
+        again = c.command(session_id='s-1', resume=True)
         self.assertEqual(again[again.index('--resume') + 1], 's-1')
         self.assertNotIn('--session-id', again)
 
     def test_simulated_claude_run_reaches_ready_for_review(self):
         run = fake_runner(CLAUDE_OUT)
-        state, out = w.run(w.Claude(model="fixture-claude", effort="medium").command('x', session_id='s-1', resume=False), cwd='.', timeout=5, runner=run)
+        argv = w.Claude(model="fixture-claude", effort="medium", settings="guard.json").command(session_id='s-1', resume=False)
+        state, out = w.run(argv, cwd='.', timeout=5, runner=run, input='x')
+        self.assertNotIn('x', argv)
         evs = w.events(TASK, 'x1', w.Claude(model="fixture-claude", effort="medium").parse(out), BASE + 1, BASE + 2)
         r, o = play(fresh(), *evs)
         self.assertEqual((state, o, r['status'], r['evidence']['commit']), ('done', ['applied'] * 2, 'ready-for-review', 'abc123'))

@@ -73,20 +73,33 @@ def codex_report_schema():
 class Claude:
     kind = "claude"
 
-    def __init__(self, model=None, effort=None, max_cost_usd=None):
-        # --allowedTools is a permission grant, not a sandbox. This adapter grants none.
+    def __init__(self, model=None, effort=None, max_cost_usd=None, *, settings=None, max_turns=None,
+                 name=None, mcp_config=None):
+        # A worker has no one to approve a prompt, so it runs in bypassPermissions; the guard settings
+        # (deny rules + PreToolUse hook) are what stop release, production and self-modifying calls.
         self.model = model
         self.effort, self.max_cost_usd = effort, max_cost_usd
+        self.settings, self.max_turns, self.name = settings, max_turns, name
+        self.mcp_config = mcp_config or '{"mcpServers":{}}'
 
-    def command(self, prompt, *, session_id, resume):
-        """`--session-id` fixes the id before launch, so an interrupted launch can be found later."""
+    def command(self, *, session_id, resume):
+        """`--session-id` fixes the id before launch, so an interrupted launch can be found later.
+        The prompt goes on stdin (`run(input=...)`), never in argv, where `ps` would show it."""
         _selection(self.model, self.effort, "claude")
-        argv = ["claude", "-p", prompt, "--output-format", "json", "--json-schema", json.dumps(REPORT_SCHEMA),
-                "--permission-mode", "dontAsk",
+        if not self.settings:
+            raise ValueError("worker guard settings required: bypassPermissions without them runs anything")
+        argv = ["claude", "-p", "--output-format", "stream-json", "--verbose",
+                "--json-schema", json.dumps(REPORT_SCHEMA),
+                "--permission-mode", "bypassPermissions", "--settings", str(self.settings),
                 # Only the servers named here: a worker never inherits the user's connectors or data tools.
-                "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
+                "--strict-mcp-config", "--mcp-config", self.mcp_config]
         argv += ["--resume", session_id] if resume else ["--session-id", session_id]
         argv += ["--model", self.model, "--effort", self.effort]
+        if self.max_turns is not None:
+            if type(self.max_turns) is not int or self.max_turns <= 0:
+                raise ValueError("positive turn limit required")
+            argv += ["--max-turns", str(self.max_turns)]
+        argv += ["--name", self.name] if self.name else []
         if self.max_cost_usd is not None:
             if type(self.max_cost_usd) not in (int, float) or not math.isfinite(self.max_cost_usd) or self.max_cost_usd <= 0:
                 raise ValueError("positive cost limit required")
@@ -273,12 +286,12 @@ class RunResult:
         return (self.state, self.stdout)[index]
 
 
-def _owned_process(argv, *, cwd, capture_output, text, timeout, stdin):
+def _owned_process(argv, *, cwd, capture_output, text, timeout, stdin=None, input=None):
     """Time bounds affect only this newly created process group, never an existing session."""
-    p = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                         text=text, stdin=stdin, start_new_session=True)
+    p = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text,
+                         stdin=subprocess.PIPE if input is not None else stdin, start_new_session=True)
     try:
-        stdout, stderr = p.communicate(timeout=timeout)
+        stdout, stderr = p.communicate(input=input, timeout=timeout)
     except subprocess.TimeoutExpired as error:
         try:
             os.killpg(p.pid, signal.SIGTERM)
@@ -300,7 +313,7 @@ def _owned_process(argv, *, cwd, capture_output, text, timeout, stdin):
     return result
 
 
-def run(argv, *, cwd, timeout, runner=None):
+def run(argv, *, cwd, timeout, runner=None, input=None):
     """Preserve stdout/stderr and identity; timeout remains uncertain even after local exit."""
     if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 3600:
         raise ValueError("positive timeout required")
@@ -311,9 +324,11 @@ def run(argv, *, cwd, timeout, runner=None):
         return RunResult(state, decoded(stdout), decoded(stderr), returncode, pid,
                          started, datetime.now(timezone.utc).isoformat())
     try:
-        # An open stdin makes a CLI wait for piped input until the timeout; workers get none.
+        # An open stdin makes a CLI wait for piped input until the timeout, so a worker gets
+        # either its prompt (then EOF) or nothing.
+        stdin = {"input": input} if input is not None else {"stdin": subprocess.DEVNULL}
         p = (runner or _owned_process)(argv, cwd=cwd, capture_output=True, text=True,
-                                       timeout=timeout, stdin=subprocess.DEVNULL)
+                                       timeout=timeout, **stdin)
     except FileNotFoundError as error:
         return result("unavailable", stderr=str(error))
     except subprocess.TimeoutExpired as error:

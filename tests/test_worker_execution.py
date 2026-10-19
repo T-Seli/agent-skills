@@ -43,8 +43,8 @@ def parsed(model='codex-ordinary', effort=None, sid='owned'):
 
 class AdapterRegressions(unittest.TestCase):
     def test_explicit_model_and_effort_are_encoded_for_both_providers(self):
-        c = w.Claude(model='fixture-claude', effort='high')
-        argv = c.command('synthetic', session_id='owned', resume=False)
+        c = w.Claude(model='fixture-claude', effort='high', settings='guard.json')
+        argv = c.command(session_id='owned', resume=False)
         self.assertEqual(argv[argv.index('--effort') + 1], 'high')
         argv = w.Codex(model='fixture-codex', effort='medium').command('synthetic', cwd='.', schema_file='schema')
         self.assertIn('model_reasoning_effort="medium"', argv)
@@ -52,7 +52,7 @@ class AdapterRegressions(unittest.TestCase):
 
     def test_unconfigured_commands_fail_instead_of_using_an_implicit_model(self):
         with self.assertRaises(ValueError):
-            w.Claude().command('synthetic', session_id='owned', resume=False)
+            w.Claude(settings='guard.json').command(session_id='owned', resume=False)
         with self.assertRaises(ValueError):
             w.Codex().command('synthetic', cwd='.', schema_file='schema')
 

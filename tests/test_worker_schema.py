@@ -95,7 +95,7 @@ class WireSchema(unittest.TestCase):
         before = copy.deepcopy(w.REPORT_SCHEMA)
         self.wire()
         self.assertEqual(w.REPORT_SCHEMA, before)
-        argv = w.Claude(model="fixture-claude", effort="medium").command('synthetic', session_id='owned', resume=False)
+        argv = w.Claude(model="fixture-claude", effort="medium", settings="guard.json").command(session_id='owned', resume=False)
         self.assertEqual(json.loads(argv[argv.index('--json-schema') + 1]), before)
 
     def test_evidence_json_transport_restores_arbitrary_task_fields(self):
