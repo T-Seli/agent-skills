@@ -58,7 +58,7 @@ There is no push tool: the alert is the report's first line, which the task's co
 - **All confirmed:** note it in the entry, then **End**.
 - **Anything not yet exercised:** keep the schedule.
 - **Past the deadline** (from the args): alert if anything is unverified, then **End**.
-- Manual run, something pending, nothing scheduled: first check the log for a `Scheduler:` line and the list for the id, so none is duplicated. Neither exists: create it with `/deploy`'s fields (recheck times, deadline = deploy + `Monitor window`), `Deadline: <YYYY-MM-DDTHH:MMZ>` in the task description, and append `Scheduler: <runtime> <id>` to the entry. Scheduler unavailable: end with the next recheck time and the command (contracts.md).
+- Manual run, something pending, nothing scheduled: first check the log for a `Scheduler:` line and the list for the id, so none is duplicated. The id exists but is disabled: update it with the new fields and `enabled: true`, then confirm it lists as enabled. Neither exists: create it with `/deploy`'s fields (recheck times, deadline = deploy + `Monitor window`), `Deadline: <YYYY-MM-DDTHH:MMZ>` in the task description, and append `Scheduler: <runtime> <id>` to the entry. Scheduler unavailable: end with the next recheck time and the command (contracts.md).
 - **Janitor run:** a daily scheduled run lists the schedules and passes them, with now in UTC, to `agent_skills.task_reconciliation.expired_monitors` via `python3 -c` (repo root on `PYTHONPATH`: `cd -P "${CLAUDE_SKILL_DIR}/../.."`). It ends each expired one per **End** with a final verdict line `<id>: past deadline <deadline>, disabled`, and reports the unparsed ids as lacking a `Deadline:`.
 
 ## Report (≤8 lines, skeleton per contracts.md § Report)
