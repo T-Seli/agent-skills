@@ -93,6 +93,10 @@ class DelegateTests(unittest.TestCase):
         call = self.captured()
         argv = call["argv"]
         self.assertEqual(argv[argv.index("--permission-mode") + 1], "bypassPermissions")
+        route = json.loads(self.config.read_text())["policy"]["claude"]["ordinary"]
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], str(route["max_cost_usd"]))
+        self.assertEqual(argv[argv.index("--max-turns") + 1], str(route["max_turns"]))
+        self.assertEqual(argv[argv.index("--model") + 1], "fixture-claude")
         guard = json.loads(Path(argv[argv.index("--settings") + 1]).read_text())
         self.assertIn("worker-guard.py", guard["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
         self.assertIn("Bash(git push:*)", guard["permissions"]["deny"])

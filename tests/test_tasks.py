@@ -362,6 +362,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(fresh_argv[fresh_argv.index('--permission-mode') + 1], 'bypassPermissions')
         self.assertEqual(fresh_argv[fresh_argv.index('--settings') + 1], 'guard.json')
         self.assertEqual(fresh_argv[fresh_argv.index('--max-turns') + 1], '50')
+        self.assertEqual(fresh_argv[fresh_argv.index('--name') + 1], 't-1')
         self.assertNotIn('dontAsk', fresh_argv)
         self.assertNotIn('--allowedTools', fresh_argv)
         self.assertEqual(fresh_argv[fresh_argv.index('--strict-mcp-config') + 2], '{"mcpServers":{}}')
