@@ -22,5 +22,12 @@ declared dependencies. Treat catalog matches as suggestions, not authority.
 5. Commit an accepted change separately, pin its commit for users, and keep the
    prior commit as the rollback point. Recheck outcomes after use.
 
+## Weekly run
+A weekly scheduled run reads `delegate.py report --days 7`, the feedback spool
+(`feedback.jsonl` next to the task records), the week's `monitor:` regressions and
+task-history `feedback` events. It groups repeats by mechanism and drafts at most
+three proposals per steps 2–3, each with a regression fixture and its prevention
+check. It never edits a skill, commits, installs or messages anyone; step 4 decides.
+
 Report the proposal, evidence, tests, review decision and pinned versions.
 No message, install, deploy or model change follows merely from a proposal.

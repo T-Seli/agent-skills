@@ -2,6 +2,18 @@
 
 Ordinary engineering prefers this CLI execution path when task authority and the required-capability preflight below permit; an explicitly selected native, cloud or desktop environment wins. Execution choice does not replace bookkeeping: keep the existing task record and any supported native records and navigation for accountability and takeover. Missing required CLI access holds dependent dispatch, or after reconciliation uses an already-authorized alternative. This path controls only sessions owned by that task; it never takes over a human session, creates access, adds a second writer or changes user defaults.
 
+## Delegate
+Any agent, a worker included, starts a Claude worker only with `python3 ~/.claude/skills/agent-coordination/scripts/delegate.py` (Codex: `~/.agents/skills/...`); never hand-write `claude -p`. Starting a guarded worker needs no per-launch approval: the guard, not a prompt, stops release and production actions.
+- **Choose.** A few tool calls: do it yourself. A focused read-only question: an in-session subagent (`scout`). Writer work, or anything long enough to crowd your context: a worker, one per independent piece, each in its own worktree or directory.
+- **Brief.** Write it to a file: goal, files or area, exclusions, done-when checks and what to return. A worker sees no conversation, so the brief carries every fact it needs.
+- **Start.** `delegate.py start --prompt-file <brief> --cwd <dir> --reason "<why>"`, adding `--signal <architecture|ambiguous-failure|high-risk|multi-system|repeated-failure>` when complexity is known; it prints the `task_id` at once. Routes, budgets and limits come from `~/.config/agent-skills/workers.json`.
+- **Wait.** Run `delegate.py wait <task_id>` in the background (Claude: `run_in_background`) so its exit wakes you; exit 0 done, 1 failed or lost, 3 still running (wait again). Never poll in the foreground.
+- **Use the result.** Check the receipt's outcome, report, commit and tests against your done-when checks; a ready claim is not verification. `permission_denials` above 0 means the guard blocked something; read why in the run's `stream.jsonl` before retrying.
+- **Continue or recover.** `start --resume --task-id <id>` gives the same session a new brief. After a crash or reboot run `delegate.py reconcile`; check a `lost` run's directory for partial work before restarting it.
+- **Refused (exit 3 on start).** Depth, live-worker or one-writer-per-directory limit: do the work yourself, wait for a worker, or use another directory. Nested workers count toward the same limits.
+- **Guard.** Workers run in bypass mode under a fail-closed guard that blocks push, merge, release, deploy, remote shells, database clients, AWS changes, raw agent launches, and edits to skills, settings, hooks, git config and secrets files. A blocked worker reports it as a blocker; release goes through `/deploy` with the user's go-ahead.
+- **Record.** Name each worker's task id and receipt result in your log entry. `delegate.py status` lists runs; `delegate.py report --days 7` feeds the skill steward.
+
 ## Select and pin
 Keep provider/model choices in private task configuration. Each provider has `ordinary` and `involved` profiles with exact `model`, `effort` and `timeout_seconds`. Claude can additionally enforce `max_cost_usd`; this Codex adapter cannot enforce a dollar cap. Supply current supported model/effort capabilities and their evidence reference.
 

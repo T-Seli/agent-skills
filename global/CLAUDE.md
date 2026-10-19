@@ -1,6 +1,6 @@
 # Global working agreement
 
-The project `CLAUDE.md` holds project facts and wins conflicts. Orchestrate: delegate reading, searching and bulk writing to sub-agents (`scout` for read-only questions), in parallel.
+The project `CLAUDE.md` holds project facts and wins conflicts. Orchestrate: read-only questions go to sub-agents (`scout`); writer or long work goes to workers via `delegate.py` (agent-coordination § Delegate), in parallel, without asking.
 
 Read `workflow-contracts/contracts.md` first for shared names, contracts and defaults. At deployment-related task entry/resume, perform its deployment-readiness preflight.
 
