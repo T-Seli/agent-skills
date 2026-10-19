@@ -54,7 +54,7 @@ Every skill reads this file first. It is the only home for the names, files, flo
 ## Git
 - `git fetch` is fine anywhere, given up after about 8s; after a failed fetch, say so and label remote refs as possibly stale.
 
-## Task log (`log.md`) — For configured private history, use `/task-history` at milestones and handoff; keep this receipt, reconcile failed writes, distinguish performed/reported/verified claims, and review improvement proposals.
+## Task log (`log.md`) — Central history is configured when `task_history_repo` in `~/.config/agent-skills/workers.json` names a checkout; that setting is the standing authorization for sanitized milestone events. Then use `/task-history` at milestones and handoff; keep this receipt, reconcile failed writes, distinguish performed/reported/verified claims, and review improvement proposals. Not configured: the log entry says `History: not configured`.
 - Append-only. Heading `## <UTC time> — <stage>: <one line>`; `<stage>` = the skill's name. Never edit an earlier entry.
 - Fields, in this order, empty ones dropped: Commit, What changed, Decisions (why), Evidence (commands, counts, n, timezone), Not done, Watch for.
 - Append to `TASK/log.md` when `TASK` is on the current branch, else to `DRAFT/log.md`. Entries made after shipping (monitor, rollback, a failed target) go to `DRAFT/log.md`; the next `/deploy` carries them into git.

@@ -52,4 +52,4 @@ For user corrections, confusion, clarification requests, scope redirections, sta
 ## Report (≤6 lines, per contracts.md § Report)
 Work item and split state · verified or labeled progress · active revision and evidence cursor · concrete next action and owner · exactly what the user needs to decide/approve/do, or `None` · sent/reply receipt when relevant. Keep the last user-facing message self-contained. No secrets or personal data.
 
-Central history: when a private task-history checkout is configured, follow `/task-history` for sanitized milestone evidence and handoff. Preserve the project log and existing approval/review gates.
+Central history: when it is configured (contracts.md § Task log), follow `/task-history` for sanitized milestone evidence and handoff; otherwise the log entry says `History: not configured`. Preserve the project log and existing approval/review gates.

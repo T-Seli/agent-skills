@@ -60,4 +60,4 @@ Add to CLAUDE.md § <section>: <fact discovered>; … · Missing, not discovered
 Next: <the in-flight step, from its log or the handoff> | what are we working on?
 ```
 
-Central history: when a private task-history checkout is configured, follow `/task-history` for sanitized milestone evidence and handoff. Preserve the project log and existing approval/review gates.
+Central history: when it is configured (contracts.md § Task log), follow `/task-history` for sanitized milestone evidence and handoff; otherwise the log entry says `History: not configured`. Preserve the project log and existing approval/review gates.

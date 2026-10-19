@@ -58,4 +58,4 @@ Next: test-review, starting now
 ```
 If § Run & test was missing, end with `Add to CLAUDE.md § Run & test: <fact>`.
 
-Central history: when a private task-history checkout is configured, follow `/task-history` for sanitized milestone evidence and handoff. Preserve the project log and existing approval/review gates.
+Central history: when it is configured (contracts.md § Task log), follow `/task-history` for sanitized milestone evidence and handoff; otherwise the log entry says `History: not configured`. Preserve the project log and existing approval/review gates.
