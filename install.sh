@@ -251,6 +251,13 @@ for f in "$R"/agents/*.md; do link "$f" "$HOME/.claude/agents/$(basename "$f")";
 for f in "$R"/output-styles/*.md; do link "$f" "$HOME/.claude/output-styles/$(basename "$f")"; done
 for f in "$R"/hooks/*.sh; do [ -x "$f" ] || { echo "hook source is not executable: $f" >&2; exit 1; }; link "$f" "$HOME/.claude/hooks/$(basename "$f")"; done
 link "$R/global/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+# delegate.py refuses to start workers without its private config; seed it once, never overwrite.
+cfg="$HOME/.config/agent-skills/workers.json"
+if [ ! -e "$cfg" ]; then
+  ensure_dir "$(dirname "$cfg")"
+  run cp "$R/agent_skills/delegate_config.example.json" "$cfg"
+  run chmod 600 "$cfg"
+fi
 INSTALL_STAGE=claude-complete
 fi
 

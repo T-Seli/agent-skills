@@ -1,0 +1,21 @@
+{
+  "policy": {
+    "claude": {
+      "ordinary": {"model": "claude-opus-5-5", "effort": "medium", "timeout_seconds": 3600, "max_cost_usd": 10, "max_turns": 200},
+      "involved": {"model": "claude-opus-5-5", "effort": "high", "timeout_seconds": 3600, "max_cost_usd": 30, "max_turns": 400},
+      "effort_ceiling": "high"
+    }
+  },
+  "capabilities": {
+    "claude": {
+      "claude-opus-5-5": ["low", "medium", "high", "xhigh", "max"],
+      "claude-sonnet-5-5": ["low", "medium", "high", "xhigh", "max"]
+    }
+  },
+  "max_depth": 2,
+  "max_live": 4,
+  "aws": false,
+  "databases": false,
+  "mcp_config": null,
+  "task_history_repo": null
+}
