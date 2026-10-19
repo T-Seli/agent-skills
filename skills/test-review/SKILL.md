@@ -24,6 +24,7 @@ Intent per commit: its action item in `TASK/action-items.md` (the log's `impleme
 **Tests mode** (`/test-review tests`): run **Tests** only, then reply with the report's Tests line. No commit review, verdict, log or chain.
 
 ## 1. Tests (before reading any code)
+Check the current decision/spec revision, domain invariants, exclusions and each slice’s user-visible acceptance per `${CLAUDE_SKILL_DIR}/../workflow-contracts/decisions.md`. Reopened assumptions invalidate only affected evidence; passing checks never resolve unanswered user choices.
 Classify changed paths and risk first. For small prompt/KB/instruction fixes, use semantic synthetic cases and producer-path checks per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`; exact generated wording is not the acceptance oracle. Reuse relevant evidence only after comparing its source, tests, dependencies and environment, and cite that comparison. Do not repeat paid/live simulations merely for freshness; new external runs need the applicable scoped authority. Consent, integrity, exact-source and shared-release checks remain required.
 One `scout` runs this and returns ≤150 words: commands, pass/fail per side, new failing ids, red/green per fix test. Commands come from CLAUDE.md § Run & test; output per global CLAUDE.md § Verification. Test services only if that section defines them, with resource names and ports unique to this run; tear them down after.
 Codex: run these steps in this session itself; its scout is sandboxed read-only.
@@ -43,11 +44,11 @@ Open each returned line; keep only listed blockers you can show. For visual acce
 ## Blockers
 Report only these: no nice-to-haves, style, refactor or dedupe suggestions, no "consider". Unsure whether it is a blocker? It is not: drop it. Greps run over `ADDED` = `git diff -U0 $BASE <head> -- ':(top,exclude)<tasks>' | grep '^+[^+]'`, minus test paths, docs and fixtures; a hit is a lead until you open the line.
 1. **Tests:** a new failure vs base, or a fix whose test does not fail on base and pass on the branch.
-2. **Wrong or breaking:** the commit does not do what its action item says, or breaks a caller or consumer.
+2. **Wrong or breaking:** the commit does not do what its action item says, a completion claim lacks its Done when evidence, an open item is omitted from Not done, or a caller or consumer breaks.
 3. **Security:** a secret in code, logs or URLs (`grep -inE "(api[_-]?key|secret|token|passw|bearer|private[_-]?key)[\"']?\s*[:=]\s*[\"'][^\"']{8,}"`, `-----BEGIN`, provider key prefixes, newly tracked env or credential files); PII (phone, email, name, address) sent to a third party or LLM; an auth check removed or bypassable.
 4. **Production data:** a script, job, backfill or migration writing to production without asserting its target (writes in normal request handlers are exempt); DDL (`CREATE|ALTER|DROP|TRUNCATE`) outside the migration dirs; a migration that is not idempotent or has no down path; a wrong tenant or database target.
 5. **Tenant or environment logic in shared code** (it breaks plug-and-play): a tenant name, alias or id from CLAUDE.md § Tenancy, or `prod|production|staging`, in shared code outside config; branching on either (`grep -nE "(==|!=|===|!==|\bin\b|case|switch).*[\"'](prod|production|staging)[\"']"`, and the same with tenant names); a hard-coded tenant value or list; a per-install name in shared content (prompts, templates, copy). § Tenancy `none`: environment names only.
-6. **Unplanned:** anything outside the plan (compare `git diff --name-only $BASE <head>` with the plan and action items).
+6. **Unplanned:** anything outside the plan (compare `git diff --name-only $BASE <head>` with the plan, its Out of scope and action items).
 
 ## Log
 Before publishing a release-ready YES, persist the review evidence: `test-review: <YES|NO>` per contracts.md, holding `Reviewed: <head sha> <YES|NO>`, exact tree/manifest identity, the Tests line and relevant reused-evidence comparison. Read the saved receipt back and recheck the candidate identity. A failed/unconfirmed log write is a recording gap, not release evidence; use an authorized task-local equivalent if the normal log is unavailable, otherwise hold release. Do not require another test run solely to repair receipt storage.

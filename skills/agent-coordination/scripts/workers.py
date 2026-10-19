@@ -6,6 +6,11 @@ import hashlib
 import copy
 import json
 import subprocess
+import os
+import signal
+import math
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 # The worker's final answer; a ready claim still needs the verifier (tasks.MOVES).
@@ -68,35 +73,46 @@ def codex_report_schema():
 class Claude:
     kind = "claude"
 
-    def __init__(self, model=None):
+    def __init__(self, model=None, effort=None, max_cost_usd=None):
         # --allowedTools is a permission grant, not a sandbox. This adapter grants none.
         self.model = model
+        self.effort, self.max_cost_usd = effort, max_cost_usd
 
     def command(self, prompt, *, session_id, resume):
         """`--session-id` fixes the id before launch, so an interrupted launch can be found later."""
+        _selection(self.model, self.effort, "claude")
         argv = ["claude", "-p", prompt, "--output-format", "json", "--json-schema", json.dumps(REPORT_SCHEMA),
                 "--permission-mode", "dontAsk",
                 # Only the servers named here: a worker never inherits the user's connectors or data tools.
                 "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
         argv += ["--resume", session_id] if resume else ["--session-id", session_id]
-        return argv + (["--model", self.model] if self.model else [])
+        argv += ["--model", self.model, "--effort", self.effort]
+        if self.max_cost_usd is not None:
+            if type(self.max_cost_usd) not in (int, float) or not math.isfinite(self.max_cost_usd) or self.max_cost_usd <= 0:
+                raise ValueError("positive cost limit required")
+            argv += ["--max-budget-usd", str(self.max_cost_usd)]
+        return argv
 
     def parse(self, stdout):
-        out = json.loads(stdout)
-        return {"session_id": out.get("session_id"), "error": bool(out.get("is_error")),
-                "report": out.get("structured_output")}
+        rows = _rows(stdout)
+        out = next((x for x in reversed(rows) if x.get("type") == "result" or "structured_output" in x), {})
+        sid = out.get("session_id") or next((x.get("session_id") for x in rows if x.get("session_id")), None)
+        return {"session_id": sid, "error": bool(out.get("is_error")) or not out,
+                "report": out.get("structured_output"), "execution": _metadata(rows)}
 
     @staticmethod
-    def launched(session_id, projects=Path("~/.claude/projects").expanduser()):
-        """True when a transcript for this id exists: the launch happened, whatever its outcome."""
-        return any(projects.glob(f"*/{session_id}.jsonl"))
+    def launched(session_id, receipt=None):
+        """Only a supported output/inventory receipt proves launch; False means unverified."""
+        return bool(isinstance(receipt, dict) and receipt.get("session_id") == session_id
+                    and receipt.get("source") in ("cli-output", "cli-inventory"))
 
 
 class Codex:
     kind = "codex"
 
-    def __init__(self, sandbox="read-only", model=None):
+    def __init__(self, sandbox="read-only", model=None, effort=None):
         self.sandbox, self.model = sandbox, model
+        self.effort = effort
 
     @staticmethod
     def write_schema(schema_file):
@@ -107,23 +123,24 @@ class Codex:
         """The thread id is known only after start, so an interrupted fresh launch stays uncertain."""
         # The user's config can load connectors, plugins and data tools; a worker never inherits them
         # (auth still comes from the Codex home). The model is passed per call instead.
+        _selection(self.model, self.effort, "codex")
         argv = ["codex", "exec", "--json", "--ignore-user-config", "-C", str(cwd), "-s", self.sandbox,
                 "--output-schema", str(schema_file)]
-        argv += ["-m", self.model] if self.model else []
+        argv += ["-m", self.model, "-c", "model_reasoning_effort=" + json.dumps(self.effort)]
         return argv + (["resume", session_id, prompt] if session_id else [prompt])
 
-    def parse(self, stdout):
+    def parse(self, stdout, stderr=""):
         session_id, text, error = None, None, False
-        for line in stdout.splitlines():
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
+        rows = _rows(stdout)
+        diagnostics = []
+        for e in rows:
             session_id = e.get("thread_id") or session_id
             item = e.get("item") or {}
             if e.get("type") == "item.completed" and item.get("type") == "agent_message":
                 text = item.get("text")
             error = error or e.get("type") in ("error", "turn.failed")
+            if item.get("type") == "error":
+                diagnostics.append(item.get("message", ""))
         try:
             report = json.loads(text) if text else None
             if isinstance(report, dict):
@@ -135,19 +152,175 @@ class Codex:
         except ValueError:
             report = None
             error = True
-        return {"session_id": session_id, "error": error, "report": report}
+        # CLI warnings also use item.error. Retain them; only a completed turn with a
+        # valid report distinguishes a nonterminal diagnostic from an unresolved failure.
+        if diagnostics and not (report and any(x.get("type") == "turn.completed" for x in rows)):
+            error = True
+        metadata = _metadata(rows)
+        metadata["diagnostics"] = diagnostics
+        for line in stderr.splitlines():
+            if 'event.name="codex.conversation_starts"' not in line:
+                continue
+            fields = {key: quoted or bare for key, quoted, bare in re.findall(
+                r'\b(model|reasoning_effort|conversation\.id)=(?:"([^"]*)"|(\S+))', line)}
+            if not session_id or fields.get("conversation.id") != session_id:
+                continue
+            observed = _metadata([{"type": "system", "model": fields.get("model"),
+                                   "reasoning_effort": fields.get("reasoning_effort")}])
+            # The runtime start for this exact conversation is root evidence of the primary model.
+            _add(metadata["models"], observed["models"])
+            _add(metadata["primary_models"], observed["models"])
+            effort = observed["effective_effort"]
+            if effort is not None:
+                prior = metadata["effective_effort"]
+                if prior is not None and prior != effort:
+                    metadata["conflicting_efforts"] = sorted({prior, effort})
+                    metadata["effective_effort"] = None
+                elif not metadata.get("conflicting_efforts"):
+                    metadata["effective_effort"] = effort
+            if "cli-runtime-start" not in metadata["metadata_sources"]:
+                metadata["metadata_sources"].append("cli-runtime-start")
+        return {"session_id": session_id, "error": error, "report": report, "execution": _roles(metadata)}
 
 
-def run(argv, *, cwd, timeout, runner=subprocess.run):
-    """Returns (state, stdout): done, failed, unavailable (never started) or uncertain (may have acted)."""
+def _selection(model, effort, provider):
+    supported = {"low", "medium", "high", "xhigh", "max"}
+    if provider == "codex":
+        supported.add("ultra")
+    if not isinstance(model, str) or not model.strip() or model.startswith('-') or effort not in supported:
+        raise ValueError("explicit supported model and effort required; select from the current catalog")
+
+
+def _rows(stdout):
+    try:
+        value = json.loads(stdout)
+        values = value if isinstance(value, list) else [value]
+    except ValueError:
+        values = []
+        for line in stdout.splitlines():
+            try:
+                values.append(json.loads(line))
+            except ValueError:
+                continue  # A timeout can end midway through the last event.
+    return [x for x in values if isinstance(x, dict)]
+
+
+def _add(values, items):
+    for item in items:
+        if item not in values:
+            values.append(item)
+
+
+def _roles(evidence):
+    """Primary = root runtime rows; auxiliary = every other observed model. Without root rows the
+    aggregate usage list stays unattributed (`usage-only`), never promoted to a primary claim."""
+    primary = evidence["primary_models"]
+    evidence["auxiliary_models"] = [m for m in evidence["models"] if m not in primary] if primary else []
+    evidence["model_attribution"] = "root-rows" if primary else "usage-only" if evidence["models"] else "none"
+    return evidence
+
+
+def _metadata(rows):
+    evidence = {"models": [], "primary_models": [], "effective_effort": None, "usage": [], "model_usage": {},
+                "metadata_sources": []}
+    efforts = set()
+    for row in rows:
+        kind = row.get("type")
+        message = row.get("message") if isinstance(row.get("message"), dict) else {}
+        if kind == "assistant" and isinstance(message.get("model"), str):
+            # A row inside a tool call (parent_tool_use_id set) is auxiliary, never the primary run.
+            _add(evidence["models"], [message["model"]])
+            if not row.get("parent_tool_use_id"):
+                _add(evidence["primary_models"], [message["model"]])
+            continue
+        if kind not in ("system", "thread.started", "turn.started", "turn.completed", "result"):
+            continue
+        models = [row["model"]] if isinstance(row.get("model"), str) else []
+        if kind != "result" and not row.get("parent_tool_use_id"):
+            _add(evidence["primary_models"], models)
+        if isinstance(row.get("modelUsage"), dict):
+            models += list(row["modelUsage"])
+            evidence["model_usage"].update(row["modelUsage"])
+        _add(evidence["models"], models)
+        # Never recover effective settings from assistant text or requested argv.
+        for key in ("effort", "reasoning_effort"):
+            if row.get(key) in ("low", "medium", "high", "xhigh", "max", "ultra"):
+                efforts.add(row[key])
+        if isinstance(row.get("usage"), dict):
+            evidence["usage"].append(row["usage"])
+        if models or any(key in row for key in ("effort", "reasoning_effort", "usage")):
+            evidence["metadata_sources"].append(kind)
+        if "total_cost_usd" in row:
+            evidence["reported_cost_usd"] = row["total_cost_usd"]
+    if len(efforts) == 1:
+        evidence["effective_effort"] = next(iter(efforts))
+    elif efforts:
+        evidence["conflicting_efforts"] = sorted(efforts)
+    return _roles(evidence)
+
+
+class RunResult:
+    """Retains diagnostics while preserving legacy `(state, stdout)` unpacking."""
+    def __init__(self, state, stdout, stderr, returncode, pid, started, finished):
+        self.state, self.stdout, self.stderr = state, stdout, stderr
+        self.returncode, self.pid = returncode, pid
+        self.started_at_utc, self.finished_at_utc = started, finished
+
+    def __iter__(self):
+        return iter((self.state, self.stdout))
+
+    def __getitem__(self, index):
+        return (self.state, self.stdout)[index]
+
+
+def _owned_process(argv, *, cwd, capture_output, text, timeout, stdin):
+    """Time bounds affect only this newly created process group, never an existing session."""
+    p = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=text, stdin=stdin, start_new_session=True)
+    try:
+        stdout, stderr = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        try:
+            os.killpg(p.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = p.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = p.communicate()
+        error.output, error.stderr, error.pid = stdout, stderr, p.pid
+        error.returncode = p.returncode
+        raise
+    result = subprocess.CompletedProcess(argv, p.returncode, stdout, stderr)
+    result.pid = p.pid
+    return result
+
+
+def run(argv, *, cwd, timeout, runner=None):
+    """Preserve stdout/stderr and identity; timeout remains uncertain even after local exit."""
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 3600:
+        raise ValueError("positive timeout required")
+    started = datetime.now(timezone.utc).isoformat()
+    def result(state, stdout="", stderr="", returncode=None, pid=None):
+        def decoded(value):
+            return value.decode(errors="replace") if isinstance(value, bytes) else (value or "")
+        return RunResult(state, decoded(stdout), decoded(stderr), returncode, pid,
+                         started, datetime.now(timezone.utc).isoformat())
     try:
         # An open stdin makes a CLI wait for piped input until the timeout; workers get none.
-        p = runner(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
-    except FileNotFoundError:
-        return "unavailable", ""
-    except subprocess.TimeoutExpired:
-        return "uncertain", ""
-    return ("done" if p.returncode == 0 else "failed"), p.stdout
+        p = (runner or _owned_process)(argv, cwd=cwd, capture_output=True, text=True,
+                                       timeout=timeout, stdin=subprocess.DEVNULL)
+    except FileNotFoundError as error:
+        return result("unavailable", stderr=str(error))
+    except subprocess.TimeoutExpired as error:
+        return result("uncertain", error.output, error.stderr,
+                      getattr(error, "returncode", None), getattr(error, "pid", None))
+    return result("done" if p.returncode == 0 else "failed", p.stdout, p.stderr,
+                  p.returncode, getattr(p, "pid", None))
 
 
 def events(task_id, dispatch_id, parsed, started, finished):

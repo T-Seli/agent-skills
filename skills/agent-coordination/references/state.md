@@ -54,3 +54,27 @@ Watch ownership remains pinned to the recorded execution owner when the outer ta
 `record_claim` appends explicit corrections naming the superseded claim receipt; briefs omit precisely referenced displaced facts. Use per-fact references: the helper cannot infer contradictions in arbitrary prose. Decision replacements preserve history and reject previously superseded sources. Neither interface authenticates a source or grants authority.
 
 `record_execution_context` scopes sanitized host, shell, executable, identity and configuration references to labeled probe receipts. `capture_provenance` binds the existing Git code-state digest to a caller-supplied test receipt. Reconcile actual probe/test evidence separately; these interfaces do not run it. Inspect a saved record read-only with `python3 -m agent_skills.safeguard_cli task-status <record.json>`. The same projection feeds `communication_brief` and `attention`; native callers must explicitly invoke it. Local fresh/resumed consumers do not establish native host or model adoption.
+# Bounded recovery assessment
+
+`python3 -m agent_skills.safeguard_cli task-reconcile snapshot.json --now <UTC>`
+reads only the explicit snapshot. Supply `expected_task_ids`, `records`, and
+`observations`; each observation binds task ID, revision, decision source,
+observation time and expiry. A bounded inventory can establish completeness only
+relative to its supplied expected IDs, not all conversations. Exact canonical
+`required_operations` and `forbidden_operations` expose intersections; the caller
+must resolve broad natural-language restrictions before constructing this envelope.
+The assessment never dispatches, treats approval as delivery, or closes a task.
+
+For critical execution set `critical_execution: true` and include `keep_awake`
+with owner, positive PID, process_identity_ref, assertion_ref, observed_at_utc,
+expires_at_utc and cleanup_ref. The owner must obtain a fresh CLI assertion
+readback and bind process identity before relying on it. Reuse a verified existing
+owner; never duplicate or stop another task's assertion. Receipt expiry requires
+reverification. Cleanup belongs to the process owner after identity verification;
+record its exit and assertion release. Do not change persistent power settings.
+This helper checks receipts only and provides no process-control authority.
+
+On transport loss, distinguish app connection status, executor admission and
+actual CLI result. Record each layer's timestamp and diagnostic. Reconcile the
+existing command's exit/output before retrying an uncertain launch. Do not infer
+sleep from a disconnected transport or loop indefinitely on reconnection.

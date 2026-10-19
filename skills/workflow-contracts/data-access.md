@@ -16,3 +16,4 @@ How any skill reads production data. Tools, servers and tables come from the pro
 - Report ids, counts and short gists. Never paste phone numbers, emails, names, addresses or transcripts into chat, logs, plans or handoffs.
 - Read-only always. A needed write goes to the user as a decision (contracts.md § Consent).
 - A scout gets the database, the recipe and the question in its brief, and returns counts and ids, not rows.
+- When the task or dispatch declares a database or connector capability, brief the scout once a readiness check passes for it in the scout's own environment and auth context (worker-execution.md); a missing, stale or mismatched declared capability blocks that dispatch and is reported as a gap. The receipt records an earlier authorized observation and never grants access; capabilities the task does not declare don't gate it. Never probe or create access to find out.

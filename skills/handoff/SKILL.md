@@ -14,7 +14,7 @@ Write one prompt a new session can paste and act on with no memory of this one. 
 4. Discovery: git state, always (**Capture git state**).
 
 ## Steps
-1. **Capture git state.** Run these now, never from memory. Not a git repo → `Git: not a repo`, and skip **Save**.
+1. **Capture git state.** Run these now, never from memory. Not a git repo → `Git: not a repo`, drop `Recent commits`, and skip **Save**.
    ```
    GIT_TERMINAL_PROMPT=0 git fetch --quiet || echo "fetch failed: origin may be stale"
    git rev-parse --abbrev-ref HEAD; git rev-parse --show-toplevel
@@ -30,7 +30,8 @@ Write one prompt a new session can paste and act on with no memory of this one. 
    - done + unverified: never exercised, or believed but not checked; say how to confirm. Built ≠ deployed ≠ proven;
    - not started.
    Carry the current approved behavior matrix per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`, with exact source/artifact identity, producer paths, exceptions and the one owner/next-action pointer. Keep promised replies, holds and manual/customer steps open separately from implementation, deployment and behavior acceptance.
-3. **Mark every decision** `(user)` when the user made or approved it, else `(proposed, awaiting user)`; never upgrade one. Abandoned approaches go under Decisions as `Rejected:` with why, so they aren't retried.
+3. Carry the active deliverable and current question frontier per `${CLAUDE_SKILL_DIR}/../workflow-contracts/decisions.md`: settled/open IDs, dependencies, source/revision, owner and verified session route. Older completed handoffs remain historical and cannot replace the active request. **Mark every decision** `(user)` when the user made or approved it, else `(proposed, awaiting user)`; never upgrade one. Abandoned approaches go under Decisions as `Rejected:` with why, so they aren't retried.
+   Carry the route and session: source session and its single owner; requested model/effort (and ceiling); observed model and effort, or `unknown` when the host doesn't expose them (never copy the requested value); the environment readiness receipt (environment, auth context, ref, age), missing access and limits. `Session:` says `fresh` by default: the next session never resumes, continues or takes over a session owned elsewhere. Write `authorized resume` only when the single owner resumes its own session under recorded authority, naming both. When the user takes over, write `human takeover` with the documented route, continuity (same session, local copy or diff only), exact ID kind, the user's command and checks, and the release state from agent-coordination worker-execution.md § Human takeover and handback; a pending or unknown state means the assistant still holds the writer role and the user waits. A handoff starts no new workers.
 4. **Fill the template.**
    - Task mode: line 1 points at the folder. Add only what it lacks: work after its last log entry, unlogged decisions, the half-done item.
    - Conversation mode: fill every section from the conversation. State conclusions reached at real cost (a root cause, a measurement) so they aren't re-derived.
@@ -39,17 +40,18 @@ Write one prompt a new session can paste and act on with no memory of this one. 
 5. **Check the block.**
    - Length: the whole report fits the handoff cap in contracts.md § Report (lines and words). Over it → cut detail and point to files.
    - Content: no secrets, tokens, customer data or pasted logs and code; reference the file or command instead.
-   - Format: no code fences inside; commands go in backticks.
+   - Format: plain text only, because the block is often pasted after a command, which rejects anything else: no code fences, backticks, bold or other inline formatting, no links or URLs, no @-mentions, and no word that starts with "/" (write paths as ~/… or repo-relative). Put commands in double quotes.
    - Self-contained: no "as discussed"; name every file, branch and command. Verify the destination can read the artifact through its supported surface; otherwise inline essentials and label inaccessible detail. Count the actual block: <=40 lines and <=450 words, including inline matrix rows.
-6. **Save** the block's contents to `$MAIN/.claude/drafts/handoffs/<date>-<slug>.md` in both modes (conversation mode: slug from the goal). Read a file of the same name before replacing it. Then keep only the newest `Handoffs kept` files there (`ls -t`), deleting the older ones. Keep `.claude/drafts/` excluded per contracts.md.
+6. **Save** the block's contents to `$MAIN/.claude/drafts/handoffs/<date>-<slug>.md` in both modes (conversation mode: slug from the goal). Read a file of the same name before replacing it. Preserve older handoffs; retention cleanup needs separately authorized scope. Keep `.claude/drafts/` excluded per contracts.md.
 
 ## Report (cap per contracts.md § Report)
 At most one line of text, the block, then `Saved: <path>` if saved. Nothing else. The near-compaction offer stays one line.
 
 ## Template
 ```
-Continue <slug or goal in a few words> in <repo> (<MAIN path>). First: <read <TASK path>/log.md and action-items.md | run `git status` in <worktree path>>. Don't redo anything marked done.
+Continue <slug or goal in a few words> in <repo> (<MAIN path as ~/…>). First: <read <TASK path>/log.md and action-items.md | run "git status" in <worktree path>>. Don't redo anything marked done.
 Goal: <one or two sentences: what and why>
+Active request: <latest authenticated instruction/source/revision; historical completed work excluded>
 Decisions:
 - <choice> — <why> (user)
 - <choice> — <why> (proposed, awaiting user)
@@ -58,12 +60,15 @@ State:
 - Done + verified: <change> — <command → result>
 - Done + unverified: <change or belief> — confirm by <check>
 - Not started: <item>
-Open questions for the user: <question — options, which you'd pick> | none
+Decision frontier: <settled/open IDs, prerequisites, sources; supersedes old choice only within named scope>
+Open questions for the user: <question — options, which you'd pick; understanding is not execution approval> | none
 Current contract: <matrix artifact/revision/source identity; approved behavior, exceptions and producer paths; inline essentials if inaccessible>
 Open completion conditions: <implementation / deployment / observed behavior / promised manual follow-through; owner, hold and next action>
 Key files: <path:line — why it matters>, …
-Git (run <UTC time>): branch <name> (<n unpushed | no upstream>) · <base> vs origin: ahead <n>, behind <n> · <n> uncommitted · worktree <path | main checkout>
-Recent commits: <sha subject> · <sha subject> · <sha subject>
+Route & access: source <session> owned by <owner> · requested <model>/<effort> (ceiling <effort | none>) · observed <model | unknown>/<effort | unknown> · environment <id>, auth context <ref>, readiness <ref, age | none> · missing: <list | none> · limits: <list | none>
+Session: fresh (owner <owner> keeps <session>; do not resume, continue or take it over) | authorized resume of <session> by its owner <owner> (<authority ref>) | human takeover of <session> (<route>, <continuity>; run "<command>" after <checks>; state <pending | released | handed back>)
+Git (run <UTC time>): branch <name> (<n unpushed | no upstream>) · <base> vs origin: ahead <n>, behind <n> · <n> uncommitted · worktree <path | main checkout> | not a repo
+Recent commits (git repos only): <sha subject> · <sha subject> · <sha subject>
 Next: <one action> — Done when: <observable check> | awaiting user: <deploy | approve | …> — <what they are asked to approve>
 Guardrails (max 5, from CLAUDE.md and this session; the user's words verbatim):
 - <constraint the next step could break>

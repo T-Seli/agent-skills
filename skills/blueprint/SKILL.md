@@ -27,7 +27,7 @@ For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-cont
 3. **Reply** (Answer report). The fix is S (one obvious change the evidence pins) → end with the `Fix:` line; implement it now if a go-ahead was already given (contracts.md § Consent), else stop for "fix it". The fix isn't S → end with `Fix: needs a plan` and switch to Plan mode, reusing these facts: the scout fills only what is missing.
 
 ## Plan mode
-1. **State the question** in one sentence. A reported cause is a hypothesis, not a fact. Resolve ambiguity now, before any fan-out.
+1. **State the question** in one sentence. A reported cause is a hypothesis, not a fact. For material ambiguity use `${CLAUDE_SKILL_DIR}/../workflow-contracts/decisions.md`: research facts first, ask prerequisite-ready choices in the owning worker, and preserve settled decisions. Clear authorized work needs no extra interview.
 2. **Classify**: bug · feature · architecture · list (feedback lists use `list`). Pick a `<slug>` and `<type>`.
 3. **Scout.** One `scout` sub-agent gathers the facts every architect needs, so no architect re-surveys the repo. Ask for, with `path:line` and proven/inferred marks:
    - where the behavior lives; its callers and callees; who owns its data and config (§ Map, § Tenancy);
@@ -67,13 +67,13 @@ For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-cont
    Type: <type> · Slug: <slug> · Class: <class> · Base: <branch, only if not the project's> · Updated: <UTC>
    ## Question
    ## Facts            proven / inferred / unknown, each with path:line or source
-   ## Current behavior matrix   identity, existing capability, approved rows, producer paths, exceptions; per behavior.md
+   ## Current behavior matrix   identity, existing capability, approved rows, producer paths, exceptions; per behavior.md; include domain terms, decision IDs/sources and observable acceptance per decisions.md
    ## Recommendation   approach, and why it won (a list gets one subsection per cluster)
    ## Changes          file or module → what changes
-   ## Adoption · ## System fit · ## Risks
+   ## Adoption · ## System fit · ## Risks · ## Out of scope
    ## Rejected         one line each: angle — why
    ## Open decisions   question + your default
-   ## Verify           1. <step> — Done when: <observable check>
+   ## Verify           Behavior boundary: <where the outcome is observed> · 1. <step> — Done when: <observable check>
    ## Revisions        <UTC> — what changed and why
    ```
 7. **Reply** (Plan report), then start action-items per contracts.md § Chain.
@@ -94,6 +94,6 @@ Rejected: <angle> — <why>; <angle> — <why>
 Verify: <the 1–3 checks that prove it works>
 Size: <S/M/L> · Draft: <path to plan.md>
 Decide: 1. <question>? Default: <default>   (one line each, or "none")
-Next: action-items follows; then building starts on a go-ahead ("approved", or given earlier), or change a default by number.
+Next: action-items follows within existing scope; build only dependency-ready items with scoped authority. Resolve material open choices without treating defaults as accepted.
 ```
 Put any `Add to CLAUDE.md § <section>: <fact>` line (for a section the scout had to discover) above `Next:`. Never end on a line that asks for nothing.

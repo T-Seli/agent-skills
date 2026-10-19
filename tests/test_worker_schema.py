@@ -39,7 +39,7 @@ class WireSchema(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'schema.json'
             w.Codex.write_schema(path)
-            argv = w.Codex().command('synthetic only', cwd=d, schema_file=path)
+            argv = w.Codex(model="fixture-codex", effort="medium").command('synthetic only', cwd=d, schema_file=path)
             return json.loads(Path(argv[argv.index('--output-schema') + 1]).read_text())
 
     def test_serialized_cli_file_satisfies_strict_contract(self):
@@ -79,7 +79,7 @@ class WireSchema(unittest.TestCase):
             changed_criteria='return source-bound facts', next_action='return facts', environment='synthetic', receipt_ref='actual:ack')
         binding = t.current_task_binding(record)
         self.assertIsNone(binding['packet_sha256'])
-        parsed = w.Codex().parse(stdout(binding))['report']
+        parsed = w.Codex(model="fixture-codex", effort="medium").parse(stdout(binding))['report']
         self.assertEqual(t._event_result_binding(record, parsed), 'current')
         p = packet(task_id=record['task_id'], revision=1, owner='owned', scope='synthetic',
             exclusions=['writes'], baseline='a' * 40, deliverables=['communication'],
@@ -95,14 +95,14 @@ class WireSchema(unittest.TestCase):
         before = copy.deepcopy(w.REPORT_SCHEMA)
         self.wire()
         self.assertEqual(w.REPORT_SCHEMA, before)
-        argv = w.Claude().command('synthetic', session_id='owned', resume=False)
+        argv = w.Claude(model="fixture-claude", effort="medium").command('synthetic', session_id='owned', resume=False)
         self.assertEqual(json.loads(argv[argv.index('--json-schema') + 1]), before)
 
     def test_evidence_json_transport_restores_arbitrary_task_fields(self):
         evidence = {'task_id': 'current', 'revision': 2, 'packet_sha256': 'p',
                     'criterion_evidence': {'manager-route': {'observed_results': {'ordinary-manager': '403'},
                     'artifact_hashes': {'task-defined-kind': 'h'}}}}
-        parsed = w.Codex().parse(stdout({'completion_report': json.dumps(evidence), 'verifier_report': json.dumps(evidence)}))
+        parsed = w.Codex(model="fixture-codex", effort="medium").parse(stdout({'completion_report': json.dumps(evidence), 'verifier_report': json.dumps(evidence)}))
         self.assertFalse(parsed['error'])
         self.assertEqual(parsed['report'], {'completion_report': evidence, 'verifier_report': evidence})
 
@@ -110,13 +110,13 @@ class WireSchema(unittest.TestCase):
         for bad in ('{', '[]', 'null', 'true', '42', '"text"'):
             for name in ('completion_report', 'verifier_report'):
                 with self.subTest(value=bad, field=name):
-                    parsed = w.Codex().parse(stdout({name: bad}))
+                    parsed = w.Codex(model="fixture-codex", effort="medium").parse(stdout({name: bad}))
                     self.assertTrue(parsed['error'])
                     self.assertIsNone(parsed['report'])
 
     def test_unused_null_and_legacy_object_reports_are_preserved(self):
         report = {'completion_report': None, 'verifier_report': {'task_id': 'legacy'}}
-        self.assertEqual(w.Codex().parse(stdout(report))['report'], report)
+        self.assertEqual(w.Codex(model="fixture-codex", effort="medium").parse(stdout(report))['report'], report)
 
     @unittest.skipUnless(os.environ.get('AGENT_SKILLS_CODEX_SCHEMA_LIVE') == '1', 'opt-in actual CLI/service boundary')
     def test_live_cli_service_accepts_exact_generated_file(self):
@@ -128,10 +128,10 @@ class WireSchema(unittest.TestCase):
             prompt = ('Synthetic non-sensitive schema smoke test. Do not use tools or read files. Return status=running, '
                       'summary=schema accepted, commit/tests/need/action/target and all binding strings empty, revision=0, '
                       'unused optional fields null. Do not claim readiness or source consumption.')
-            argv = w.Codex(model=model).command(prompt, cwd=d, schema_file=path)
+            argv = w.Codex(model=model, effort=effort).command(prompt, cwd=d, schema_file=path)
             argv[2:2] = ['--skip-git-repo-check', '-c', 'model_reasoning_effort=' + json.dumps(effort)]
             run = subprocess.run(argv, cwd=d, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
-            parsed = w.Codex().parse(run.stdout)
+            parsed = w.Codex(model="fixture-codex", effort="medium").parse(run.stdout)
             self.assertEqual(run.returncode, 0, run.stdout)
             self.assertFalse(parsed['error'], run.stdout)
             self.assertIsInstance(parsed['report'], dict)

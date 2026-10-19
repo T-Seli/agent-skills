@@ -1,0 +1,239 @@
+{
+  "type": "object",
+  "properties": {
+    "receipt_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\n]+$"
+    },
+    "action_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\n]+$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\n]+$"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\n]+$"
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\n]+$"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "retry_of": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\n]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observed_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "operation": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\n]+$"
+        },
+        "scope_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\n]+$"
+        },
+        "scope_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "name",
+        "scope_ref",
+        "scope_sha256",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "approval": {
+      "type": "object",
+      "properties": {
+        "source_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\n]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\n]+$"
+        },
+        "provenance": {
+          "enum": [
+            "direct-user",
+            "relayed-user",
+            "caller-reported",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "source_ref",
+        "channel",
+        "provenance"
+      ],
+      "additionalProperties": false
+    },
+    "reviewer": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "enum": [
+            "accepted",
+            "rejected",
+            "unknown",
+            "not-required"
+          ]
+        },
+        "reason_code": {
+          "enum": [
+            "cancelled",
+            "execution-error",
+            "missing-authorization",
+            "new-security-gate",
+            "none",
+            "policy-denied",
+            "stale-scope",
+            "transport",
+            "unknown",
+            "untrusted-relay"
+          ]
+        },
+        "reason_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\n]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "result",
+        "reason_code",
+        "reason_ref"
+      ],
+      "additionalProperties": false
+    },
+    "source_refs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512,
+        "pattern": "^[^\\n]+$"
+      }
+    },
+    "delivery": {
+      "enum": [
+        "cancelled",
+        "delivered",
+        "failed",
+        "not-attempted",
+        "unknown"
+      ]
+    },
+    "admission": {
+      "enum": [
+        "admitted",
+        "cancelled",
+        "denied",
+        "not-attempted",
+        "unknown"
+      ]
+    },
+    "execution": {
+      "enum": [
+        "cancelled",
+        "failed",
+        "not-started",
+        "running",
+        "succeeded",
+        "unknown"
+      ]
+    },
+    "verification": {
+      "enum": [
+        "failed",
+        "pending",
+        "unknown",
+        "verified"
+      ]
+    }
+  },
+  "required": [
+    "receipt_id",
+    "action_id",
+    "attempt_id",
+    "owner",
+    "target",
+    "schema_version",
+    "retry_of",
+    "observed_at_utc",
+    "operation",
+    "approval",
+    "reviewer",
+    "source_refs",
+    "delivery",
+    "admission",
+    "execution",
+    "verification"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Structural schema. Python validator additionally enforces UTC, receipt/attempt binding, temporal order and lifecycle invariants."
+}

@@ -110,7 +110,8 @@ class CheckpointTests(unittest.TestCase):
         updated = bound(r, revision=2, deliverable='small-demo', displaced_reason='New request; retain critical read')
         view = brief(updated)['operating_state']
         self.assertEqual([(x['id'], x['owner'], x['overdue']) for x in view['retained_obligations']],
-                         [('critical-read', 'worker-a', True)])
+                         [('critical-read', 'worker-a', True), ('small-demo', 'worker-a', False)])
+        self.assertTrue(view['retained_obligations'][1]['checkpoint_missing'])
         self.assertEqual(view['recorded_approvals'], r['approvals'])
         self.assertFalse(view['native_enforcement'])
         self.assertEqual(updated['coordination']['acceptance_state'], 'unreviewed')
@@ -155,7 +156,9 @@ class CheckpointTests(unittest.TestCase):
         r['coordination']['contract_consumption']['acceptance'] = {'receipt_ref': 'acceptance:verified'}
         self.assertEqual(tasks.operating_view(r, now=LATE)['retained_obligations'], [])
         r = bound(r, revision=2, deliverable='next', displaced_reason='retain earlier obligation')
-        self.assertEqual(tasks.operating_view(r, now=LATE)['retained_obligations'], [])
+        rows = tasks.operating_view(r, now=LATE)['retained_obligations']
+        self.assertEqual([x['id'] for x in rows], ['next'])
+        self.assertTrue(rows[0]['checkpoint_missing'])
         self.assertEqual(r['coordination']['completed_obligations'][0]['completion_ref'], 'acceptance:verified')
 
     def test_watch_drift_reschedule_and_historical_evidence_preserved(self):

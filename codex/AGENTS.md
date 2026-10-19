@@ -6,7 +6,7 @@ agreement, the reply style and the Codex notes. Edit the sources, not the copy.
 - Project `AGENTS.md`, project `CLAUDE.md` and explicit user instructions win
   over this shared workflow, per contracts.md § Layers.
 - Read the project's `CLAUDE.md` when it exists; Codex does not load it.
-- Skills: `$prime-context`, `$blueprint`, `$action-items`, `$implement`,
+- Skills: `$prime-context`, `$grill-me`, `$blueprint`, `$action-items`, `$implement`,
   `$test-review`, `$deploy`, `$monitor`, `$handoff`, `$agent-coordination`, `$approval-handoff`, `$system-audit`. Each starts from the
   user's plain words and starts the next one itself, per contracts.md § Chain.
   Deploy runs once the user has given a go-ahead, per contracts.md § Consent.

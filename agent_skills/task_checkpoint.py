@@ -255,12 +255,16 @@ def operating_view(record, *, now=None):
     for item in ([active] if active else []) + c.get('obligations', []):
         checkpoint = item.get('checkpoint')
         completed = item is active and record.get('status') == 'verified-done'
-        if not checkpoint or item.get('state') == 'superseded' or completed:
+        if item.get('state') == 'superseded' or completed:
             continue
         retained.append({'id': item['id'], 'revision': item['revision'], 'owner': item.get('owner'),
-                         'state': item.get('state', 'active'), **deepcopy(checkpoint),
+                         'state': item.get('state', 'active'),
+                         'critical': False, 'rank': None,
+                         'next_action': item.get('next_action'),
+                         **deepcopy(checkpoint or {}),
+                         'checkpoint_missing': not bool(checkpoint),
                          'decision_source_ref': item['source_ref'],
-                         'overdue': clock > _time(checkpoint['next_check_at_utc'])})
+                         'overdue': bool(checkpoint) and clock > _time(checkpoint['next_check_at_utc'])})
     watches = []
     for watch_id, baseline in c.get('watch_baselines', {}).items():
         cp = baseline.get('checkpoint')
@@ -287,8 +291,10 @@ def operating_view(record, *, now=None):
             'current_owner': c.get('canonical_owner'),
             'navigation': {'task_id': record['task_id'], 'execution_owner': c.get('canonical_owner'),
                            'session_id': (record.get('worker') or {}).get('session_id'),
+                           'writer': (record.get('worker') or {}).get('owner'),
+                           'handoff': deepcopy((record.get('worker') or {}).get('handoff')),
                            'worktree': record.get('worktree'), 'source_thread': record.get('source_thread')},
-            'retained_obligations': sorted(retained, key=lambda x: (not x['critical'], x['rank'], x['id'])),
+            'retained_obligations': sorted(retained, key=lambda x: (not x['critical'], x['rank'] if x['rank'] is not None else float('inf'), x['id'])),
             'recorded_approvals': deepcopy(record.get('approvals', [])),
             'current_claims': current_claims(record), 'monitors': watches,
             'execution_context': deepcopy(c.get('execution_context')),

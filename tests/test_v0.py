@@ -27,12 +27,12 @@ class V0Tests(unittest.TestCase):
         loaded = catalog.load(selected["skill_id"], role="worker")
         self.assertEqual([x["path"] for x in loaded["sources"]],
                          ["skills/test-review/SKILL.md", "skills/workflow-contracts/contracts.md",
-                          "skills/workflow-contracts/behavior.md"])
+                          "skills/workflow-contracts/behavior.md", "skills/workflow-contracts/decisions.md"])
         self.assertTrue(catalog.fresh(loaded))
         self.assertIn("core:skills/test-review/SKILL.md", loaded["package_hashes"])
         self.assertTrue(all("content" not in x for x in catalog.index()))
         composed = catalog.compose(["company.blueprint", "company.test-review"], role="worker")
-        self.assertEqual(len(composed["sources"]), 4)  # two bodies, two shared contracts
+        self.assertEqual(len(composed["sources"]), 5)  # two bodies, three shared contracts
         with self.assertRaises(ValueError):
             catalog.compose(["company.handoff"] * 4, role="worker")
         self.assertEqual(catalog.select("preview change", role="worker")["decision"], "no-match")
@@ -59,6 +59,22 @@ class V0Tests(unittest.TestCase):
                              next_step='Read the current criterion')
             current = catalog.compose(["company.blueprint", "company.test-review", "company.handoff"], role="worker")
             self.assertEqual(sum(x["path"] == path for x in current["sources"]), 1)
+
+    def test_decision_contract_change_invalidates_worker_handoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            shutil.copytree(ROOT, root, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+            catalog = Catalog(root)
+            for role in ('worker', 'dot'):
+                self.assertEqual(catalog.select('grill me', role=role)['skill_id'], 'company.grill-me')
+            bundle = catalog.load('company.grill-me', role='worker')
+            path = root / 'skills/workflow-contracts/decisions.md'
+            self.assertIn('skills/workflow-contracts/decisions.md', [x['path'] for x in bundle['sources']])
+            path.write_text(path.read_text() + '\nChanged decision prerequisite.\n')
+            self.assertFalse(catalog.fresh(bundle))
+            with self.assertRaisesRegex(ValueError, 'freshness'):
+                make_handoff(catalog, bundle, work_item='synthetic-decision', target_role='dot',
+                             next_step='Reconcile changed prerequisite')
 
     def test_project_binding_and_model_alias(self):
         catalog = Catalog(ROOT, project=PROJECT, profile=PROFILE)
@@ -100,6 +116,7 @@ class V0Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for path in ("agent_skills/catalog.json", "skills/test-review/SKILL.md",
+                         "skills/grill-me/SKILL.md", "skills/workflow-contracts/decisions.md",
                          "skills/workflow-contracts/contracts.md", "skills/workflow-contracts/behavior.md", "skills/skill-steward/SKILL.md",
                          "skills/agent-coordination/SKILL.md", "skills/agent-coordination/references/tasks.md",
                          "skills/agent-coordination/references/routing.md",

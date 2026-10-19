@@ -17,6 +17,7 @@ from pathlib import Path
 
 from agent_skills.task_contract import assess_completion, digest, validate_packet
 from agent_skills.approval_handoff import valid_approval_parts
+from agent_skills.worker_execution import require_unfrozen
 from agent_skills.task_checkpoint import (
     record_checkpoint, record_claim, record_watch_checkpoint, record_watch_result,
     record_execution_context, capture_provenance, operating_view, current_material_facts,
@@ -1066,17 +1067,26 @@ def begin_dispatch(record, dispatch_id, *, resume):
     """Mark a launch uncertain before it happens; refuses while another is unresolved or the session is human-owned."""
     if record["worker"]["owner"] != "assistant":
         raise PermissionError("human-owned session: report to the user, never dispatch to, resume or interrupt it")
+    require_unfrozen(record)
     if any(o["id"] == dispatch_id for o in record["outbox"]):
         raise ValueError(f"dispatch id {dispatch_id} already used: pick a new one")
     if any(o["state"] == "uncertain" for o in record["outbox"]):
         raise RuntimeError("an earlier dispatch is unresolved: reconcile it before any new one")
     r = copy.deepcopy(record)
-    r["outbox"].append({"id": dispatch_id, "state": "uncertain"})
+    route = record["worker"].get("execution_route")
+    if route and resume and not record["worker"].get("session_id"):
+        raise ValueError("resume requires an owned session receipt")
+    if route and not resume and record["worker"].get("session_id"):
+        raise ValueError("existing owned session must be resumed, not duplicated")
+    receipt = {"id": dispatch_id, "state": "uncertain"}
+    if route:
+        receipt.update(resume=bool(resume), execution_route=copy.deepcopy(route))
+    r["outbox"].append(receipt)
     return r
 
 
 def settle_dispatch(record, dispatch_id, state):
-    """state: sent (receipt or transcript found), not-sent (proven absent) or unknown (stays uncertain)."""
+    """state: sent (supported launch receipt), not-sent (proven absent), or unknown."""
     if state not in ("sent", "not-sent", "unknown"):
         raise ValueError(state)
     r = copy.deepcopy(record)
@@ -1088,6 +1098,9 @@ def settle_dispatch(record, dispatch_id, state):
     return r
 
 
+from agent_skills.task_reconciliation import reconcile_tasks
+
+
 def attention(records, *, now=None):
     """What the user should hear about: decisions, reviews, unavailable workers, unresolved launches."""
     out = []
@@ -1097,6 +1110,10 @@ def attention(records, *, now=None):
     for r in sorted(records, key=rank):
         view = operating_view(r, now=now)
         for item in view['retained_obligations']:
+            if item.get('checkpoint_missing'):
+                out.append((r['task_id'], f"missing checkpoint: {item['id']} owner={item['owner']}"))
+            elif item['overdue'] and not item['critical']:
+                out.append((r['task_id'], f"overdue obligation: {item['id']} next={item['next_action']}"))
             if item['critical']:
                 condition = 'overdue' if item['overdue'] else 'retained'
                 out.append((r['task_id'], f"critical {condition}: {item['id']} owner={item['owner']} next={item['next_action']}"))

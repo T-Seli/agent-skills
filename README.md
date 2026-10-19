@@ -123,6 +123,7 @@ Each skill starts from the user's plain words and starts the next one itself; th
 | `settings.snippet.json` | Turns on the style and the hook; lets skills read `skills/workflow-contracts/` | Merged once at install |
 | `skills/workflow-contracts/project-CLAUDE-template.md` | Every project field, with `none` options | On demand (onboarding) |
 | `skills/prime-context` | Repo briefing, stale-work list, newest handoff | Description always; body on invoke |
+| `skills/grill-me` | Dependency-ordered technical decision interview in the owning session | Description always; shared decision contract on invoke |
 | `skills/blueprint` | Angles, rubric scoring, proposal format, bug-evidence mode | Description always; body on invoke; `references/` read by the scout for bugs |
 | `skills/action-items` | Action-item format | Description always; body on invoke |
 | `skills/implement` | One-line plans, sync, locked worktree, collision check, env setup, per-item commits, resume | Description always; body on invoke |
