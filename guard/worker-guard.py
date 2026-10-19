@@ -99,7 +99,7 @@ def aws_reason(args):
         return None
     service, op = rest[0], rest[1]
     if service == "s3":
-        if op in ("rm", "mb", "rb") or (op in ("cp", "mv", "sync") and rest[-1].startswith("s3://")):
+        if op in ("rm", "mb", "rb") or (op in ("cp", "mv", "sync") and any(a.startswith("s3://") for a in rest[3:])):
             return f"aws s3 {op} writes to S3"
         return None
     verb = op.split("-")
@@ -185,7 +185,7 @@ def check_bash(command, cwd, depth=0):
 def check(event):
     tool, data = event["tool_name"], event.get("tool_input") or {}
     cwd = event.get("cwd") or os.getcwd()
-    if tool == "Bash":
+    if tool == "Bash" or isinstance(data.get("command"), str):  # Bash, Monitor and any shell-running tool
         return check_bash(data["command"], cwd)
     if tool in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
         path = data.get("file_path") or data.get("notebook_path")

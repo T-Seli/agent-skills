@@ -41,7 +41,8 @@ class WorkerGuardTests(unittest.TestCase):
                         "git -C ../other log -3", "python3 -m unittest", "node build.js", "ls -la",
                         "mkdir -p build", "npm test", "rg deploy docs/", "grep -rn 'git push' --include=*.md . | wc -l",
                         "timeout 30 python3 run.py", "aws --region us-west-1 logs tail /x",
-                        "aws s3 cp s3://bucket/key ./key", "git config --get user.email",
+                        "aws s3 cp s3://bucket/key ./key", "aws s3 cp s3://b/k ./k --quiet --recursive",
+                        "git config --get user.email",
                         "kubectl get pods", "terraform plan", "cat .env.example", "echo hi > out.txt 2>&1",
                         "claude --version", "claude agents --json --all", "gh pr view 12", "gh release list"]:
             with self.subTest(command=command):
@@ -56,6 +57,8 @@ class WorkerGuardTests(unittest.TestCase):
                         "scp a host:/tmp/a", "rsync -a dist/ host:/srv/", "psql \"$DATABASE_URL\" -c 'select 1'",
                         "aws lambda update-function-code --function-name f", "aws --profile p ec2 terminate-instances",
                         "aws s3 cp ./x s3://bucket/x", "aws s3 rm s3://bucket/x", "gh pr create --fill",
+                        "aws s3 cp ./dist s3://bucket/ --recursive --cache-control max-age=0",
+                        "aws s3 sync dist s3://b --delete --exclude index.html",
                         "gh pr merge 12", "gh api -X POST repos/o/r/issues", "gh api repos/o/r/labels -f name=x",
                         "git config core.hooksPath /tmp/h", "git remote set-url origin x",
                         "claude -p 'do it' --dangerously-skip-permissions", "claude -p hi",
@@ -78,6 +81,8 @@ class WorkerGuardTests(unittest.TestCase):
             with self.subTest(tool=tool, path=path):
                 self.assertEqual(self.guard(tool, file_path=path)[0], 2)
         self.assertEqual(self.guard("Write", file_path="src/app.py")[0], 0)
+        self.assertEqual(self.guard("Monitor", command="git push origin main")[0], 2)
+        self.assertEqual(self.guard("Monitor", command="tail -f build.log")[0], 0)
         self.assertEqual(self.guard("Read", file_path=".env")[0], 2)
         self.assertEqual(self.guard("Read", file_path="README.md")[0], 0)
 
