@@ -176,14 +176,16 @@ class TargetAndAwakeTests(unittest.TestCase):
     def test_critical_wrapper_bounds_assertion_and_returns_child_status(self):
         with tempfile.TemporaryDirectory() as temp:
             fake = Path(temp) / "caffeinate"
-            fake.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE\"\nshift 3\nexec \"$@\"\n")
+            fake.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE\"\n")
             fake.chmod(0o755)
             capture = Path(temp) / "args"
             env = dict(os.environ, PATH=f"{temp}:{os.environ['PATH']}", CAPTURE=str(capture))
             script = str(ROOT / "scripts" / "critical-local-work.sh")
             result = subprocess.run([script, "task-1", "60", "--", "/bin/sh", "-c", "exit 7"], env=env)
             self.assertEqual(result.returncode, 7)
-            self.assertEqual(capture.read_text().splitlines()[:3], ["-i", "-t", "60"])
+            args = capture.read_text().splitlines()
+            self.assertEqual(args[:4], ["-i", "-t", "60", "-w"])
+            self.assertTrue(args[4].isdigit())
             for value in ("0", "14401", "oops"):
                 result = subprocess.run([script, "task-1", value, "--", "/bin/true"],
                                         env=env, capture_output=True)
