@@ -166,7 +166,7 @@ def start(args):
     os.chmod(run / "prompt.md", 0o600)
     claude = workers.Claude(route["model"], route["effort"], route.get("max_cost_usd"),
                             settings=guard_settings(run), max_turns=route.get("max_turns"),
-                            name=args.name or task_id, mcp_config=cfg.get("mcp_config"))
+                            name=args.name or task_id)
     write_json(run / "params.json", {
         "task_id": task_id, "dispatch_id": dispatch_id, "cwd": str(cwd), "depth": depth + 1,
         "argv": claude.command(session_id=session_id, resume=args.resume),

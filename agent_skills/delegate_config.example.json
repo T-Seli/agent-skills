@@ -16,6 +16,5 @@
   "max_live": 4,
   "aws": false,
   "databases": false,
-  "mcp_config": null,
   "task_history_repo": null
 }

@@ -74,13 +74,12 @@ class Claude:
     kind = "claude"
 
     def __init__(self, model=None, effort=None, max_cost_usd=None, *, settings=None, max_turns=None,
-                 name=None, mcp_config=None):
+                 name=None):
         # A worker has no one to approve a prompt, so it runs in bypassPermissions; the guard settings
         # (deny rules + PreToolUse hook) are what stop release, production and self-modifying calls.
         self.model = model
         self.effort, self.max_cost_usd = effort, max_cost_usd
         self.settings, self.max_turns, self.name = settings, max_turns, name
-        self.mcp_config = mcp_config or '{"mcpServers":{}}'
 
     def command(self, *, session_id, resume):
         """`--session-id` fixes the id before launch, so an interrupted launch can be found later.
@@ -92,7 +91,7 @@ class Claude:
                 "--json-schema", json.dumps(REPORT_SCHEMA),
                 "--permission-mode", "bypassPermissions", "--settings", str(self.settings),
                 # Only the servers named here: a worker never inherits the user's connectors or data tools.
-                "--strict-mcp-config", "--mcp-config", self.mcp_config]
+                "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
         argv += ["--resume", session_id] if resume else ["--session-id", session_id]
         argv += ["--model", self.model, "--effort", self.effort]
         if self.max_turns is not None:
