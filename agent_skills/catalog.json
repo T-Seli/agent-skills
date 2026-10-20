@@ -17,6 +17,7 @@
       "body": "skills/skill-steward/SKILL.md",
       "requires": [
         "skills/workflow-contracts/contracts.md",
+        "skills/workflow-contracts/behavior.md",
         "skills/workflow-contracts/decisions.md"
       ]
     },
@@ -59,6 +60,7 @@
       "body": "skills/approval-handoff/SKILL.md",
       "requires": [
         "skills/workflow-contracts/contracts.md",
+        "skills/workflow-contracts/behavior.md",
         "skills/agent-coordination/references/state.md"
       ]
     },
@@ -79,6 +81,7 @@
       "body": "skills/system-audit/SKILL.md",
       "requires": [
         "skills/workflow-contracts/contracts.md",
+        "skills/workflow-contracts/behavior.md",
         "skills/system-audit/references/reviewers.md",
         "skills/task-history/SKILL.md"
       ]
@@ -155,7 +158,8 @@
       ],
       "body": "skills/task-history/SKILL.md",
       "requires": [
-        "skills/workflow-contracts/contracts.md"
+        "skills/workflow-contracts/contracts.md",
+        "skills/workflow-contracts/behavior.md"
       ]
     },
     {
@@ -175,6 +179,7 @@
       "body": "skills/grill-me/SKILL.md",
       "requires": [
         "skills/workflow-contracts/contracts.md",
+        "skills/workflow-contracts/behavior.md",
         "skills/workflow-contracts/decisions.md"
       ]
     }

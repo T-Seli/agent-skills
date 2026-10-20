@@ -1,6 +1,16 @@
 # Current behavior and completion
 
-Read for a behavior change, decision brief, checklist or handoff. Keep this in the existing plan/task details; do not create another tracker.
+Read with contracts.md for every task; retain behavior details in the existing plan/task record, without another tracker.
+
+## Depth, not breadth
+
+Improve rigor within the authorized task, not its size. Before substantive work, identify the professional quality bar for this exact outcome; the rawest authorized primary evidence; the methods and tools suited to that evidence; and an independent observable check that could falsify the result. Use these to execute the task, without replacing execution with prompt rewriting or an unsolicited interview. A summary is a lead: trace material claims to primary sources when available. If evidence or tools are unavailable, name the gap, qualify the claim and continue independent authorized work; never probe denied access or widen permissions.
+
+Choose methods proportionate to risk: for investigations, reconstruct the timeline and test competing explanations; for engineering, trace producers/consumers and reproduce the defect; for analysis, inspect source data and assumptions. Verify against source artifacts, regression behavior, measurements or another independent standard, rather than your own assertion or the user's agreement. State what would disprove the conclusion and what remains unverified. More agents, tools, tests, deliverables or scope are not inherently deeper. Preserve privacy, exclusions, settled decisions and all permission gates; seek a new decision only for a material action outside existing authority.
+
+Rewrite a prompt only when asked. For that request, answer the four checks first, then rewrite for exactly that deeper task, retaining scope and gates. Preserve this original prompt as the reference:
+
+> I want a deeper version of this task, not a bigger one. Before rewriting it: (1) say what a top professional in this field would do here that I’m not asking for; (2) name the rawest material they would start from instead of what has already been digested for me; (3) name the specific methods and tools they would use; (4) say what, other than you or me, would show the result is right. Then rewrite my prompt to ask for exactly that.
 
 ## One current contract
 

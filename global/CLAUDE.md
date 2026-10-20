@@ -1,17 +1,18 @@
 # Global working agreement
 
-The project `CLAUDE.md` holds project facts and wins conflicts. Orchestrate: read-only questions go to sub-agents (`scout`); writer or long work goes to workers via `delegate.py` (agent-coordination § Delegate), in parallel, without asking.
+Project `CLAUDE.md` facts win conflicts. Orchestrate: scouts handle read-only questions; workers handle writers/long work via `delegate.py` (agent-coordination § Delegate), in parallel without asking.
 
-Read `workflow-contracts/contracts.md` first for shared names, contracts and defaults. At deployment-related task entry/resume, perform its deployment-readiness preflight.
+Read `workflow-contracts/contracts.md` first; perform its deployment-readiness preflight at deployment entry/resume.
 
-Tenant = whatever varies per install (customer, site, deployment). § Tenancy `none` ⇒ tenant rules don't apply.
+Tenant = what varies per install. § Tenancy `none` disables tenant rules.
 
 ## Engineering
+- Depth, not breadth: meet the professional quality bar using primary authorized evidence, appropriate tools and independent verification. Read `workflow-contracts/behavior.md` for execution; preserve scope, privacy and permission gates. Execute the task; rewrite prompts only when asked.
 - Plug-and-play: a new tenant or project adopts any change by config alone: no code or prompt edit, no branching on tenant or environment names. Varying values are layered config (global > tenant > narrower); tenant logic never enters shared code.
 - System lens: before changing code, name its callers, callees, and data and config owners.
 - Fix at the most central point; refine existing skills and helpers before adding new ones. Keep instructions compact and cohesive across orchestrator and worker roles.
-- Minimum code: nothing speculative, no impossible-state handling. Atomic functions; flag files past ~500 lines. Fail loudly: no silent fallbacks.
-- Match surrounding style; comments state only the non-obvious why.
+- Minimum code: nothing speculative, no impossible-state handling; atomic functions; flag files past ~500 lines. Fail loudly; no silent fallbacks.
+- Match surrounding style; explain only non-obvious choices.
 - Scope: every changed line traces to the request; remove only your own orphans; mention unrelated dead code.
 - Prompts (if the project ships them): shared text holds logic, per-install facts come via variables; harden an existing line before adding one; drop conflicting or redundant lines; never show end users internal tool names.
 
@@ -30,12 +31,12 @@ Tenant = whatever varies per install (customer, site, deployment). § Tenancy `n
 ## Verification
 - Define success first; each step gets a `Done when`. Bug fixes start with a reproducing test.
 - Run tests and linters before calling anything done; diff failure sets against `<base>`.
-- Long test or build output: a `mktemp` file, deleted by run end; read and log only its summary and failing ids.
+- Long output: use `mktemp`; report summary and failing ids; remove by run end.
 - Mock only external APIs; prefer the project's real test services.
 - Verify the artifact (deployed content, written row), not the exit code.
-- Verified = checked this session against the real thing; memory and docs are leads. State data freshness.
+- Verified = checked this session against the real thing; memory and docs are leads. State freshness.
 - Evidence: an empty result proves nothing; state n and timezone.
-- Blocked after `Attempts before blocked` tries (contracts.md § Defaults): record what you tried; move on.
+- Blocked after `Attempts before blocked` tries: record attempts; move on.
 
 ## Stages
 Which skill does what, and how each starts the next: contracts.md § Chain. No tracked changes before `/implement` runs on an approved plan or fix.

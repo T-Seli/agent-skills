@@ -1,6 +1,6 @@
 # Workflow contracts
 
-Every skill reads this file first. It is the only home for the names, files, flow, consent, report caps, log tokens and defaults below; skills say "per contracts.md" and never redefine them.
+Every skill reads this file first, then [behavior.md](behavior.md) for Depth, not breadth and completion. Names, files, flow, consent, report caps, log tokens and defaults live here; skills cite rather than redefine them.
 
 ## Layers
 - Precedence: project `CLAUDE.md` field › company rules file (optional: `~/.claude/rules/*.md` or an `@import` in the project file) › this file. Its optional `## Defaults` section overrides a default below using the same label.
