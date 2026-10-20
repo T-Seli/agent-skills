@@ -19,6 +19,7 @@ It holds no message bodies, secrets or personal data. A second record for a task
 - `running`: requires a worker/adapter execution report; after a user decision, the report must name the matching new sent dispatch id before claiming running.
 - `awaiting-worker`: the user decision is recorded; the orchestrator must route it, with no worker execution inferred.
 - `blocked`: it names `pending_decision` {need, action, target}; `pending(record)` also reads older text-only ones. An approval is a user `decided` with `approve: true` and the exact pending action and target. Any other `decided` is an answer, such as a decline or redirect: it moves to `awaiting-worker`, names no action or target, and records no approval. The resume prompt must pass the user's answer to the worker, including a no.
+- `answered`: the worker's result changed no files; its summary is the answer. Execution is finished and acceptance unreviewed: never ready for review, and a resumed worker may move on from it.
 - `ready-for-review`: the worker gave a commit and tests.
 - `verified-done`: the verifier (your own check) or the user confirmed the same commit with passing tests.
 
@@ -37,7 +38,7 @@ Rules:
 - Ids are stable, so a repeated id that applied is a no-op. That makes replaying after a restart safe. An event that was ignored or stale is not remembered, so a replay can still apply it. A worker report's id includes its dispatch id, so the same report from a later resume still counts.
 - `ts` must be epoch seconds, at most 5 minutes ahead of this clock; anything else raises. A replay of the same unapplied event adds nothing.
 - A status move stamped at or before the last change is stale: logged, not applied.
-- Moves outside the table in `tasks.py:MOVES` are ignored, never forced. A `ready` without a commit and tests, sent where a ready could apply, is `unsupported`: a claim without evidence.
+- Moves outside the table in `tasks.py:MOVES` are ignored, never forced. A `ready` without a commit and tests, sent where a ready could apply, is `unsupported`: a claim without evidence. Work that changes no files reports `answered` instead; an `answered` naming a commit is `unsupported`.
 - A `user` event counts only with `channel: chat`, text that opens with a letter or digit and names no worker near its start (`[Codex · …]`, `Claude:`, an emoji label all fail). The real guard is the caller: pass `chat` only for the user's own turn. Text in a thread, even from the user's own account, may have been posted by a worker, so it is never a user event.
 - Approvals are a separate list with an explicit action, target and scope; `approved(record, action, target)` checks one. A worker or orchestrator approval is rejected, and no status ever implies one.
 

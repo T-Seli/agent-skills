@@ -46,7 +46,7 @@ class WireSchema(unittest.TestCase):
         wire = self.wire()
         strict_contract(wire)
         self.assertEqual(len(wire['required']), len(w.REPORT_SCHEMA['properties']))
-        self.assertEqual(wire['properties']['status']['enum'], ['running', 'blocked', 'ready'])
+        self.assertEqual(wire['properties']['status']['enum'], ['running', 'blocked', 'answered', 'ready'])
 
     def test_old_serialized_schema_reproduces_service_rejection(self):
         legacy = json.loads(json.dumps(w.REPORT_SCHEMA))

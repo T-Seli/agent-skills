@@ -71,6 +71,21 @@ class LifecycleTests(unittest.TestCase):
             r, o = t.apply(r, ev(f'y{i}', 3 + i, 'worker', 'ready', **data))
             self.assertEqual((o, r['status']), ('unsupported', 'running'))
 
+    def test_a_read_only_answer_finishes_the_run_without_a_review_claim(self):
+        answer = dict(commit='', tests='', summary='3 files')
+        r, o = play(fresh(), ev('d', 1, 'adapter', 'dispatched'), ev('n', 2, 'worker', 'answered', **answer))
+        c = r['coordination']
+        self.assertEqual((o, r['status'], r['evidence'], c['execution_state'], c['acceptance_state']),
+                         (['applied'] * 2, 'answered', None, 'finished', 'unreviewed'))
+        self.assertNotIn(('answered', 'ready for review: verify the evidence'), t.attention([r]))
+        other, _ = play(fresh(), ev('d', 1, 'adapter', 'dispatched'))
+        for source in ('adapter', 'orchestrator', 'verifier'):
+            self.assertEqual(t.apply(other, ev('n', 2, source, 'answered', **answer))[1], 'ignored', source)
+        coded, o = t.apply(other, ev('n', 2, 'worker', 'answered', **READY))
+        self.assertEqual((o, coded['status']), ('unsupported', 'delivered'))
+        r, o = play(r, ev('y', 3, 'worker', 'ready', **READY))  # a resumed session goes on to change code
+        self.assertEqual((o, r['status']), (['applied'], 'ready-for-review'))
+
     def test_only_the_verifier_or_user_closes_and_only_on_the_same_passing_commit(self):
         base, _ = play(fresh(), ev('d', 1, 'adapter', 'dispatched'), ev('r', 2, 'worker', 'running'),
                        ev('y', 3, 'worker', 'ready', **READY))

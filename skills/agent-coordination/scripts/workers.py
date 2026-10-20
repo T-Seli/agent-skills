@@ -13,12 +13,13 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-# The worker's final answer; a ready claim still needs the verifier (tasks.MOVES).
+# The worker's final answer; a ready claim still needs the verifier (tasks.MOVES). `answered`: the
+# work changed no files and the summary is the result.
 REPORT_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": ["status", "summary", "commit", "tests", "need", "action", "target"],
     "properties": {
-        "status": {"enum": ["running", "blocked", "ready"]},
+        "status": {"enum": ["running", "blocked", "answered", "ready"]},
         "summary": {"type": "string"}, "commit": {"type": "string"},
         "tests": {"type": "string"}, "need": {"type": "string"},
         # For a blocked report: the exact action and target the user would approve.

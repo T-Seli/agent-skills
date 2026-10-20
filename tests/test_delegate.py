@@ -30,8 +30,9 @@ time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
 print(json.dumps({"type": "result", "session_id": sid, "is_error": False, "total_cost_usd": 0.01,
                   "num_turns": 2, "permission_denials": [
                       {"tool_name": "Bash", "tool_input": {"command": "TOKEN=x git push origin main"}}],
-                  "structured_output": {"status": "ready", "summary": "did it", "commit": "abc123",
-                                        "tests": "3 passed", "need": "", "action": "", "target": ""}}))
+                  "structured_output": json.loads(os.environ.get("FAKE_REPORT") or json.dumps(
+                      {"status": "ready", "summary": "did it", "commit": "abc123",
+                       "tests": "3 passed", "need": "", "action": "", "target": ""}))}))
 '''
 FAKE_CAFFEINATE = '#!/bin/sh\nprintf "%s\\n" "$@" > "$FAKE_DIR/caffeinate.args"\n'
 
@@ -122,6 +123,17 @@ class DelegateTests(unittest.TestCase):
 
         report = json.loads(self.delegate("report", "--days", "1").stdout)
         self.assertEqual((report["runs"], report["outcomes"], report["denials"]), (1, {"done": 1}, {"Bash:git": 1}))
+
+    def test_a_read_only_worker_answers_without_claiming_ready(self):
+        answer = {"status": "answered", "summary": "3 files", "commit": "", "tests": "", "need": "",
+                  "action": "", "target": ""}
+        self.assertEqual(self.start("--task-id", "q-1", env={"FAKE_REPORT": json.dumps(answer)}).returncode, 0)
+        waited = self.delegate("wait", "q-1", "--timeout", "30")
+        receipt = json.loads(waited.stdout)
+        self.assertEqual((waited.returncode, receipt["outcome"], receipt["report"]["status"],
+                          receipt["record_status"], receipt["bookkeeping_error"]), (0, "done", "answered", "answered", None))
+        record = json.loads((self.dir / "state" / "q-1.json").read_text())
+        self.assertEqual((record["coordination"]["execution_state"], record["evidence"]), ("finished", None))
 
     def test_depth_limit_refuses_before_any_record(self):
         refused = self.start("--task-id", "deep", env={"AGENT_SKILLS_DEPTH": "2"})

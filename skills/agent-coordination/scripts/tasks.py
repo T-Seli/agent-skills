@@ -24,15 +24,19 @@ from agent_skills.task_checkpoint import (
     validate_baseline_advance,
 )
 
-STATUSES = ("delivered", "accepted", "running", "blocked", "awaiting-worker", "ready-for-review", "verified-done")
+STATUSES = ("delivered", "accepted", "running", "blocked", "awaiting-worker", "answered", "ready-for-review",
+            "verified-done")
 # kind: (allowed sources, statuses it may leave, status it enters)
 MOVES = {
     "dispatched": ({"adapter"}, {None}, "delivered"),
     "accepted": ({"adapter", "worker"}, {"delivered"}, "accepted"),
-    "running": ({"adapter", "worker"}, {"delivered", "accepted", "awaiting-worker"}, "running"),
-    "blocked": ({"adapter", "worker"}, {"delivered", "accepted", "running", "awaiting-worker"}, "blocked"),
+    "running": ({"adapter", "worker"}, {"delivered", "accepted", "awaiting-worker", "answered"}, "running"),
+    "blocked": ({"adapter", "worker"}, {"delivered", "accepted", "running", "awaiting-worker", "answered"}, "blocked"),
     "decided": ({"user"}, {"blocked"}, "awaiting-worker"),
-    "ready": ({"worker", "verifier"}, {"delivered", "accepted", "running", "awaiting-worker"}, "ready-for-review"),
+    # A result that changed no files: the run finished with nothing to review as code; a resume may go on.
+    "answered": ({"worker"}, {"delivered", "accepted", "running", "awaiting-worker", "answered"}, "answered"),
+    "ready": ({"worker", "verifier"}, {"delivered", "accepted", "running", "awaiting-worker", "answered"},
+              "ready-for-review"),
     "verified": ({"user", "verifier"}, {"ready-for-review"}, "verified-done"),
     "rejected": ({"user", "verifier"}, {"ready-for-review"}, "running"),
     "reopen": ({"user", "verifier"}, {"ready-for-review", "verified-done"}, "running"),
@@ -175,7 +179,7 @@ def bind_task_contract(record, *, user_goal, constraints, priority_source_ref,
     for key in ("worker_return", "acceptance_assessment", "reported_acceptance_assessment",
                 "acceptance_completion_report", "acceptance_review_sha256"):
         r.pop(key, None)
-    if r.get("status") in ("ready-for-review", "verified-done"):
+    if r.get("status") in ("answered", "ready-for-review", "verified-done"):
         r["status"] = "awaiting-worker"
     return r
 
@@ -794,7 +798,7 @@ def bind_packet(record, value):
         if active:
             for key in ("parent_readback", "result_receipt_ref", "material_facts"):
                 active.pop(key, None)
-        if r["status"] in ("ready-for-review", "verified-done"):
+        if r["status"] in ("answered", "ready-for-review", "verified-done"):
             r["status"] = "awaiting-worker"
             r["resume_after"] = len(r["outbox"])
     r["acceptance_packet"] = value
@@ -884,13 +888,13 @@ def _apply(r, kind, source, data, ts, event_id):
     if source not in sources or r["status"] not in leaves:
         return "ignored"
     active = (r.get("coordination") or {}).get("active_deliverable")
-    if (source in ("worker", "verifier") and kind in ("running", "blocked", "ready", "verified") and
+    if (source in ("worker", "verifier") and kind in ("running", "blocked", "answered", "ready", "verified") and
             any(item.get("state") == "uncertain" for item in r.get("outbox", []))):
         return "unsupported"
-    if active and kind in ("running", "blocked", "ready", "verified"):
+    if active and kind in ("running", "blocked", "answered", "ready", "verified"):
         if _event_result_binding(r, data) != "current":
             return "unsupported"
-    if kind in ("running", "blocked", "ready") and r["status"] == "awaiting-worker" and not any(
+    if kind in ("running", "blocked", "answered", "ready") and r["status"] == "awaiting-worker" and not any(
         o["state"] == "sent" and event_id.startswith(o["id"] + ":")
         for o in r["outbox"][r.get("resume_after", len(r["outbox"])):]
     ):
@@ -910,6 +914,8 @@ def _apply(r, kind, source, data, ts, event_id):
             return "unsupported"
     if kind == "ready" and not (data.get("commit") and data.get("tests")):
         return "unsupported"  # a completion claim without a commit and tests is not ready for review
+    if kind == "answered" and data.get("commit"):
+        return "unsupported"  # a commit is code: it is reported as ready and reviewed
     if active and kind == "ready":
         try:
             _hex(data.get("commit"), "commit", {40, 64})
@@ -1016,6 +1022,8 @@ def _apply(r, kind, source, data, ts, event_id):
         coordination["execution_state"] = "running"
     elif kind == "blocked":
         coordination["execution_state"] = "blocked"
+    elif kind == "answered":
+        coordination["execution_state"] = "finished"
     elif kind == "decided":
         coordination["execution_state"] = "awaiting-dispatch"
     elif kind == "ready":
