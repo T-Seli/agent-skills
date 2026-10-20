@@ -11,7 +11,7 @@ import time
 from decimal import Decimal
 from pathlib import Path
 
-RESPONSES = {"accepted", "running", "blocked", "ready"}
+RESPONSES = {"accepted", "running", "blocked", "answered", "ready"}
 
 
 def _applied(record):

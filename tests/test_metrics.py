@@ -60,6 +60,12 @@ class MeasureTests(unittest.TestCase):
         r = run('ack', ('d', 0, 'adapter', 'dispatched'), ('k', 5, 'orchestrator', 'ack'), ('i', 9, 'adapter', 'idle'))
         self.assertEqual(m.aggregate([r])['no_response'], 1)
 
+    def test_a_read_only_answer_is_a_response(self):
+        r = run('ans', ('d', 0, 'adapter', 'dispatched'), ('n', 40, 'worker', 'answered', dict(summary='3 files')))
+        a = m.aggregate([r])
+        self.assertEqual((a['no_response'], a['median_response_s']), (0, 40.0))
+        self.assertEqual(m.corrections(a), [])
+
     def test_gaps_become_small_corrections_with_a_test_each(self):
         a = m.aggregate([self.good, self.blocked, self.silent], now=BASE + 1000)
         fixes = m.corrections(a)
