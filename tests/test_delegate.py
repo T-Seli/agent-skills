@@ -1,4 +1,7 @@
 """delegate.py with a fake claude and caffeinate: launch, receipt, wake, ledger limits, lost runs."""
+import contextlib
+import importlib.util
+import io
 import json
 import os
 import signal
@@ -8,6 +11,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 DELEGATE = ROOT / "skills" / "agent-coordination" / "scripts" / "delegate.py"
@@ -161,6 +165,71 @@ class DelegateTests(unittest.TestCase):
         failed = self.start("--task-id", "x")
         self.assertNotEqual(failed.returncode, 0)
         self.assertIn(str(self.config), failed.stderr)
+
+
+class SandboxLivenessTests(unittest.TestCase):
+    """A sandbox that denies signals and `ps` can't tell whether a run lives; it must never settle it lost."""
+
+    DENIED_PS = (subprocess.CompletedProcess(["ps"], 1, "", "ps: Operation not permitted\n"),
+                 PermissionError(1, "Operation not permitted", "ps"))
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name).resolve()
+        self.work = self.dir / "work"
+        self.work.mkdir()
+        self.run_dir = self.dir / "state" / "runs" / "t-live" / "d1"
+        self.run_dir.mkdir(parents=True)
+        (self.run_dir / "supervisor.json").write_text(json.dumps(
+            {"supervisor_pid": 424242, "worker_pid": 424243, "started_at": "2026-10-19T00:00:00Z"}))
+        (self.run_dir / "params.json").write_text(json.dumps({"cwd": str(self.work), "depth": 1}))
+        cfg = json.loads((ROOT / "agent_skills" / "delegate_config.example.json").read_text())
+        (self.dir / "workers.json").write_text(json.dumps(cfg))
+        (self.dir / "brief.md").write_text("Run ls.")
+        spec = importlib.util.spec_from_file_location("delegate_under_test", DELEGATE)
+        self.delegate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.delegate)
+        env = mock.patch.dict(os.environ, {"AGENT_COORDINATION_STATE": str(self.dir / "state")})
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("AGENT_SKILLS_DEPTH", None)
+
+    def call(self, ps, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        code = 0
+        ps_mock = {"side_effect": ps} if isinstance(ps, Exception) else {"return_value": ps}
+        with mock.patch.object(self.delegate.os, "kill", side_effect=PermissionError(1, "denied")), \
+                mock.patch.object(self.delegate.subprocess, "run", **ps_mock), \
+                mock.patch.object(self.delegate.subprocess, "Popen", side_effect=AssertionError("launched")), \
+                mock.patch.object(self.delegate, "CONFIG", self.dir / "workers.json"), \
+                mock.patch.object(self.delegate.time, "sleep"), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                self.delegate.main(list(argv))
+            except SystemExit as exit_:
+                code = exit_.code
+        return code, out.getvalue(), err.getvalue()
+
+    def test_reconcile_and_wait_never_settle_unknown_liveness_as_lost(self):
+        for ps in self.DENIED_PS:
+            with self.subTest(ps=type(ps).__name__):
+                code, out, err = self.call(ps, "reconcile")
+                self.assertFalse((self.run_dir / "receipt.json").exists())
+                self.assertNotEqual(code, 0)
+                self.assertEqual(json.loads(out.splitlines()[0])["settled"], "liveness-unknown")
+                self.assertIn("liveness unknown", err)
+
+                code, out, err = self.call(ps, "wait", "t-live", "--timeout", "1")
+                self.assertFalse((self.run_dir / "receipt.json").exists())
+                self.assertEqual((code, json.loads(out)["state"]), (3, "unknown"))
+                self.assertIn("liveness unknown", err)
+
+    def test_a_run_of_unknown_liveness_still_holds_its_directory(self):
+        code, out, _ = self.call(self.DENIED_PS[0], "start", "--prompt-file", str(self.dir / "brief.md"),
+                                 "--cwd", str(self.work), "--task-id", "t-second")
+        self.assertEqual(code, 3)
+        self.assertIn("one writer", json.loads(out)["refused"])
 
 
 if __name__ == "__main__":

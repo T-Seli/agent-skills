@@ -3,8 +3,8 @@
 
   start      create the task record, pin its route, launch a detached supervisor; prints one JSON line
   wait       block until the run's receipt exists (bounded); prints the receipt
-  status     one JSON line per run: live, done, failed, timeout, lost
-  reconcile  settle runs whose supervisor died (reboot, kill) as lost
+  status     one JSON line per run: live, done, failed, timeout, lost, unknown (liveness can't be read here)
+  reconcile  settle runs whose supervisor died (reboot, kill) as lost; never one of unknown liveness
   report     outcomes, cost and permission denials over recent days, for the skill steward
 
 The supervisor holds `caffeinate -i -w <worker pid>`, runs `claude -p` in guarded bypass with the
@@ -35,6 +35,8 @@ CONFIG = Path(os.environ.get("AGENT_SKILLS_CONFIG", "~/.config/agent-skills/work
 EXAMPLE = ROOT / "agent_skills" / "delegate_config.example.json"
 GUARD = ROOT / "guard"
 REFUSED = 3  # exit code: the ledger refused the launch; do the work yourself or wait
+UNKNOWN = ("delegate: liveness unknown: signals or `ps` are denied here, so the run is never settled as lost; "
+           "wait again, or run `delegate.py reconcile` where they work")
 AWS_SECRETS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE")
 DB_SECRETS = ("DATABASE_URL", "PGPASSWORD", "PGHOST", "PGUSER", "PGDATABASE", "PGPORT", "PGSERVICE")
 
@@ -65,13 +67,19 @@ def write_json(path, value):
 
 
 def alive(pid, marker):
-    """True only for a running process whose command line still names `marker` (pid reuse)."""
+    """True for a running process whose command line still names `marker` (pid reuse), False once it
+    is gone, None when this environment can't tell: a sandbox may deny signals and `ps`."""
     try:
         os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError:
         return False
-    shown = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True).stdout
-    return marker in shown
+    except PermissionError:
+        pass  # the pid exists; we may not signal it
+    try:
+        shown = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True)
+    except OSError:
+        return None
+    return marker in shown.stdout if shown.returncode == 0 else None
 
 
 def runs():
@@ -84,7 +92,7 @@ def run_state(run):
     if receipt.exists():
         return json.loads(receipt.read_text())["outcome"]
     sup = json.loads((run / "supervisor.json").read_text())
-    return "live" if alive(sup["supervisor_pid"], "delegate.py") else "lost?"
+    return {True: "live", False: "lost?", None: "unknown"}[alive(sup["supervisor_pid"], "delegate.py")]
 
 
 def refuse(reason):
@@ -130,7 +138,7 @@ def start(args):
     cwd = Path(args.cwd).expanduser().resolve()
     if not cwd.is_dir():
         sys.exit(f"delegate: no such directory {cwd}")
-    live = [r for r in runs() if run_state(r) == "live"]
+    live = [r for r in runs() if run_state(r) in ("live", "unknown")]  # unknown may still be writing
     if len(live) >= cfg["max_live"]:
         refuse(f"{len(live)} workers already running (max_live {cfg['max_live']}): wait for one")
     for r in live:
@@ -280,23 +288,33 @@ def latest_run(task_id, dispatch_id=None):
 def wait(args):
     run = latest_run(args.task_id, args.dispatch)
     deadline = time.time() + min(args.timeout, 3600)
+    unknown = False
     while time.time() < deadline:
         if (run / "receipt.json").exists():
             receipt = json.loads((run / "receipt.json").read_text())
             print(json.dumps(receipt))
             sys.exit(0 if receipt["outcome"] == "done" else 1)
-        if run_state(run) == "lost?":
-            settle_lost(run)
-            continue
+        state = run_state(run)
+        if state == "lost?":
+            state = settle_lost(run)
+            if state == "lost":
+                continue
+        unknown = state in ("unknown", "liveness-unknown")
         time.sleep(2)
-    print(json.dumps({"task_id": args.task_id, "dispatch_id": run.name, "state": "live"}))
+    print(json.dumps({"task_id": args.task_id, "dispatch_id": run.name, "state": "unknown" if unknown else "live"}))
+    if unknown:
+        print(UNKNOWN, file=sys.stderr)
     sys.exit(REFUSED)
 
 
 def settle_lost(run):
-    """The supervisor died before writing a receipt: the run is lost unless its worker still runs."""
+    """The supervisor died before writing a receipt: the run is lost unless its worker still runs or
+    this environment can't tell."""
     sup = json.loads((run / "supervisor.json").read_text())
-    if sup.get("worker_pid") and alive(sup["worker_pid"], "claude"):
+    worker = alive(sup["worker_pid"], "claude") if sup.get("worker_pid") else False
+    if worker is None:
+        return "liveness-unknown"
+    if worker:
         return "orphaned-running"
     write_json(run / "receipt.json", {"task_id": run.parent.name, "dispatch_id": run.name, "outcome": "lost",
                                       "finished_at": stamp(now()), "stream": str(run / "stream.jsonl")})
@@ -318,9 +336,16 @@ def status(args):
 
 
 def reconcile(_args):
+    unknown = 0
     for run in runs():
-        if run_state(run) == "lost?":
-            print(json.dumps({"task_id": run.parent.name, "dispatch_id": run.name, "settled": settle_lost(run)}))
+        state = run_state(run)
+        settled = settle_lost(run) if state == "lost?" else "liveness-unknown" if state == "unknown" else None
+        if settled:
+            unknown += settled == "liveness-unknown"
+            print(json.dumps({"task_id": run.parent.name, "dispatch_id": run.name, "settled": settled}))
+    if unknown:
+        print(f"{UNKNOWN} ({unknown} run(s) left unsettled)", file=sys.stderr)
+        sys.exit(1)
 
 
 def report(args):
