@@ -18,7 +18,7 @@ For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-cont
 1. Args. 2. A plan for this topic: a pending draft with `plan.md`, or `TASK/plan.md` on the current branch → revise it (**Iterate**). A follow-up `-rN` folder without `plan.md` → **Answer** mode, its regression as the input. 3. The conversation. 4. Discovery: project CLAUDE.md sections, git state, repo docs.
 
 ## Mode (picked by the input)
-- **Answer**: a question, bug report, alert, or trace of one entity (lead, call, job, record). Evidence and a short answer; no agents, no `plan.md`.
+- **Answer**: a question, bug report, alert, or trace of one entity (lead, call, job, record), or any fix whose evidence pins one S change, however many entities it spans. Evidence and a short answer; no agents, no `plan.md`.
 - **Plan**: a feature, a list (feedback lists included), a fix that isn't S, or **Iterate**. Scout, architects, `plan.md`.
 
 ## Answer mode
@@ -45,7 +45,7 @@ For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-cont
    | architecture | 4 | minimal fix · config-driven & generalized · redesign · stress-test |
    | list | ≤4 | one per cluster needing a design choice, angle: root cause; S clusters take their fix straight from the scout |
 
-   § Tenancy is `none`: root cause replaces config-driven & generalized. Nothing to choose (one obvious S change the scout already pinned) → no architects; say so. Use agent type `Plan` (built-in, cannot edit; Codex: a read-only default subagent). Angles:
+   § Tenancy is `none`: root cause replaces config-driven & generalized. Nothing to choose (one obvious S change the scout already pinned, or an approach the user or brief already chose) → no architects, or one stress-test at most; say so. Use agent type `Plan` (built-in, cannot edit; Codex: a read-only default subagent). Angles:
    - **Minimal fix**: the smallest change that fully solves it.
    - **Root cause**: fix the mechanism, at its most central point.
    - **Config-driven & generalized**: the behavior becomes config or data, so a new tenant or project adopts it with no code edit.
@@ -59,7 +59,7 @@ For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-cont
    No status messages between launch and the report; wait for every agent (contracts.md § Report).
 5. **Score** each proposal against global CLAUDE.md § Engineering and § Safety.
    - Disqualify any proposal that breaks a rule there. Where § Tenancy lists tenants, also disqualify one whose adoption by a new tenant needs a code, prompt or per-tenant file edit. Its rejection line names the rule.
-   - Rank the rest: config-only adoption > fixes the cause at the central point > reuses existing code > smallest change > lowest risk > sharpest verify plan.
+   - Rank the rest: config-only adoption > fixes the cause at the central point > reuses existing code > smallest change > lowest risk > sharpest verify plan. A narrow request ranks the smallest complete fix first; the generalized version becomes a later item.
    - Pick the top one, or merge compatible parts (e.g., minimal fix now, generalized version as a later item). Stress-test objections that still stand become Risks or Open decisions.
 6. **Write** `plan.md` in a new draft folder `$MAIN/.claude/drafts/<date>-<slug>/`:
    ```
