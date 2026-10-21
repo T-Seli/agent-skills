@@ -113,8 +113,12 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError): reconcile_tasks(s, now=LATE)
 
 
-def schedule(task_id, description, enabled=True, **extra):
-    return dict(taskId=task_id, description=description, enabled=enabled, cronExpression='0 9 * * *', **extra)
+def schedule(task_id, description, enabled=True, cron='0 9 * * *', **extra):
+    return dict(taskId=task_id, description=description, enabled=enabled, cronExpression=cron, **extra)
+
+
+def at(day, hour, minute):
+    return datetime(2026, 10, day, hour, minute, tzinfo=timezone.utc)
 
 
 MONITORS = [
@@ -153,3 +157,22 @@ class MonitorJanitorTests(unittest.TestCase):
         self.assertEqual(expired_monitors(task, now=datetime(2026, 10, 19, 23, 59, tzinfo=timezone.utc)), ([], []))
         self.assertEqual(expired_monitors(task, now=datetime(2026, 10, 20, 0, 0, tzinfo=timezone.utc))[0],
                          [{'taskId': 'm', 'deadline': '2026-10-19T23:59Z'}])
+
+    def test_cron_pinned_days_end_at_noon_utc_after_the_last_day(self):
+        for cron, day in [('15,45 6-15 20 10 *', 21), ('20 6-15 21-23 10 *', 24),
+                          ('30 7,11,15 21-23 10 *', 24), ('0 9 20,22 10 *', 23)]:
+            with self.subTest(cron=cron):
+                task = [schedule('m', 'Recheck daily', cron=cron)]
+                self.assertEqual(expired_monitors(task, now=at(day, 11, 59)), ([], []))
+                self.assertEqual(expired_monitors(task, now=at(day, 12, 1)),
+                                 ([{'taskId': 'm', 'deadline': f'2026-10-{day}T12:00Z'}], []))
+
+    def test_description_deadline_wins_over_pinned_cron(self):
+        task = [schedule('m', 'Deadline: 2026-10-30T06:00Z', cron='15,45 6-15 20 10 *')]
+        self.assertEqual(expired_monitors(task, now=at(22, 0, 0)), ([], []))
+
+    def test_unpinned_cron_stays_unparsed(self):
+        for cron in ('0 9 * * *', '0 9 */2 10 *', '0 9 20 * *', '0 9 20 10 1'):
+            with self.subTest(cron=cron):
+                self.assertEqual(expired_monitors([schedule('m', 'Recheck daily', cron=cron)], now=at(30, 0, 0)),
+                                 ([], ['m']))

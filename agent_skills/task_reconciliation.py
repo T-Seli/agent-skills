@@ -1,4 +1,6 @@
 """Bounded, caller-supplied evidence assessment. Never dispatches or grants authority."""
+from calendar import monthrange
+from datetime import datetime, timedelta, timezone
 import re
 from .task_checkpoint import operating_view, _time
 
@@ -6,6 +8,7 @@ from .task_checkpoint import operating_view, _time
 _WHEN = r'(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})Z|(?![T ]?\d))'
 _DEADLINES = (re.compile(r'\bdeadline:\s*' + _WHEN, re.I),
               re.compile(r'\b(?:until|deadline)\s+' + _WHEN, re.I))
+_PINNED = re.compile(r'\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*')
 
 
 def keep_awake_assessment(receipt, *, now, owner):
@@ -113,13 +116,37 @@ def _deadline(description):
     return None
 
 
+def _pinned(field):
+    """Values of a cron field made only of numbers, lists and ranges; None for `*` or steps."""
+    if not _PINNED.fullmatch(field):
+        return None
+    values = set()
+    for part in field.split(','):
+        low, _, high = part.partition('-')
+        values.update(range(int(low), int(high or low) + 1))
+    return values
+
+
+def _cron_deadline(cron, year):
+    """End of the last calendar day a cron pins by day and month (weekday `*`), else None."""
+    _, _, day, month, weekday = cron.split()
+    days, months = _pinned(day), _pinned(month)
+    if days is None or months is None or weekday != '*':
+        return None
+    last = max(datetime(year, m, d, 12, tzinfo=timezone.utc)
+               for m in months for d in days if d <= monthrange(year, m)[1])
+    # Cron fires in the machine's local zone; 12:00Z next day is past that day's end in every US zone.
+    return last + timedelta(days=1)
+
+
 def expired_monitors(tasks, *, now):
-    """Enabled recurring schedules past the deadline in their description, and those without one."""
+    """Enabled recurring schedules past the deadline in their description (else the last day
+    their cron pins), and those with neither."""
     expired, unparsed = [], []
     for task in tasks:
         if not task['enabled'] or task.get('fireAt'):
             continue
-        deadline = _deadline(task['description'])
+        deadline = _deadline(task['description']) or _cron_deadline(task['cronExpression'], now.year)
         if deadline is None:
             unparsed.append(task['taskId'])
         elif deadline < now:
