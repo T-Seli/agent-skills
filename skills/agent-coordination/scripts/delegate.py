@@ -7,7 +7,8 @@
   reconcile  settle runs whose supervisor died (reboot, kill) as lost; never one of unknown liveness
   report     outcomes, cost and permission denials over recent days, for the skill steward
 
-The supervisor holds `caffeinate -i -w <worker pid>`, runs `claude -p` in guarded bypass with the
+Ordinary wake launches are unverified. Critical dispatch borrows an acknowledged,
+bounded foreground owner, never the legacy detached assertion. The supervisor runs `claude -p` with the
 prompt on stdin, saves the stream, then records the execution, the task events and the receipt.
 A worker that delegates again inherits AGENT_SKILLS_DEPTH + 1; the ledger refuses past `max_depth`,
 past `max_live` running workers, and a second writer in the same directory.
@@ -32,7 +33,7 @@ ROOT = HERE.parents[2]
 sys.path[:0] = [str(HERE), str(ROOT)]
 import tasks  # noqa: E402
 import workers  # noqa: E402
-from agent_skills import worker_execution  # noqa: E402
+from agent_skills import worker_execution, keep_awake  # noqa: E402
 
 CONFIG = Path(os.environ.get("AGENT_SKILLS_CONFIG", "~/.config/agent-skills/workers.json")).expanduser()
 EXAMPLE = ROOT / "agent_skills" / "delegate_config.example.json"
@@ -210,6 +211,195 @@ def source_pin():
     return f"{ROOT}@{head or 'snapshot'}"
 
 
+class ProtectionHold(ValueError):
+    pass
+
+
+def critical_spec(args, task_id, dispatch_id, pin):
+    if not args.critical_protection_receipt:
+        return None
+    try:
+        receipt = keep_awake.status(args.critical_protection_receipt)
+        end = keep_awake.utc(args.critical_until_utc)
+        if (receipt.get('kind') != 'owned-keep-awake' or
+                receipt['assessment']['state'] != 'verified-now' or
+                receipt['approval_ref'] != args.critical_authority_ref or
+                type(receipt.get('check_seconds')) is not int or not 1 <= receipt['check_seconds'] <= 60 or
+                not now() < end <= keep_awake.utc(receipt['authorized_until_utc'])):
+            raise ValueError('current owned grant, exact authority and bounded UTC end required')
+        return {'receipt': str(keep_awake._path(args.critical_protection_receipt)),
+                'task_id': task_id, 'dispatch_id': dispatch_id, 'source_pin': pin,
+                'consumer': f'delegate:{task_id}:{dispatch_id}',
+                'until_utc': keep_awake.stamp(end),
+                'binding': {k: receipt[k] for k in ('kind', 'task_id', 'owner', 'generation', 'host_id',
+                            'approval_ref', 'foreground_ref', 'supervisor_identity', 'check_seconds', 'authorized_until_utc')}}
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+        refuse(f'critical protection held: {error}')
+
+
+class CriticalProtection:
+    """A consumer only: no acquisition, owner transfer, PID signal or cleanup."""
+    def __init__(self, params, run):
+        self.params, self.run, self.spec = params, Path(run), params['critical']
+        self.wait_seconds = max(10, self.spec['binding']['check_seconds'] + 5)
+        self.ack_end = self.pending_end = self.pending_at = self.failure = None
+        self.ack_grant = self.pending_grant = None
+        self.ack_read_at = self.pending_requested_at = None
+        path = self.run / 'protection.json'
+        if path.exists():
+            prior = json.loads(path.read_text())
+            self.ack_end = prior.get('acknowledged_until_utc')
+            self.ack_grant = prior.get('acknowledged_grant')
+            self.ack_read_at = prior.get('acknowledged_at_utc')
+            self.failure = prior.get('failure')
+
+    def read(self):
+        s = self.spec
+        if ((s['task_id'], s['dispatch_id'], s['source_pin']) !=
+                (self.params['task_id'], self.params['dispatch_id'], source_pin())):
+            raise ProtectionHold('delegate-source-or-dispatch-mismatch')
+        receipt = keep_awake.status(s['receipt'])
+        if any(receipt.get(k) != value for k, value in s['binding'].items()):
+            raise ProtectionHold('owner-contract-mismatch')
+        return receipt
+
+    def acknowledged(self, receipt, end, *, after=None):
+        rows = [c for c in receipt.get('consumers', []) if end and
+                c.get('consumer') == self.spec['consumer'] and
+                c.get('consumer_task_id') == self.spec['task_id'] and
+                c.get('generation') == self.spec['binding']['generation'] and
+                c.get('until_utc') == end and c.get('readback_at_utc') and
+                0 <= (now() - keep_awake.utc(c['readback_at_utc'])).total_seconds() <= 120 and
+                (after is None or keep_awake.utc(c['readback_at_utc']) >= keep_awake.utc(after))]
+        return max(rows, key=lambda c: keep_awake.utc(c['readback_at_utc'])) if rows else None
+
+    def view(self, receipt=None):
+        s = self.spec
+        value = {'state': 'unknown', 'reason': 'probe-unavailable', 'gate': 'HOLD',
+                 'task_id': s['task_id'], 'dispatch_id': s['dispatch_id'],
+                 'source_pin': s['source_pin'], 'receipt_ref': s['receipt'],
+                 'binding': s['binding'], 'consumer': s['consumer'],
+                 'requested_until_utc': s['until_utc'],
+                 'acknowledged_until_utc': self.ack_end, 'pending_until_utc': self.pending_end,
+                 'acknowledged_grant': self.ack_grant, 'acknowledged_at_utc': self.ack_read_at}
+        try:
+            receipt = receipt if receipt is not None else self.read()
+            value['observation'] = receipt.get('observation')
+            check = keep_awake.assess(receipt, now=keep_awake.stamp(now()),
+                                     owner=s['consumer'], task_id=s['task_id'])
+            value.update(state=check['state'], reason=check['reason'])
+            if now() >= keep_awake.utc(s['until_utc']):
+                value.update(state='expired', reason='critical-window-ended')
+            elif not self.ack_read_at or not self.acknowledged(receipt, self.ack_end, after=self.ack_read_at):
+                value.update(state='unknown', reason='exact-consumer-acknowledgment-missing')
+            elif now() >= keep_awake.utc(self.ack_end):
+                value.update(state='expired', reason='consumer-window-ended')
+            if value['state'] == 'verified-now' and not self.failure:
+                value['gate'] = 'open'
+        except ProtectionHold as error:
+            value['reason'] = str(error)
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+            pass
+        if self.failure:
+            value['failure'] = self.failure
+        return value
+
+    def save(self, value):
+        write_json(self.run / 'protection.json', value)
+        return value
+
+    def request(self, receipt, *, refresh_ack=False):
+        obs = receipt['observation']
+        grant = {k: receipt[k] for k in ('pid', 'assertion_ref', 'expires_at_utc')}
+        end = min(keep_awake.utc(self.spec['until_utc']), keep_awake.utc(receipt['expires_at_utc']),
+                  keep_awake.utc(receipt['authorized_until_utc']),
+                  keep_awake.utc(obs['observed_at_utc']) + timedelta(seconds=obs['assertion']['remaining_seconds']))
+        if end <= now():
+            raise ProtectionHold('current-grant-ended')
+        if self.ack_end and (grant == self.ack_grant or end <= keep_awake.utc(self.ack_end)):
+            if not refresh_ack:
+                return  # no observed newer grant, so no extension claim
+            end = min(end, keep_awake.utc(self.ack_end))  # freshness never extends this grant
+        target = keep_awake.stamp(end)
+        admission = keep_awake.reuse(self.spec['receipt'], consumer=self.spec['consumer'],
+                                    task_id=self.spec['task_id'], until_utc=target)
+        queued = admission['request']
+        expected = {k: self.spec['binding'][k] for k in ('owner', 'generation', 'host_id', 'task_id')}
+        expected.update(operation='retain-consumer', consumer=self.spec['consumer'],
+                        consumer_task_id=self.spec['task_id'], until_utc=target)
+        if (admission['state'] != 'queued-not-executed' or admission['receipt'] != self.spec['receipt'] or
+                any(queued.get(k) != value for k, value in expected.items()) or
+                not 0 <= (now() - keep_awake.utc(queued['requested_at_utc'])).total_seconds() <= 120):
+            raise ProtectionHold('consumer-admission-mismatch; reconcile pending request')
+        self.pending_end, self.pending_at = target, time.monotonic()
+        self.pending_grant = grant
+        self.pending_requested_at = queued['requested_at_utc']
+
+    def prepare(self):
+        deadline = time.monotonic() + self.wait_seconds
+        try:
+            receipt = self.read()
+            if receipt['assessment']['state'] != 'verified-now':
+                raise ProtectionHold('owner-not-verified')
+            self.request(receipt)
+            while time.monotonic() < deadline:
+                receipt = self.read()
+                acknowledged = self.acknowledged(receipt, self.pending_end, after=self.pending_requested_at)
+                if acknowledged:
+                    self.ack_end, self.pending_end = self.pending_end, None
+                    self.ack_grant, self.pending_grant = self.pending_grant, None
+                    self.ack_read_at = acknowledged['readback_at_utc']
+                    value = self.save(self.view(receipt))
+                    if value['gate'] == 'open':
+                        return value
+                    raise ProtectionHold(value['reason'])
+                if (receipt['assessment']['state'] != 'verified-now' or
+                        now() >= keep_awake.utc(self.spec['until_utc'])):
+                    raise ProtectionHold('owner-or-critical-window-ended')
+                self.save(self.view(receipt))
+                time.sleep(.1)
+            raise ProtectionHold('consumer-acknowledgment-timeout; reconcile pending request')
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+            self.failure = {'reason': str(error), 'observed_at_utc': keep_awake.stamp(now())}
+            self.save(self.view())
+            raise ProtectionHold(str(error))
+
+    def tick(self, *, refresh=True):
+        try:
+            receipt = self.read()
+            acknowledged = self.acknowledged(receipt, self.pending_end, after=self.pending_requested_at)
+            if acknowledged:
+                self.ack_end, self.pending_end = self.pending_end, None
+                self.ack_grant, self.pending_grant = self.pending_grant, None
+                self.ack_read_at = acknowledged['readback_at_utc']
+            value = self.view(receipt)
+            if value['gate'] == 'open' and refresh and not self.failure:
+                if self.pending_end:
+                    if time.monotonic() - self.pending_at >= self.wait_seconds:
+                        raise ProtectionHold('extension-acknowledgment-timeout; reconcile pending request')
+                else:
+                    refresh_ack = (now() - keep_awake.utc(self.ack_read_at)).total_seconds() >= 30
+                    grant = {k: receipt[k] for k in ('pid', 'assertion_ref', 'expires_at_utc')}
+                    if (refresh_ack or grant != self.ack_grant or
+                            (keep_awake.utc(self.ack_end) - now()).total_seconds() <= 5):
+                        self.request(receipt, refresh_ack=refresh_ack)
+            elif value['gate'] != 'open' and not self.failure:
+                raise ProtectionHold(value['reason'])
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+            if not self.failure:
+                self.failure = {'reason': str(error), 'observed_at_utc': keep_awake.stamp(now())}
+        value = self.view()
+        if value['gate'] != 'open' and not self.failure:
+            self.failure = {'reason': value['reason'], 'observed_at_utc': keep_awake.stamp(now())}
+            value['failure'] = self.failure
+        return self.save(value)
+
+
+def current_protection(run):
+    params = json.loads((Path(run) / 'params.json').read_text())
+    return CriticalProtection(params, run).view() if params.get('critical') else None
+
+
 def start(args):
     cfg = config()
     depth = int(os.environ.get("AGENT_SKILLS_DEPTH", "0"))
@@ -237,6 +427,8 @@ def start(args):
     grant, credentials = (release_grant(cfg, args.approved_log, args.targets, cwd, task_id)
                           if args.approved_log else (None, set()))
     dispatch_id = f"d{time.time_ns() // 1_000_000}"
+    pin = source_pin()
+    critical = critical_spec(args, task_id, dispatch_id, pin)
     parent = os.environ.get("AGENT_SKILLS_TASK_ID", "top-level")
     decision = args.decision_ref or f"delegated-by:{parent}"
     if args.resume:
@@ -244,12 +436,12 @@ def start(args):
         if not session_id:
             sys.exit(f"delegate: task {task_id} has no owned session to resume")
         tasks.update(root, task_id, lambda r: tasks.begin_dispatch(worker_execution.bind_route(
-            r, route, source_pin=source_pin(), decision_ref=decision, change_ref=decision), dispatch_id, resume=True))
+            r, route, source_pin=pin, decision_ref=decision, change_ref=decision), dispatch_id, resume=True))
     else:
         session_id = str(uuid.uuid4())
         record = tasks.new_task(task_id, args.work_item or task_id, worker_kind="claude", owner="assistant",
                                 repo=str(cwd), worktree=str(cwd), source_thread=parent)
-        record = worker_execution.bind_route(record, route, source_pin=source_pin(), decision_ref=decision)
+        record = worker_execution.bind_route(record, route, source_pin=pin, decision_ref=decision)
         tasks.create(root, tasks.begin_dispatch(record, dispatch_id, resume=False))
 
     run = runs_root() / task_id / dispatch_id
@@ -263,6 +455,7 @@ def start(args):
         "task_id": task_id, "dispatch_id": dispatch_id, "cwd": str(cwd), "depth": depth + 1,
         "argv": claude.command(session_id=session_id, resume=args.resume),
         "timeout_seconds": route["timeout_seconds"], "route": {k: route[k] for k in ("tier", "model", "effort")},
+        "critical": critical,
         "env": env_changes(cfg, depth, task_id, grant, credentials),
         "grant": grant and {k: grant[k] for k in ("repo", "base", "targets", "expires", "source")}})
     log = open(run / "supervisor.log", "w")
@@ -270,7 +463,8 @@ def start(args):
                            stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
     write_json(run / "supervisor.json", {"supervisor_pid": sup.pid, "worker_pid": None, "started_at": stamp(now())})
     print(json.dumps({"task_id": task_id, "dispatch_id": dispatch_id, "session_id": session_id,
-                      "run_dir": str(run), "depth": depth + 1, "route": route["tier"]}))
+                      "run_dir": str(run), "depth": depth + 1, "route": route["tier"],
+                      "state": "admitted-awaiting-protection" if critical else "admitted"}))
 
 
 def supervise(run):
@@ -280,15 +474,29 @@ def supervise(run):
     started, t0 = now(), time.time()
     env = {k: v for k, v in os.environ.items() if k not in p["env"]["unset"]}
     env.update(p["env"]["set"])
+    protection = CriticalProtection(p, run) if p.get('critical') else None
+    if protection:
+        try:
+            protection.prepare()
+        except ProtectionHold:
+            tasks.update(root, task_id, tasks.settle_dispatch, dispatch_id, 'not-sent')
+            write_json(run / 'receipt.json', {'task_id': task_id, 'dispatch_id': dispatch_id,
+                       'outcome': 'protection-held', 'finished_at': stamp(now()),
+                       'keep_awake': protection.view(), 'worker_started': False})
+            return
     try:
         with open(run / "prompt.md") as prompt, open(run / "stream.jsonl", "w") as out, \
                 open(run / "stderr.log", "w") as err:
+            if protection and protection.tick(refresh=False)['gate'] != 'open':
+                raise ProtectionHold('protection lost before worker launch')
             worker = subprocess.Popen(p["argv"], cwd=p["cwd"], stdin=prompt, stdout=out, stderr=err,
                                       env=env, start_new_session=True)
-    except FileNotFoundError as error:
+    except (FileNotFoundError, ProtectionHold) as error:
         tasks.update(root, task_id, tasks.settle_dispatch, dispatch_id, "not-sent")
         feedback(task_id, [{"kind": "worker-unavailable"}])
-        write_json(run / "receipt.json", {"task_id": task_id, "dispatch_id": dispatch_id, "outcome": "unavailable",
+        write_json(run / "receipt.json", {"task_id": task_id, "dispatch_id": dispatch_id,
+                                          "outcome": "protection-held" if isinstance(error, ProtectionHold) else "unavailable",
+                                          "keep_awake": protection.view() if protection else 'not-started',
                                           "error": str(error), "finished_at": stamp(now())})
         return
     sup = json.loads((run / "supervisor.json").read_text())
@@ -296,12 +504,25 @@ def supervise(run):
     # The session id was fixed before launch, so a started process settles the dispatch.
     tasks.update(root, task_id, tasks.settle_dispatch, dispatch_id, "sent")
     awake = "not-applicable"
-    if sys.platform == "darwin":
+    if protection:
+        awake = protection.view()
+    elif sys.platform == "darwin":
         subprocess.Popen(["caffeinate", "-i", "-w", str(worker.pid)], start_new_session=True)
-        awake = "held"
+        awake = "launched-unverified"
     outcome = "done"
     try:
-        worker.wait(timeout=p["timeout_seconds"])
+        deadline = time.monotonic() + p['timeout_seconds']
+        while protection and worker.poll() is None:
+            protection.tick()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(p['argv'], p['timeout_seconds'])
+            try:
+                worker.wait(timeout=min(1, remaining))
+            except subprocess.TimeoutExpired:
+                continue
+        if not protection:
+            worker.wait(timeout=p["timeout_seconds"])
     except subprocess.TimeoutExpired:
         outcome = "timeout"
         for sig, grace in ((signal.SIGTERM, 10), (signal.SIGKILL, None)):
@@ -313,6 +534,8 @@ def supervise(run):
                 continue
         worker.wait()
     finished = now()
+    if protection:
+        awake = protection.tick(refresh=False)
     if outcome == "done" and worker.returncode != 0:
         outcome = "failed"
     stdout, stderr = (run / "stream.jsonl").read_text(), (run / "stderr.log").read_text()
@@ -377,8 +600,9 @@ def wait(args):
     while time.time() < deadline:
         if (run / "receipt.json").exists():
             receipt = json.loads((run / "receipt.json").read_text())
-            print(json.dumps(receipt))
-            sys.exit(0 if receipt["outcome"] == "done" else 1)
+            current = current_protection(run)
+            print(json.dumps({**receipt, **({'keep_awake_current': current} if current else {})}))
+            sys.exit(0 if receipt["outcome"] == "done" and (not current or current['gate'] == 'open') else 1)
         state = run_state(run)
         if state == "lost?":
             state = settle_lost(run)
@@ -386,7 +610,8 @@ def wait(args):
                 continue
         unknown = state in ("unknown", "liveness-unknown")
         time.sleep(2)
-    print(json.dumps({"task_id": args.task_id, "dispatch_id": run.name, "state": "unknown" if unknown else "live"}))
+    print(json.dumps({"task_id": args.task_id, "dispatch_id": run.name,
+                      "state": "unknown" if unknown else "live", 'keep_awake_current': current_protection(run)}))
     if unknown:
         print(UNKNOWN, file=sys.stderr)
     sys.exit(REFUSED)
@@ -402,6 +627,7 @@ def settle_lost(run):
     if worker:
         return "orphaned-running"
     write_json(run / "receipt.json", {"task_id": run.parent.name, "dispatch_id": run.name, "outcome": "lost",
+                                      "keep_awake": current_protection(run),
                                       "finished_at": stamp(now()), "stream": str(run / "stream.jsonl")})
     feedback(run.parent.name, [{"kind": "worker-lost"}])
     return "lost"
@@ -417,6 +643,7 @@ def status(args):
                           "started_at": json.loads((run / "supervisor.json").read_text())["started_at"],
                           "cwd": params["cwd"],
                           "depth": params["depth"], "cost_usd": receipt.get("cost_usd"),
+                          'keep_awake_current': current_protection(run),
                           "summary": (receipt.get("report") or {}).get("summary")}))
 
 
@@ -427,7 +654,8 @@ def reconcile(_args):
         settled = settle_lost(run) if state == "lost?" else "liveness-unknown" if state == "unknown" else None
         if settled:
             unknown += settled == "liveness-unknown"
-            print(json.dumps({"task_id": run.parent.name, "dispatch_id": run.name, "settled": settled}))
+            print(json.dumps({"task_id": run.parent.name, "dispatch_id": run.name, "settled": settled,
+                              'keep_awake_current': current_protection(run)}))
     if unknown:
         print(f"{UNKNOWN} ({unknown} run(s) left unsettled)", file=sys.stderr)
         sys.exit(1)
@@ -472,6 +700,9 @@ def main(argv=None):
     s.add_argument("--resume", action="store_true", help="continue the task's owned session")
     s.add_argument("--approved-log", help="the task's log.md: its newest Approved: line grants a release")
     s.add_argument("--targets", help="comma-separated release targets, each in the approval and configured")
+    s.add_argument('--critical-protection-receipt', help='existing retained foreground owner receipt')
+    s.add_argument('--critical-until-utc', help='bounded critical consumer end in explicit UTC')
+    s.add_argument('--critical-authority-ref', help='exact original approval_ref of that owned grant')
     w = sub.add_parser("wait")
     w.add_argument("task_id")
     w.add_argument("--dispatch")
@@ -486,6 +717,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.cmd == "start" and bool(args.approved_log) != bool(args.targets):
         parser.error("--approved-log and --targets go together")
+    if args.cmd == 'start':
+        critical = [args.critical_protection_receipt, args.critical_until_utc, args.critical_authority_ref]
+        if any(x is not None for x in critical) and not all(x and x.strip() for x in critical):
+            parser.error('all three --critical-* inputs go together and must be nonempty')
     if args.cmd == "_supervise":
         return supervise(args.run)
     return {"start": start, "wait": wait, "status": status, "reconcile": reconcile, "report": report}[args.cmd](args)

@@ -211,8 +211,22 @@ def _save(path, value):
 
 def status(path, *, backend=None):
     backend = backend or Native()
-    receipt = json.loads(_path(path).read_text())
-    receipt['observation'] = backend.observe(receipt)
+    path = _path(path)
+    receipt = json.loads(path.read_text())
+    observation = backend.observe(receipt)
+    current = json.loads(path.read_text())
+    binding = ('kind', 'task_id', 'owner', 'generation', 'host_id', 'approval_ref', 'foreground_ref',
+               'supervisor_identity', 'authorized_until_utc', 'segment_seconds', 'check_seconds', 'freshness_seconds')
+    if any(current.get(k) != receipt.get(k) for k in binding):
+        observation = {'observed_at_utc': stamp(backend.now()), 'probe_error': 'receipt-contract-changed'}
+    else:
+        # A reader may have opened the old grant just before verified renewal.
+        # Retry once only for this same bound owner; real loss still stays loss.
+        if any(current.get(k) != receipt.get(k) for k in
+               ('pid', 'process_identity', 'assertion_ref', 'expires_at_utc', 'state')):
+            observation = backend.observe(current)
+        receipt = current
+    receipt['observation'] = observation
     receipt['assessment'] = assess(receipt, now=stamp(backend.now()), owner=receipt['owner'])
     return receipt  # deliberately not persisted by a read-only status call
 
@@ -402,11 +416,13 @@ class Supervisor:
                         if check['state'] != 'verified-now': raise RuntimeError('renewal needs fresh coverage')
                         old = self.grants[-1]
                         grant_end, margin = self._acquire(receipt)  # verify before old release
+                        _save(self.path, receipt)  # publish verified successor before old cleanup
                         released = self._stop_grant(*old)
                         receipt['events'].append({'kind': 'bounded-renewal', 'at': stamp(self.backend.now()),
                                                   'old_pid': old[0].pid, 'new_pid': receipt['pid'],
                                                   'old_released': released})
                         if not released: raise RuntimeError('old grant cleanup unverified')
+                        _save(self.path, receipt)
                     self.backend.pause(min(self.interval, 1 if self.child else 60,
                                            max(0.05, grant_end - self.backend.monotonic() - margin) if can_extend else self._remaining(),
                                            self._remaining()), self.child)

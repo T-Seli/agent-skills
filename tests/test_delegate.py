@@ -1,5 +1,6 @@
 """delegate.py with a fake claude and caffeinate: launch, receipt, wake, ledger limits, lost runs, grants."""
 import contextlib
+import copy
 import importlib.util
 import io
 import json
@@ -144,6 +145,7 @@ class DelegateTests(unittest.TestCase):
         self.assertIsNone(call["env"]["DATABASE_URL"])
         if sys.platform == "darwin":
             self.assertEqual((self.dir / "caffeinate.args").read_text().split()[:2], ["-i", "-w"])
+            self.assertEqual(receipt['keep_awake'], 'launched-unverified')
 
         spool = [json.loads(l) for l in (self.dir / "state" / "feedback.jsonl").read_text().splitlines()]
         self.assertEqual(spool[0]["kind"], "permission-denial")
@@ -297,6 +299,434 @@ class DelegateTests(unittest.TestCase):
         failed = self.start("--task-id", "x")
         self.assertNotEqual(failed.returncode, 0)
         self.assertIn(str(self.config), failed.stderr)
+
+
+class CriticalProtectionTests(unittest.TestCase):
+    """Real delegate functions; injected native boundary, no assertions/models."""
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(dir='/private/tmp')
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        spec = importlib.util.spec_from_file_location('critical_delegate', DELEGATE)
+        self.d = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.d)
+        self.clock = datetime(2026, 10, 21, 23, 0, tzinfo=timezone.utc)
+        self.start_clock = self.clock
+        self.real_sleep, self.real_monotonic = time.sleep, time.monotonic
+        self.k = self.d.keep_awake
+        self.real_owner_status = self.k.status
+        stamp = self.k.stamp
+        identity = dict(pid=51001, started='fixture-start', executable='/usr/bin/caffeinate')
+        supervisor = dict(pid=51002, started='fixture-start', executable='fixture-python')
+        self.receipt = dict(kind='owned-keep-awake',task_id='support-task',owner='owner',
+            host_id='boot',generation='g1',approval_ref='user:embedding',foreground_ref='retained:handle',
+            authorized_until_utc=stamp(self.clock+timedelta(seconds=120)),segment_seconds=30,check_seconds=1,
+            state='running',pid=identity['pid'],process_identity=identity,supervisor_identity=supervisor,
+            assertion_ref='assertion-1',expires_at_utc=stamp(self.clock+timedelta(seconds=30)),
+            consumers=[],observation=dict(observed_at_utc=stamp(self.clock),host_id='boot',
+                process=identity,supervisor=supervisor,assertion=dict(pid=identity['pid'],id='assertion-1',
+                kind='PreventUserIdleSystemSleep',remaining_seconds=30),power={'source':'AC Power'}))
+        self.args = argparse_namespace = type('Args', (), {})()
+        argparse_namespace.critical_protection_receipt = str(self.dir/'owner.json')
+        argparse_namespace.critical_until_utc = stamp(self.clock+timedelta(seconds=90))
+        argparse_namespace.critical_authority_ref = 'user:embedding'
+        self.patch(self.d, 'now', side_effect=lambda:self.clock)
+        self.patch(self.d, 'source_pin', return_value='fixture:source')
+        self.patch(self.k, 'status', side_effect=self.native_status)
+        self.reuse = self.patch(self.k, 'reuse', side_effect=self.acknowledge)
+        self.patch(self.k.Native, 'start_assertion', side_effect=AssertionError('unexpected acquisition'))
+        self.patch(self.d.time, 'monotonic', side_effect=lambda:(self.clock-self.start_clock).total_seconds())
+        self.patch(self.d.time, 'sleep', side_effect=self.advance)
+        critical=self.d.critical_spec(self.args,'critical-task','d1','fixture:source')
+        self.params=dict(task_id='critical-task',dispatch_id='d1',critical=critical,depth=1,
+            cwd=str(self.dir),env={'set':{},'unset':[]},route={},grant=None,timeout_seconds=2,
+            argv=[sys.executable,'-c', 'print(\'{"type":"result","is_error":false,"structured_output":'
+                  '{"status":"answered","summary":"fixture","commit":"","tests":"","need":""}}\')'])
+        (self.dir/'params.json').write_text(json.dumps(self.params))
+        (self.dir/'prompt.md').write_text('Harmless test-owned Python worker; no model calls.')
+        (self.dir/'supervisor.json').write_text(json.dumps({'supervisor_pid':os.getpid(),'worker_pid':None,
+                                                          'started_at':stamp(self.clock)}))
+
+    def patch(self, obj, name, **kwargs):
+        patcher=mock.patch.object(obj,name,**kwargs); value=patcher.start();self.addCleanup(patcher.stop);return value
+
+    def advance(self, seconds): self.clock += timedelta(seconds=seconds)
+
+    def native_status(self, path):
+        r=copy.deepcopy(self.receipt)
+        r['observation']['observed_at_utc']=self.k.stamp(self.clock)
+        if r['observation'].get('assertion'):
+            r['observation']['assertion']['remaining_seconds']=max(0,min(r['segment_seconds'],int(
+                (self.k.utc(r['expires_at_utc'])-self.clock).total_seconds())))
+        r['assessment']=self.k.assess(r,now=self.k.stamp(self.clock),owner=r['owner'])
+        return r
+
+    def acknowledge(self, path, *, consumer, task_id, until_utc):
+        self.receipt['consumers'].append(dict(consumer=consumer,consumer_task_id=task_id,
+            generation=self.receipt['generation'],until_utc=until_utc,readback_at_utc=self.k.stamp(self.clock)))
+        return self.admit_without_ack(path,consumer=consumer,task_id=task_id,until_utc=until_utc)
+
+    def admit_without_ack(self, path, *, consumer, task_id, until_utc):
+        queued={k:self.receipt[k] for k in ('owner','generation','host_id','task_id')}
+        queued.update(operation='retain-consumer',consumer=consumer,consumer_task_id=task_id,
+                      until_utc=until_utc,requested_at_utc=self.k.stamp(self.clock))
+        return dict(state='queued-not-executed',receipt=str(path),request=queued)
+
+    def protection(self): return self.d.CriticalProtection(self.params,self.dir)
+
+    def renew_grant(self):
+        self.receipt['pid']+=1
+        self.receipt['process_identity']={**self.receipt['process_identity'],'pid':self.receipt['pid']}
+        self.receipt['observation']['process']=copy.deepcopy(self.receipt['process_identity'])
+        self.receipt['assertion_ref']='assertion-successor'
+        self.receipt['observation']['assertion'].update(pid=self.receipt['pid'],id='assertion-successor')
+        self.receipt['expires_at_utc']=self.k.stamp(self.clock+timedelta(seconds=30))
+
+    def supervise(self, *, on_launch=None):
+        self.update=self.patch(self.d.tasks,'update',return_value={'status':'ready-for-review'})
+        self.patch(self.d.tasks,'load',return_value={'status':'ready-for-review'})
+        self.patch(self.d.tasks,'receive')
+        self.patch(self.d,'feedback')
+        original=subprocess.Popen
+        calls=[]
+        def launch(argv,**kwargs):
+            calls.append(argv)
+            self.assertEqual(self.protection().view()['gate'],'open')
+            # Subprocess.wait must use real time while the harmless real child runs.
+            self.d.time.sleep, self.d.time.monotonic = self.real_sleep, self.real_monotonic
+            child=original(argv,**kwargs)
+            if on_launch:on_launch()
+            return child
+        self.patch(self.d.subprocess,'Popen',side_effect=launch)
+        self.d.supervise(self.dir)
+        return json.loads((self.dir/'receipt.json').read_text()),calls
+
+    def test_all_critical_flags_are_required_together(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+            self.d.main(['start','--prompt-file','unused','--critical-until-utc','2026-10-21T23:01:00Z'])
+        self.assertEqual(caught.exception.code,2)
+
+    def test_authority_and_utc_window_are_exact(self):
+        for field,value in [('critical_authority_ref','user:other'),
+                ('critical_until_utc',self.k.stamp(self.clock)),
+                ('critical_until_utc',self.k.stamp(self.clock+timedelta(seconds=121)))]:
+            args=copy.copy(self.args);setattr(args,field,value)
+            with self.subTest(field=field,value=value),contextlib.redirect_stderr(io.StringIO()), \
+                    contextlib.redirect_stdout(io.StringIO()),self.assertRaises(SystemExit):
+                self.d.critical_spec(args,'critical-task','d1','fixture:source')
+
+    def test_exact_acknowledgment_opens_gate_without_acquisition(self):
+        p=self.protection();result=p.prepare()
+        self.assertEqual(result['gate'],'open')
+        self.assertEqual(result['acknowledged_until_utc'],self.receipt['expires_at_utc'])
+        self.assertEqual(self.reuse.call_count,1)
+        self.k.Native.start_assertion.assert_not_called()
+
+    def test_admission_without_acknowledgment_never_launches_worker(self):
+        self.reuse.side_effect=self.admit_without_ack
+        receipt,calls=self.supervise()
+        self.assertEqual(calls,[]);self.assertEqual(receipt['outcome'],'protection-held')
+        self.assertFalse(receipt['worker_started'])
+        self.assertIn('timeout',receipt['keep_awake']['failure']['reason'])
+        self.assertEqual(self.update.call_args.args[-1],'not-sent')
+        self.assertEqual(self.reuse.call_count,1)
+
+    def test_pending_conflict_is_not_retried_or_rebound(self):
+        self.reuse.side_effect=FileExistsError('existing pending request')
+        with self.assertRaises(self.d.ProtectionHold):self.protection().prepare()
+        self.assertEqual(self.reuse.call_count,1)
+
+    def test_every_owner_and_source_binding_is_pinned(self):
+        for field,value in [('task_id','wrong'),('owner','wrong'),('generation','wrong'),
+                ('host_id','wrong'),('approval_ref','wrong'),('foreground_ref','wrong'),
+                ('kind','legacy'),('supervisor_identity',{'pid':77777,'started':'other','executable':'other'}),
+                ('authorized_until_utc',self.k.stamp(self.clock+timedelta(seconds=100)))]:
+            before=self.receipt[field];self.receipt[field]=value
+            with self.subTest(field=field),self.assertRaises(self.d.ProtectionHold):self.protection().prepare()
+            self.receipt[field]=before
+        for field in ('task_id','dispatch_id','source_pin'):
+            p=self.protection();p.spec=copy.deepcopy(p.spec);p.spec[field]='wrong'
+            with self.subTest(field=field),self.assertRaises(self.d.ProtectionHold):p.prepare()
+
+    def test_wrong_task_generation_or_shorter_ack_does_not_close_extension(self):
+        p=self.protection();p.prepare();old=p.ack_end
+        self.advance(26)
+        self.renew_grant()
+        self.reuse.side_effect=self.admit_without_ack
+        p.tick();self.assertIsNotNone(p.pending_end)
+        for field,value in [('consumer_task_id','wrong'),('generation','wrong'),('until_utc',old)]:
+            row=dict(consumer=p.spec['consumer'],consumer_task_id=p.spec['task_id'],generation='g1',
+                     until_utc=p.pending_end,readback_at_utc=self.k.stamp(self.clock));row[field]=value
+            self.receipt['consumers'].append(row)
+            self.assertEqual(p.tick()['acknowledged_until_utc'],old)
+        self.acknowledge('unused',consumer=p.spec['consumer'],task_id=p.spec['task_id'],until_utc=p.pending_end)
+        self.assertEqual(p.tick()['gate'],'open');self.assertNotEqual(p.ack_end,old)
+
+    def test_no_refresh_without_newer_grant_and_expiry_holds(self):
+        p=self.protection();p.prepare();self.advance(26)
+        p.tick();self.assertEqual(self.reuse.call_count,1)
+        self.advance(5);self.assertEqual(p.tick()['gate'],'HOLD')
+
+    def test_stale_future_or_wrong_historical_receipt_never_prepares(self):
+        original=self.native_status
+        for change in ('stale','future','legacy'):
+            def invalid(path):
+                r=original(path)
+                if change=='legacy':r['kind']='legacy'
+                else:r['observation']['observed_at_utc']=self.k.stamp(self.clock+timedelta(
+                    seconds=-121 if change=='stale' else 1))
+                r['assessment']=self.k.assess(r,now=self.k.stamp(self.clock),owner=r['owner'])
+                return r
+            with self.subTest(change=change),mock.patch.object(self.k,'status',side_effect=invalid), \
+                    contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit):
+                self.d.critical_spec(self.args,'critical-task','d1','fixture:source')
+
+    def test_change_between_handshake_and_worker_launch_is_not_sent(self):
+        original=self.d.CriticalProtection.prepare
+        def prepare_then_loss(protection):
+            result=original(protection);self.receipt['observation']['assertion']=None;return result
+        with mock.patch.object(self.d.CriticalProtection,'prepare',prepare_then_loss):
+            receipt,calls=self.supervise()
+        self.assertEqual(calls,[]);self.assertEqual(receipt['outcome'],'protection-held')
+        self.assertEqual(self.update.call_args.args[-1],'not-sent')
+
+    def test_timeout_remains_business_timeout_without_signaling_protection_owner(self):
+        self.params['timeout_seconds']=.05
+        self.params['argv']=[sys.executable,'-c','import time; time.sleep(2)']
+        (self.dir/'params.json').write_text(json.dumps(self.params))
+        receipt,calls=self.supervise()
+        self.assertEqual(receipt['outcome'],'timeout');self.assertEqual(len(calls),1)
+        self.assertEqual(receipt['keep_awake']['gate'],'open')
+        self.k.Native.start_assertion.assert_not_called()
+
+    def test_unacknowledged_extension_does_not_outlive_old_consumer(self):
+        p=self.protection();p.prepare();self.advance(26);self.renew_grant()
+        self.reuse.side_effect=self.admit_without_ack
+        p.tick();self.advance(5)
+        self.assertEqual(p.tick()['gate'],'HOLD')
+        self.assertIsNotNone(p.pending_end)
+
+    def test_long_same_grant_refreshes_ack_freshness_without_extending_end(self):
+        self.receipt['segment_seconds']=300
+        self.receipt['authorized_until_utc']=self.k.stamp(self.clock+timedelta(seconds=600))
+        self.receipt['expires_at_utc']=self.k.stamp(self.clock+timedelta(seconds=300))
+        self.args.critical_until_utc=self.receipt['expires_at_utc']
+        self.params['critical']=self.d.critical_spec(self.args,'critical-task','d1','fixture:source')
+        p=self.protection();p.prepare();end=p.ack_end
+        for _ in range(2):
+            self.advance(61);p.tick();p.tick()
+            self.assertEqual(p.view()['gate'],'open')
+            self.assertEqual(p.ack_end,end)
+            self.assertEqual(p.ack_read_at,self.k.stamp(self.clock))
+        self.assertEqual(self.reuse.call_count,3)
+
+    def test_missing_worker_is_business_unavailable_with_verified_protection(self):
+        self.params['argv']=[str(self.dir/'missing-worker')]
+        (self.dir/'params.json').write_text(json.dumps(self.params))
+        receipt,calls=self.supervise()
+        self.assertEqual(receipt['outcome'],'unavailable')
+        self.assertEqual(receipt['keep_awake']['gate'],'open')
+        self.assertEqual(len(calls),1)
+        self.assertEqual(self.update.call_args.args[-1],'not-sent')
+
+    def test_exact_end_cannot_borrow_freshness_from_a_shorter_row(self):
+        p=self.protection();p.prepare()
+        exact=copy.deepcopy(self.receipt['consumers'][-1])
+        shorter={**exact,'until_utc':self.k.stamp(self.clock+timedelta(seconds=20))}
+        for seconds in (-121,1):
+            self.receipt['consumers']=[{**exact,'readback_at_utc':self.k.stamp(
+                self.clock+timedelta(seconds=seconds))},shorter]
+            # Generic reuse is fresh via the shorter row; this exact-end claim must hold.
+            self.assertEqual(self.native_status('unused')['assessment']['state'],'verified-now')
+            self.assertEqual(p.view()['gate'],'HOLD')
+
+    def test_fresh_but_pre_request_row_does_not_acknowledge_pending_refresh(self):
+        self.receipt['segment_seconds']=300
+        self.receipt['authorized_until_utc']=self.k.stamp(self.clock+timedelta(seconds=600))
+        self.receipt['expires_at_utc']=self.k.stamp(self.clock+timedelta(seconds=300))
+        self.args.critical_until_utc=self.receipt['expires_at_utc']
+        self.params['critical']=self.d.critical_spec(self.args,'critical-task','d1','fixture:source')
+        p=self.protection();p.prepare();old=p.ack_read_at
+        self.advance(61);self.reuse.side_effect=self.admit_without_ack
+        p.tick();p.tick()
+        self.assertIsNotNone(p.pending_end)
+        self.assertEqual(p.ack_read_at,old)
+        self.advance(11);self.assertEqual(p.tick()['gate'],'HOLD')
+
+    def test_ack_during_probes_must_follow_actual_admission_timestamp(self):
+        self.receipt['segment_seconds']=300
+        self.receipt['authorized_until_utc']=self.k.stamp(self.clock+timedelta(seconds=600))
+        self.receipt['expires_at_utc']=self.k.stamp(self.clock+timedelta(seconds=300))
+        self.args.critical_until_utc=self.receipt['expires_at_utc']
+        self.params['critical']=self.d.critical_spec(self.args,'critical-task','d1','fixture:source')
+        p=self.protection();p.prepare();old=p.ack_read_at;self.advance(61)
+        def delayed_admission(path,**kwargs):
+            self.acknowledge(path,**kwargs)  # older request's row appears during fresh probes
+            self.advance(1)
+            return self.admit_without_ack(path,**kwargs)
+        self.reuse.side_effect=delayed_admission
+        p.tick();p.tick()
+        self.assertIsNotNone(p.pending_end);self.assertEqual(p.ack_read_at,old)
+        self.acknowledge(p.spec['receipt'],consumer=p.spec['consumer'],task_id=p.spec['task_id'],until_utc=p.pending_end)
+        p.tick();self.assertIsNone(p.pending_end)
+        self.assertEqual(p.ack_read_at,self.k.stamp(self.clock))
+
+    def test_default_owner_cadence_gets_bounded_handshake_and_freshness_margin(self):
+        self.receipt.update(segment_seconds=300,check_seconds=60,
+            authorized_until_utc=self.k.stamp(self.clock+timedelta(seconds=600)),
+            expires_at_utc=self.k.stamp(self.clock+timedelta(seconds=300)))
+        self.args.critical_until_utc=self.receipt['expires_at_utc']
+        self.params['critical']=self.d.critical_spec(self.args,'critical-task','d1','fixture:source')
+        self.reuse.side_effect=self.admit_without_ack
+        def owner_poll(seconds):
+            self.advance(seconds)
+            if (self.clock-self.start_clock).total_seconds()>=60 and not self.receipt['consumers']:
+                self.acknowledge(*self.reuse.call_args.args,**self.reuse.call_args.kwargs)
+        self.d.time.sleep.side_effect=owner_poll
+        p=self.protection();self.assertEqual(p.prepare()['gate'],'open')
+        self.assertEqual(p.wait_seconds,65)
+        self.assertGreaterEqual((self.clock-self.start_clock).total_seconds(),60)
+        self.advance(31);p.tick();self.assertIsNotNone(p.pending_end)
+        self.advance(29)
+        self.acknowledge(*self.reuse.call_args.args,**self.reuse.call_args.kwargs)
+        self.assertEqual(p.tick()['gate'],'open');self.assertIsNone(p.pending_end)
+
+    def test_slow_owner_missing_ack_is_bounded_before_dispatch(self):
+        self.receipt.update(segment_seconds=300,check_seconds=60,
+            authorized_until_utc=self.k.stamp(self.clock+timedelta(seconds=600)),
+            expires_at_utc=self.k.stamp(self.clock+timedelta(seconds=300)))
+        self.args.critical_until_utc=self.receipt['expires_at_utc']
+        self.params['critical']=self.d.critical_spec(self.args,'critical-task','d1','fixture:source')
+        self.reuse.side_effect=self.admit_without_ack
+        with self.assertRaises(self.d.ProtectionHold):self.protection().prepare()
+        elapsed=(self.clock-self.start_clock).total_seconds()
+        self.assertGreaterEqual(elapsed,65);self.assertLess(elapsed,65.2)
+        self.assertEqual(self.reuse.call_count,1)
+
+    def test_new_grant_queues_extension_promptly_and_short_coverage_still_holds(self):
+        p=self.protection();p.prepare();self.advance(5);self.renew_grant()
+        self.reuse.side_effect=self.admit_without_ack
+        p.tick();self.assertIsNotNone(p.pending_end)  #25seconds remain, not only5
+        self.advance(26);self.assertEqual(p.tick()['gate'],'HOLD')
+
+    def test_producer_publishes_successor_before_post_renewal_pause(self):
+        from test_keep_awake import Fake,request
+        backend=Fake();path=self.dir/'producer.json';observed=[]
+        def observer(b):
+            if any(row[0]=='terminate' for row in b.log):
+                saved=json.loads(path.read_text());newest=max(b.handles)
+                self.assertEqual(saved['pid'],newest,'reader still sees released old PID after renewal')
+                self.assertEqual(saved['events'][-1]['kind'],'bounded-renewal')
+                observed.append(newest)
+        backend.callback=observer
+        req=request(backend,seconds=9,segment=4)
+        self.assertEqual(self.k.Supervisor(req,path,backend=backend).run(),0)
+        self.assertGreater(len(observed),0)
+
+    def test_producer_successor_is_visible_during_old_assertion_cleanup(self):
+        from test_keep_awake import Fake,request
+        path=self.dir/'cleanup-boundary.json';checked=[];outer=self
+        class Boundary(Fake):
+            def assertion_absent(self,pid):
+                newest=max(self.handles)
+                if pid!=newest and self.handles[newest].poll() is None:
+                    current=outer.real_owner_status(path,backend=self)
+                    outer.assertEqual(current['pid'],newest)
+                    outer.assertEqual(current['assessment']['state'],'verified-now')
+                    checked.append(newest)
+                return super().assertion_absent(pid)
+        b=Boundary();self.assertEqual(self.k.Supervisor(request(b,seconds=9,segment=4),path,backend=b).run(),0)
+        self.assertGreater(len(checked),0)
+
+    def test_owner_status_retries_only_a_same_contract_successor(self):
+        from test_keep_awake import Fake,request
+        b=Fake();path=self.dir/'read-race.json';req=request(b,seconds=10,segment=4)
+        runner=self.k.Supervisor(req,path,backend=b)
+        receipt={**req,'kind':'owned-keep-awake','generation':'g','state':'running',
+                 'supervisor_identity':b.process(os.getpid()),'freshness_seconds':120}
+        runner._acquire(receipt);self.k._save(path,receipt);old=runner.grants[-1]
+        b.tick=1;successor=copy.deepcopy(receipt);runner._acquire(successor)
+        observe=b.observe;calls=[]
+        def race(snapshot):
+            calls.append(snapshot['pid'])
+            if len(calls)==1:
+                self.k._save(path,successor);runner._stop_grant(*old)
+            return observe(snapshot)
+        try:
+            with mock.patch.object(b,'observe',side_effect=race):
+                current=self.real_owner_status(path,backend=b)
+            self.assertEqual(current['assessment']['state'],'verified-now')
+            self.assertEqual(calls,[old[0].pid,successor['pid']])
+            runner._stop_grant(*runner.grants[-1]);calls.clear()
+            with mock.patch.object(b,'observe',side_effect=lambda r:(calls.append(r['pid']) or observe(r))):
+                lost=self.real_owner_status(path,backend=b)
+            self.assertEqual(lost['assessment']['state'],'coverage-lost');self.assertEqual(len(calls),1)
+        finally:
+            for grant in runner.grants:runner._stop_grant(*grant)
+
+    def test_owner_status_does_not_retry_into_a_different_owner_contract(self):
+        path=self.dir/'changed-contract.json';self.k._save(path,self.receipt)
+        class Changed(self.k.Native):
+            def now(inner):return self.clock
+            def observe(inner,receipt):
+                self.k._save(path,{**receipt,'owner':'different-owner'})
+                return copy.deepcopy(self.receipt['observation'])
+        current=self.real_owner_status(path,backend=Changed())
+        self.assertEqual(current['owner'],'owner')
+        self.assertEqual(current['assessment']['state'],'unknown')
+        self.assertEqual(current['observation']['probe_error'],'receipt-contract-changed')
+
+    def test_native_probe_pid_power_and_owner_loss_hold(self):
+        for change in ('pid','assertion','power','probe'):
+            run=self.dir/change;run.mkdir()
+            p=self.d.CriticalProtection(self.params,run);p.prepare();saved=copy.deepcopy(self.receipt)
+            obs=self.receipt['observation']
+            if change=='pid':obs['process']={**obs['process'],'started':'reused'}
+            if change=='assertion':obs['assertion']=None
+            if change=='power':obs['power']['source']='Battery Power'
+            if change=='probe':obs['probe_error']='denied'
+            self.assertEqual(p.tick()['gate'],'HOLD',change)
+            self.receipt=saved
+
+    def test_recheck_before_popen_and_critical_path_has_no_caffeinate(self):
+        receipt,calls=self.supervise()
+        self.assertEqual(receipt['outcome'],'done');self.assertEqual(len(calls),1)
+        self.assertEqual(receipt['keep_awake']['gate'],'open')
+        self.assertNotIn('caffeinate',calls[0]);self.k.Native.start_assertion.assert_not_called()
+
+    def test_running_business_result_survives_coverage_loss(self):
+        def loss():self.receipt['observation']['supervisor']=None
+        receipt,calls=self.supervise(on_launch=loss)
+        self.assertEqual(receipt['outcome'],'done');self.assertEqual(len(calls),1)
+        self.assertEqual(receipt['keep_awake']['gate'],'HOLD')
+        self.assertEqual(receipt['keep_awake']['state'],'coverage-lost')
+        self.assertIn('failure',receipt['keep_awake'])
+
+    def test_loss_in_final_readback_remains_sticky_after_later_positive_probe(self):
+        p=self.protection();p.prepare()
+        good=self.native_status('unused');bad=copy.deepcopy(good)
+        bad['observation']['supervisor']=None
+        with mock.patch.object(self.k,'status',side_effect=[good,bad]):
+            result=p.tick()
+        self.assertEqual(result['state'],'coverage-lost');self.assertIn('failure',result)
+        self.assertEqual(p.tick()['gate'],'HOLD')
+
+    def test_status_and_wait_freshen_protection_without_rewriting_business(self):
+        receipt,_=self.supervise()
+        original=(self.dir/'receipt.json').read_bytes()
+        self.receipt['observation']['supervisor']=None
+        self.patch(self.d,'runs',return_value=[self.dir]);self.patch(self.d,'latest_run',return_value=self.dir)
+        self.patch(self.d,'run_state',return_value='done')
+        out=io.StringIO()
+        with contextlib.redirect_stdout(out):self.d.main(['status'])
+        self.assertEqual(json.loads(out.getvalue())['keep_awake_current']['state'],'coverage-lost')
+        out=io.StringIO()
+        with contextlib.redirect_stdout(out),self.assertRaises(SystemExit) as caught:
+            self.d.main(['wait','critical-task','--timeout','1'])
+        self.assertEqual(caught.exception.code,1)
+        value=json.loads(out.getvalue());self.assertEqual(value['outcome'],'done')
+        self.assertEqual(value['keep_awake_current']['gate'],'HOLD')
+        self.assertEqual(original,(self.dir/'receipt.json').read_bytes())
 
 
 class SandboxLivenessTests(unittest.TestCase):
