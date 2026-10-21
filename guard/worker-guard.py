@@ -41,6 +41,7 @@ AWS_VALUE_OPTIONS = {"--region", "--profile", "--output", "--endpoint-url", "--q
 GIT_CONFIG_READ = {"--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--get-urlmatch"}
 GH_READ = {"view", "list", "diff", "checks", "status", "download", "watch", "checkout"}
 PUSH_OPTS = {"-u", "--set-upstream", "--no-verify", "-q", "--quiet", "-v", "--verbose", "--porcelain", "--progress"}
+REDIRECT = re.compile(r"^(\d*|&)?(>>?\|?|<)(&?\S*)?$")  # 2>&1, >out, > out, 2>/dev/null, <in
 SSH_VALUE_OPTIONS = set("-b -c -D -E -e -F -I -i -J -L -l -m -O -o -p -Q -R -S -W -w".split())
 METADATA = {"ls", "test", "[", "[[", "stat"}  # see that a secrets file exists without reading it
 READERS = {"cat", "less", "more", "head", "tail", "grep", "egrep", "rg", "sed", "awk", "source", ".", "cp",
@@ -114,7 +115,7 @@ def push_reason(args, cwd):
         if args[i] == "-C":
             cwd = str(Path(cwd) / os.path.expanduser(args[i + 1]))
         i += 2 if args[i] in ("-C", "-c") else 1
-    rest = args[i + 1:]
+    rest = without_redirects(args[i + 1:])
     if {a for a in rest if a.startswith("-")} - PUSH_OPTS:
         return "git push may not force, delete, mirror or push tags"
     refs = [a for a in rest if not a.startswith("-")]
@@ -136,6 +137,19 @@ def push_reason(args, cwd):
     if current in protected_branches(cwd):
         return f"{current} is a protected branch; pushing it is a release"
     return None
+
+
+def without_redirects(tokens):
+    """Drop shell redirections (and a detached redirect target) so they are not read as refspecs."""
+    out, target = [], False
+    for t in tokens:
+        if target:
+            target = False
+        elif m := REDIRECT.match(t):
+            target = not m.group(3)
+        else:
+            out.append(t)
+    return out
 
 
 def remote_hosts(cmd, args):

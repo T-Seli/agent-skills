@@ -206,12 +206,15 @@ class PushAndGrantTests(unittest.TestCase):
         for command in ["git push origin feat/x", "git push -u origin feat/x", "git push --set-upstream origin HEAD",
                         "git push origin HEAD:feat/x", "git push origin feat/x:refs/heads/feat/x",
                         "git push -u origin feat/x --no-verify", "cd . && git push -u origin feat/x",
-                        "gh pr create --draft --title t --body b", "gh pr create -d --fill"]:
+                        "gh pr create --draft --title t --body b", "gh pr create -d --fill",
+                        "git push -u origin feat/x 2>&1", "git push origin feat/x > /tmp/push.txt 2>&1",
+                        "cd . && git push -u origin feat/x 2>&1 | tail -3"]:
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command), 0)
 
     def test_other_pushes_and_pr_changes_block(self):
         for command in ["git push", "git push origin", "git push origin main", "git push origin feat/x:main",
+                        "git push origin feat/x:main 2>&1", "git push origin 2>&1 feat/x:main",
                         "git push origin HEAD:main", "git push upstream feat/x", "git push origin other",
                         "git push -f origin feat/x", "git push --force-with-lease origin feat/x", "git push -uf origin feat/x",
                         "git push origin +feat/x", "git push origin :feat/x", "git push --tags origin feat/x",
@@ -241,6 +244,7 @@ class PushAndGrantTests(unittest.TestCase):
 
     def test_a_live_grant_reaches_only_its_base_commands_and_hosts(self):
         for command in ["git push origin HEAD:main", "git push origin abc1234:main", "npm run deploy:prod",
+                        "git push origin abc1234:main 2>&1", "git push origin HEAD:main 2>/dev/null",
                         "aws lambda update-function-code --function-name f --zip-file fileb://f.zip",
                         "ssh ubuntu@203.0.113.7 uptime", "ssh -i /tmp/deploy_key -o StrictHostKeyChecking=yes ubuntu@203.0.113.7 ls",
                         "scp dist.tgz ubuntu@203.0.113.7:/tmp/", "git push -u origin feat/x"]:
@@ -249,6 +253,7 @@ class PushAndGrantTests(unittest.TestCase):
         self.grant["commands"].append("git push origin HEAD:main")  # git is never granted by prefix
         for command in ["git push --force origin HEAD:main", "git push origin HEAD:release", "git push origin +HEAD:main",
                         "git push origin HEAD:main --force", "git push origin HEAD:main HEAD:release",
+                        "git push origin HEAD:main 2>&1 --force", "git push origin HEAD:release > /tmp/o 2>&1",
                         "ssh root@203.0.113.7 uptime", "ssh ubuntu@198.51.100.1", "scp x ubuntu@198.51.100.1:/tmp",
                         "npm run deploy:staging", "aws ec2 terminate-instances --instance-ids i-1", "psql -c 'select 1'",
                         "cat .env", "npm run deploy:prod > ~/.claude/settings.json", "gh pr merge 1"]:
