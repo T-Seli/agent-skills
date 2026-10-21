@@ -9,7 +9,7 @@ argument-hint: "[tests | PR <n> | PR URL | branch | commit range]"
 Decide one thing: is this ready to deploy? Strictly read-only: no code or test edits, code commits, rebases or merges; fixes go through `/implement`. Its only writes: its log entry (§ Log), and the temp worktrees and test services it makes and removes. First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`: names, `DRAFT`, `TASK`, temp worktrees, record commits, "outside the plan" and the defaults named below are per it.
 
 ## Inputs (first that exists; name it and its head sha in one line first)
-1. Args: `PR <n>`, `#<n>` or a PR URL → **PR mode**; a branch → it against `UP`; a commit range → those commits. A leading `tests` → **Tests mode**.
+1. Args: `PR <n>`, `#<n>` or a PR URL → **PR mode**; `sweep` → **PR sweep**; a branch → it against `UP`; a commit range → those commits. A leading `tests` → **Tests mode**.
 2. The current task branch `<type>/<slug>`.
 3. The conversation: a branch, PR or range named earlier.
 4. Discovery: `HEAD`, ranged per `<flow>` below.
@@ -26,7 +26,7 @@ Intent per commit: its action item in `TASK/action-items.md` (the log's `impleme
 ## 1. Tests (before reading any code)
 Check the current decision/spec revision, domain invariants, exclusions and each slice’s user-visible acceptance per `${CLAUDE_SKILL_DIR}/../workflow-contracts/decisions.md`. Reopened assumptions invalidate only affected evidence; passing checks never resolve unanswered user choices.
 Classify changed paths and risk first. For small prompt/KB/instruction fixes, use semantic synthetic cases and producer-path checks per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`; exact generated wording is not the acceptance oracle. Reuse relevant evidence only after comparing its source, tests, dependencies and environment, and cite that comparison. Do not repeat paid/live simulations merely for freshness; new external runs need the applicable scoped authority. Consent, integrity, exact-source and shared-release checks remain required.
-One `scout` runs this and returns ≤150 words: commands, pass/fail per side, new failing ids, red/green per fix test. Commands come from CLAUDE.md § Run & test; output per global CLAUDE.md § Verification. Test services only if that section defines them, with resource names and ports unique to this run; tear them down after.
+One `scout` runs this; for a **small change** (one S item and ≤50 changed lines outside tests, or config/copy only) run it yourself, reusing implement's logged results when they match. Either returns ≤150 words: commands, pass/fail per side, new failing ids, red/green per fix test. Commands come from CLAUDE.md § Run & test; output per global CLAUDE.md § Verification. Test services only if that section defines them, with resource names and ports unique to this run; tear them down after.
 Codex: run these steps in this session itself; its scout is sandboxed read-only.
 Temp worktrees (contracts.md): use a run-unique path; list leftovers but never prune or remove another run's path. Each one this run makes is removed without force only when its exact registered path has no tracked, untracked or ignored content; otherwise keep and report it.
 1. **Branch:** reuse implement's logged results when the command matches and `git diff --quiet <logged head sha> <head> -- ':(top,exclude)<tasks>'` passes. For an instruction-only change, the compared relevant paths may justify reusing earlier code-test evidence plus fresh bounded semantic checks; name the paths and limits. Otherwise run the applicable suite where the head is checked out (else in a temp worktree at it), including project-required aggregate release checks. Record the sorted failing ids.
@@ -37,7 +37,7 @@ Temp worktrees (contracts.md): use a run-unique path; list leftovers but never p
 
 ## 2. Commits
 Check each commit (skip record commits) against its intent and callers. Up to `Parallel sub-agents` `scout`s get the range, the intents and § Blockers verbatim, and return only blockers (≤150 words, `<short sha> <path:line> — what breaks, for whom — fix`, or "none"):
-- **Callers** (always): callers and consumers of every changed symbol, signature, return shape, table, field or config key; return those the change breaks and any second path for the same data it missed.
+- **Callers** (a small change: check them yourself): callers and consumers of every changed symbol, signature, return shape, table, field or config key; return those the change breaks and any second path for the same data it missed.
 - **Safety** (blockers 3–4) and **Scope** (blockers 2, 5, 6): for a range over `Review fan-out above`; smaller, check these yourself.
 Open each returned line; keep only listed blockers you can show. For visual acceptance, inspect the exact fixture and whole requested surface against the production reference; metadata or an HTTP success is not artifact proof.
 
@@ -56,8 +56,11 @@ Before publishing a release-ready YES, persist the review evidence: `test-review
 - `TASK` on the branch: append to `TASK/log.md` and make a record commit of only that file, subject `review <slug>`.
 - Otherwise: append to `DRAFT/log.md`.
 
+## PR sweep
+For a scheduled run. `python3 "${CLAUDE_SKILL_DIR}/scripts/pr_sweep.py" pending` prints one JSON line per open PR head with no verdict yet (none: report `nothing pending` and stop). For each, in its `checkout`, run **PR mode** on that head, then post the report with `pr_sweep.py post --repo <repo> --pr <n> --sha <head_sha> --verdict YES|NO --body-file <report file>`. A refused post (head moved, already posted, closed) is skipped, not retried. Never approve, merge, deploy or edit the PR; a failed review posts nothing.
+
 ## PR mode
-Same review for a PR, plus its summary line in the report and its own log (§ Log). Post the report as a PR comment only if the user asks; never approve or request changes.
+Same review for a PR, plus its summary line in the report and its own log (§ Log). Post the report as a PR comment only if the user asks, or when the PR sweep runs this: then post only through `${CLAUDE_SKILL_DIR}/scripts/pr_sweep.py post` (one comment per head; `pr_sweep.authorization` in the agent-skills config is the user's standing approval). Never approve, request changes or merge.
 
 ## Report (readable markdown for someone who hasn't seen the code; never a fenced block)
 After saving and reading back § Log, print the verdict before any authorized deploy or implementation loop. Include the review receipt reference; a preliminary chat YES alone is not release evidence. Caps per contracts.md § Report. These lines, in order; nothing else:

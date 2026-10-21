@@ -16,5 +16,10 @@
   "max_live": 4,
   "aws": false,
   "databases": false,
-  "task_history_repo": null
+  "task_history_repo": null,
+  "pr_sweep": {
+    "repos": [{"repo": "owner/name", "checkout": "~/Developer/name"}],
+    "authorization": "",
+    "max_per_run": 3
+  }
 }
