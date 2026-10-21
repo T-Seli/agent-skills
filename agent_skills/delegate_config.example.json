@@ -21,5 +21,9 @@
     "repos": [{"repo": "owner/name", "checkout": "~/Developer/name"}],
     "authorization": "",
     "max_per_run": 3
+  },
+  "release": {
+    "grant_hours": 12,
+    "repos": {"owner/name": {"base": "main", "targets": {}}}
   }
 }

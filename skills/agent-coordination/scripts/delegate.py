@@ -11,10 +11,13 @@ The supervisor holds `caffeinate -i -w <worker pid>`, runs `claude -p` in guarde
 prompt on stdin, saves the stream, then records the execution, the task events and the receipt.
 A worker that delegates again inherits AGENT_SKILLS_DEPTH + 1; the ledger refuses past `max_depth`,
 past `max_live` running workers, and a second writer in the same directory.
+`start --approved-log <log.md> --targets <a,b>` verifies the log's newest `Approved:` record and hands
+the worker a release grant (AGENT_SKILLS_GRANT) for those targets of the cwd's repo under `release.repos`.
 """
 import argparse
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -39,6 +42,8 @@ UNKNOWN = ("delegate: liveness unknown: signals or `ps` are denied here, so the 
            "wait again, or run `delegate.py reconcile` where they work")
 AWS_SECRETS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE")
 DB_SECRETS = ("DATABASE_URL", "PGPASSWORD", "PGHOST", "PGUSER", "PGDATABASE", "PGPORT", "PGSERVICE")
+APPROVED, APPROVED_AT = "Approved: ", "%Y-%m-%d %H:%MZ"
+REMOTE_DENIES = ("Bash(ssh:", "Bash(scp:", "Bash(rsync")  # lifted only for a grant that names hosts
 
 
 def now():
@@ -101,9 +106,13 @@ def refuse(reason):
     sys.exit(REFUSED)
 
 
-def guard_settings(run):
-    """Deny rules plus the fail-closed PreToolUse hook, with this install's absolute paths."""
+def guard_settings(run, remote=False):
+    """Deny rules plus the fail-closed PreToolUse hook, with this install's absolute paths; `remote`
+    lifts the ssh, scp and rsync denies for a grant whose targets name hosts."""
     settings = json.loads((GUARD / "worker-settings.json").read_text())
+    if remote:
+        settings["permissions"]["deny"] = [d for d in settings["permissions"]["deny"]
+                                           if not d.startswith(REMOTE_DENIES)]
     hook = f"{shlex.quote(sys.executable)} {shlex.quote(str(GUARD / 'worker-guard.py'))}"
     settings["hooks"] = {"PreToolUse": [{"matcher": "*", "hooks": [
         {"type": "command", "command": hook, "timeout": 10}]}]}
@@ -112,16 +121,87 @@ def guard_settings(run):
     return path
 
 
-def env_changes(cfg, depth, task_id):
-    """Only the changes are stored (params.json); the supervisor applies them to its inherited env."""
-    changes = {"set": {"AGENT_SKILLS_DEPTH": str(depth + 1), "AGENT_SKILLS_TASK_ID": task_id}, "unset": []}
-    if not cfg.get("aws"):
+def env_changes(cfg, depth, task_id, grant=None, credentials=()):
+    """Only the changes are stored (params.json); the supervisor applies them to its inherited env.
+    A grant is never inherited; its targets' credentials restore AWS for this run, never databases."""
+    changes = {"set": {"AGENT_SKILLS_DEPTH": str(depth + 1), "AGENT_SKILLS_TASK_ID": task_id},
+               "unset": ["AGENT_SKILLS_GRANT"]}
+    if grant:
+        changes["set"]["AGENT_SKILLS_GRANT"] = json.dumps(grant, separators=(",", ":"))
+    if not (cfg.get("aws") or "aws" in credentials):
         changes["unset"] += AWS_SECRETS
         changes["set"].update(AWS_SHARED_CREDENTIALS_FILE="/dev/null", AWS_CONFIG_FILE="/dev/null")
     if not cfg.get("databases"):
         changes["unset"] += DB_SECRETS
         changes["set"]["PGPASSFILE"] = "/dev/null"
     return changes
+
+
+def approval(log, hours):
+    """The newest `Approved:` record of the log (contracts.md § Consent): its targets, time and source."""
+    if not Path(log).is_file():
+        sys.exit(f"delegate: no such log {log}")
+    lines = [line for line in Path(log).read_text().splitlines() if line.startswith(APPROVED)]
+    if not lines:
+        refuse(f"no {APPROVED.strip()} line in {log}")
+    fields = [f.strip() for f in lines[-1][len(APPROVED):].split(" · ")]
+    if len(fields) != 5:
+        refuse(f"the newest approval has {len(fields)} fields, not 5 (steps · targets · time · source · quote)")
+    steps, targets, at, source, quote = fields
+    if "deploy" not in {step.strip() for step in steps.split(",")}:
+        refuse(f"the newest approval covers {steps!r}, not deploy")
+    try:
+        moment = datetime.strptime(at, APPROVED_AT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        moment = None
+    if not moment or moment.strftime(APPROVED_AT) != at:
+        refuse(f"approval time {at!r} is not YYYY-MM-DD HH:MMZ")
+    if moment > now() + timedelta(minutes=5):
+        refuse(f"approval time {at} is in the future")
+    if moment + timedelta(hours=hours) < now():
+        refuse(f"the approval of {at} is older than grant_hours {hours}")
+    if not source:
+        refuse("the approval names no source")
+    if not (len(quote) > 2 and quote[0] == quote[-1] == '"' and quote[1:-1].strip()):
+        refuse("the approval quotes no exact words")
+    return {t.strip() for t in targets.split(",")} - {""}, moment, source
+
+
+def origin_repo(cwd):
+    """owner/name of the cwd's origin, from an https or ssh URL."""
+    url = subprocess.run(["git", "-C", str(cwd), "remote", "get-url", "origin"],
+                         capture_output=True, text=True).stdout.strip()
+    found = re.fullmatch(r"(?:(?:https|ssh)://[^/]+/|[\w.-]+@[\w.-]+:)([\w.-]+/[\w.-]+?)(?:\.git)?", url)
+    if not found:
+        refuse(f"origin of {cwd} is not an owner/name URL: {url or 'none'}")
+    return found.group(1)
+
+
+def release_grant(cfg, log, targets, cwd, task_id):
+    """The grant a verified approval gives these targets (worker-execution.md § Delegate), and the
+    credentials it restores."""
+    release = cfg.get("release", {})
+    hours = release.get("grant_hours", 12)
+    approved, moment, source = approval(log, hours)
+    targets = list(dict.fromkeys(t.strip() for t in targets.split(",")))
+    if not set(targets) <= approved:
+        refuse(f"targets {sorted(set(targets) - approved)} are not in the approval {sorted(approved)}")
+    repo = origin_repo(cwd)
+    if repo not in release.get("repos", {}):
+        refuse(f"no release.repos entry for {repo}")
+    entry = release["repos"][repo]
+    if not set(targets) <= set(entry["targets"]):
+        refuse(f"targets {sorted(set(targets) - set(entry['targets']))} are not configured for {repo}")
+    chosen = [entry["targets"][t] for t in targets]
+    credentials = {c for t in chosen for c in t.get("credentials", [])}
+    if credentials - {"aws"}:
+        refuse(f"credentials {sorted(credentials - {'aws'})} of {repo}: a grant restores only aws")
+    grant = {"repo": repo, "base": entry["base"], "targets": targets,
+             "commands": list(dict.fromkeys(c for t in chosen for c in t.get("commands", []))),
+             "hosts": list(dict.fromkeys(h for t in chosen for h in t.get("hosts", []))),
+             "expires": (moment + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%MZ"),
+             "task_id": task_id, "source": source}
+    return grant, credentials
 
 
 def source_pin():
@@ -152,6 +232,10 @@ def start(args):
                                           signals=args.signal, reason=args.reason)
     root = tasks.state_dir()
     task_id = args.task_id or f"w-{now():%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
+    if args.approved_log and depth:
+        refuse("a release grant is issued only from a top-level session, never from a worker")
+    grant, credentials = (release_grant(cfg, args.approved_log, args.targets, cwd, task_id)
+                          if args.approved_log else (None, set()))
     dispatch_id = f"d{time.time_ns() // 1_000_000}"
     parent = os.environ.get("AGENT_SKILLS_TASK_ID", "top-level")
     decision = args.decision_ref or f"delegated-by:{parent}"
@@ -172,14 +256,15 @@ def start(args):
     run.mkdir(parents=True, mode=0o700)
     (run / "prompt.md").write_text(prompt)
     os.chmod(run / "prompt.md", 0o600)
+    settings = guard_settings(run, remote=bool(grant and grant["hosts"]))
     claude = workers.Claude(route["model"], route["effort"], route.get("max_cost_usd"),
-                            settings=guard_settings(run), max_turns=route.get("max_turns"),
-                            name=args.name or task_id)
+                            settings=settings, max_turns=route.get("max_turns"), name=args.name or task_id)
     write_json(run / "params.json", {
         "task_id": task_id, "dispatch_id": dispatch_id, "cwd": str(cwd), "depth": depth + 1,
         "argv": claude.command(session_id=session_id, resume=args.resume),
         "timeout_seconds": route["timeout_seconds"], "route": {k: route[k] for k in ("tier", "model", "effort")},
-        "env": env_changes(cfg, depth, task_id)})
+        "env": env_changes(cfg, depth, task_id, grant, credentials),
+        "grant": grant and {k: grant[k] for k in ("repo", "base", "targets", "expires", "source")}})
     log = open(run / "supervisor.log", "w")
     sup = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "_supervise", str(run)],
                            stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
@@ -255,7 +340,7 @@ def supervise(run):
         "finished_at": stamp(finished), "duration_s": round(time.time() - t0), "cwd": p["cwd"],
         "depth": p["depth"], "route": p["route"], "keep_awake": awake,
         "cost_usd": result.get("total_cost_usd"), "turns": result.get("num_turns"),
-        "permission_denials": len(denials),
+        "permission_denials": len(denials), "grant": p["grant"],
         "report": {k: report.get(k) for k in ("status", "summary", "commit", "tests", "need")},
         "record_status": tasks.load(root, task_id)["status"], "bookkeeping_error": bookkeeping,
         "stream": str(run / "stream.jsonl")})
@@ -385,6 +470,8 @@ def main(argv=None):
     s.add_argument("--reason", default="delegated work")
     s.add_argument("--decision-ref")
     s.add_argument("--resume", action="store_true", help="continue the task's owned session")
+    s.add_argument("--approved-log", help="the task's log.md: its newest Approved: line grants a release")
+    s.add_argument("--targets", help="comma-separated release targets, each in the approval and configured")
     w = sub.add_parser("wait")
     w.add_argument("task_id")
     w.add_argument("--dispatch")
@@ -397,6 +484,8 @@ def main(argv=None):
     sv = sub.add_parser("_supervise")
     sv.add_argument("run")
     args = parser.parse_args(argv)
+    if args.cmd == "start" and bool(args.approved_log) != bool(args.targets):
+        parser.error("--approved-log and --targets go together")
     if args.cmd == "_supervise":
         return supervise(args.run)
     return {"start": start, "wait": wait, "status": status, "reconcile": reconcile, "report": report}[args.cmd](args)
