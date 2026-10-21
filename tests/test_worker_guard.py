@@ -48,7 +48,9 @@ class WorkerGuardTests(unittest.TestCase):
                         "claude --version", "claude agents --json --all", "gh pr view 12", "gh release list",
                         "find . -name '*.py' -exec grep -l foo {} \\;", "find . -type f -exec ls -la {} +",
                         "git ls-files | xargs grep -n foo", "git ls-files -z | xargs -0 wc -l", "echo a b | xargs -n1 echo",
-                        "printf 'a.txt\\n' | xargs git add", "for f in *.md; do wc -l \"$f\"; done", "npm run build"]:
+                        "printf 'a.txt\\n' | xargs git add", "for f in *.md; do wc -l \"$f\"; done", "npm run build",
+                        "nice -n 10 python3 run.py", "timeout -s KILL 5 python3 run.py", "npm --prefix \"$WT\" test",
+                        "npm test \"$F\"", "[ -e x ] && echo y", "caffeinate -i -t 60 npm test", "echo \"$(date)\" > out.txt"]:
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command), 0)
 
@@ -73,7 +75,12 @@ class WorkerGuardTests(unittest.TestCase):
                         "echo x | xargs -I {} git push origin {}:main", "echo 'git push' | xargs -I{} sh -c {}", "echo s3 | xargs aws",
                         "g=git; $g push origin HEAD:main", "$GIT push", "\"$(which git)\" push origin HEAD:main",
                         "git $SUB origin HEAD:main", "S=deploy; npm run $S", "npm $CMD", "make $TARGET",
-                        "env -S 'git push origin HEAD:main'", "env --split-string='git push'"]:
+                        "env -S 'git push origin HEAD:main'", "env --split-string='git push'",
+                        "caffeinate -s git push origin main", "sudo -E git push origin main", "env -u X git push origin main",
+                        "gi$(echo t) push origin main", "git pu$(echo sh) origin main", "{git,push} origin main",
+                        "/usr/bin/gi? push origin main", "echo x | xargs -I{} git {} origin main",
+                        "find /usr/bin -name git -exec {} push origin main \\;", "env -iS 'git push origin main'",
+                        "git --git-dir .git push origin main", "make -C . $T", "npm run --silent $S"]:
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command), 2)
 

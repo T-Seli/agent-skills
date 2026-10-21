@@ -50,6 +50,12 @@ RUNNERS = {"npx", "ts-node", "tsx"}
 XARGS_VALUE_OPTIONS = {"-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "-J", "-R"}
 # Commands whose real arguments would arrive from xargs input the guard cannot see.
 XARGS_BLIND = {"gh", "aws", "ssh", "scp", "sftp", "rsync", "npm", "npx", "yarn", "pnpm", "make", "eval"}
+# Value-taking options of each wrapper, so the value is not read as the command it wraps.
+PREFIX_VALUE_OPTIONS = {"xargs": XARGS_VALUE_OPTIONS, "env": {"-u", "-C", "--unset", "--chdir"}, "caffeinate": {"-t", "-w"},
+                        "timeout": {"-s", "-k", "--signal", "--kill-after"}, "nice": {"-n", "--adjustment"},
+                        "sudo": {"-u", "-g", "-C", "-h", "-p", "-r", "-t", "-U", "-D"}}
+GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix"}
+SUSPECT = re.compile(r"[$`*?\[{]")  # variables, substitutions, globs and braces hide what runs
 SSH_VALUE_OPTIONS = set("-b -c -D -E -e -F -I -i -J -L -l -m -O -o -p -Q -R -S -W -w".split())
 METADATA = {"ls", "test", "[", "[[", "stat"}  # see that a secrets file exists without reading it
 READERS = {"cat", "less", "more", "head", "tail", "grep", "egrep", "rg", "sed", "awk", "source", ".", "cp",
@@ -120,9 +126,11 @@ def push_reason(args, cwd):
     """Sharing: push the task branch you are on. A release grant also allows pushing to its base."""
     i = 0
     while i < len(args) and args[i].startswith("-"):
+        if args[i].split("=")[0] in ("--git-dir", "--work-tree", "--namespace"):
+            return "a push with --git-dir, --work-tree or --namespace can't be checked; run it from the repo"
         if args[i] == "-C":
             cwd = str(Path(cwd) / os.path.expanduser(args[i + 1]))
-        i += 2 if args[i] in ("-C", "-c") else 1
+        i += 2 if args[i] in GIT_VALUE_OPTIONS else 1
     rest = without_redirects(args[i + 1:])
     if {a for a in rest if a.startswith("-")} - PUSH_OPTS:
         return "git push may not force, delete, mirror or push tags"
@@ -237,7 +245,7 @@ def scan(text, i=0, close=""):
             break
         elif two == "$(" or c == "`":
             inner, docs, i = scan(text, i + len(two if c == "$" else c), ")" if c == "$" else "`")
-            segments, heredocs, buf = segments + inner, heredocs + docs, buf + "_"
+            segments, heredocs, buf = segments + inner, heredocs + docs, buf + "$_"
         elif c == '"' or (c == "'" and not quote):
             buf, quote = buf + c, "" if quote else c
         elif quote:
@@ -272,18 +280,47 @@ def scan(text, i=0, close=""):
 
 
 def command_words(tokens):
-    i = 0
+    i, values = 0, set()
     while i < len(tokens) and (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*|\d+[smhd]?", tokens[i]) or
                                os.path.basename(tokens[i]) in PREFIX or tokens[i].startswith("-")):
-        i += 2 if tokens[i] in XARGS_VALUE_OPTIONS else 1
+        if os.path.basename(tokens[i]) in PREFIX:
+            values = PREFIX_VALUE_OPTIONS.get(os.path.basename(tokens[i]), set())
+        i += 2 if tokens[i] in values else 1
     return tokens[i:]
 
 
 def git_subcommand(args):
     i = 0
     while i < len(args) and args[i].startswith("-"):
-        i += 2 if args[i] in ("-C", "-c") else 1
+        i += 2 if args[i] in GIT_VALUE_OPTIONS else 1
     return args[i:]
+
+
+def verb_words(cmd, args):
+    """The words that choose what a release-capable command does (a variable or glob there hides it)."""
+    if cmd == "git":
+        return git_subcommand(args)[:1]
+    if cmd == "npm":
+        i = 0
+        while i < len(args) and args[i].startswith("-"):
+            i += 2 if args[i] in ("--prefix", "-C", "-w", "--workspace") else 1
+        rest = args[i:]
+        if rest[:1] and rest[0] in ("run", "run-script", "rum", "urn"):
+            rest = [a for a in rest[1:] if not a.startswith("-")]
+        return rest[:1]
+    if cmd in ("yarn", "pnpm", "npx"):
+        return [a for a in args if not a.startswith("-")][:1]
+    if cmd == "make":
+        targets, skip = [], False
+        for a in args:
+            if skip:
+                skip = False
+            elif a in ("-C", "-f", "--file", "--directory", "-I", "-o", "-W"):
+                skip = True
+            elif not a.startswith("-") and "=" not in a:
+                targets.append(a)
+        return targets
+    return []
 
 
 def aws_reason(args):
@@ -320,16 +357,13 @@ def check_segment(segment, cwd, depth):
     if any(w.startswith("--approved") for w in every):
         return "only the attended session starts a release worker"
     prefix = every[:len(every) - len(tokens)]
-    if "env" in map(os.path.basename, prefix) and any(p.startswith(("-S", "--split-string")) for p in prefix):
+    if "env" in map(os.path.basename, prefix) and any(re.match(r"-[^-]*S|--split-string", p) for p in prefix):
         return "env -S hides the command it runs; run the command directly"
     if not tokens:
         return None
-    if re.search(r"[$`]", tokens[0]) or tokens[0] == "_":
-        return "a command name built from a variable or substitution can't be inspected; spell it out"
-    named = canonical(tokens)
-    verbs = (git_subcommand(args)[:1] if cmd == "git" else named[1:3] if cmd == "npm"
-             else args[:1] if cmd in ("yarn", "pnpm", "npx", "make") else [])
-    if any(re.search(r"[$`]", v) or v == "_" for v in verbs):
+    if tokens[0] not in ("[", "[[") and SUSPECT.search(tokens[0]):
+        return "a command name built from a variable, substitution, glob or brace can't be inspected; spell it out"
+    if any(SUSPECT.search(v) for v in verb_words(cmd, args)):
         return f"a {cmd} subcommand built from a variable or substitution can't be inspected; spell it out"
     if "xargs" in map(os.path.basename, prefix) and (cmd in XARGS_BLIND | SHELLS | INTERPRETERS or
                                                      cmd == "git" and git_subcommand(args)[:1] in ([], ["push"])):
