@@ -459,7 +459,7 @@ def report(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("start")
+    s = sub.add_parser("start", allow_abbrev=False)  # no "--approved" shorthand slipping past the guard
     s.add_argument("--prompt-file", required=True, help="the brief; '-' reads stdin")
     s.add_argument("--cwd", default=".")
     s.add_argument("--task-id")

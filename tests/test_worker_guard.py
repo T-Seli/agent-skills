@@ -221,7 +221,9 @@ class PushAndGrantTests(unittest.TestCase):
                         "bash -c 'delegate.py start --approved-log=t/log.md'",
                         "git -c remote.origin.push=refs/heads/feat/x:refs/heads/main push origin feat/x",
                         "git -c alias.p=push p origin HEAD:main", "GIT_CONFIG_PARAMETERS=\"'alias.p=push'\" git p origin HEAD:main",
-                        "export GIT_CONFIG_COUNT=1; git status", "git -c url.x.insteadOf=y push origin feat/x"]:
+                        "export GIT_CONFIG_COUNT=1; git status", "git -c url.x.insteadOf=y push origin feat/x",
+                        "git --config-env=alias.p=V p origin HEAD:main", "python3 delegate.py start --approved x --targets p",
+                        "echo '[alias] p = push' >> ~/.gitconfig"]:
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command), 2)
         self.assertEqual(self.bash("python3 delegate.py start --prompt-file b.md --cwd ."), 0)
@@ -244,7 +246,9 @@ class PushAndGrantTests(unittest.TestCase):
                         "scp dist.tgz ubuntu@203.0.113.7:/tmp/", "git push -u origin feat/x"]:
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command, self.grant), 0)
+        self.grant["commands"].append("git push origin HEAD:main")  # git is never granted by prefix
         for command in ["git push --force origin HEAD:main", "git push origin HEAD:release", "git push origin +HEAD:main",
+                        "git push origin HEAD:main --force", "git push origin HEAD:main HEAD:release",
                         "ssh root@203.0.113.7 uptime", "ssh ubuntu@198.51.100.1", "scp x ubuntu@198.51.100.1:/tmp",
                         "npm run deploy:staging", "aws ec2 terminate-instances --instance-ids i-1", "psql -c 'select 1'",
                         "cat .env", "npm run deploy:prod > ~/.claude/settings.json", "gh pr merge 1"]:

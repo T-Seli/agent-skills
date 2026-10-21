@@ -55,6 +55,7 @@ SHELL_RC = {".zshrc", ".zprofile", ".zshenv", ".bashrc", ".bash_profile", ".prof
 
 def protected_roots():
     roots = [HOME / ".claude", HOME / ".codex", HOME / ".agents", HOME / ".config" / "agent-skills",
+             HOME / ".gitconfig", HOME / ".config" / "git",
              HOME / ".ssh", HOME / ".aws", HOME / "Library" / "LaunchAgents"]
     skills = HOME / ".claude" / "skills"
     if skills.is_dir():
@@ -248,19 +249,19 @@ def check_segment(segment, cwd, depth):
     if KEY_DIRS.search(segment) or cmd not in METADATA and any(
             SECRET.search(" " + w) and (cmd in READERS or not re.search(r"\s", w)) for w in every):
         return "reading secrets files is not allowed"
-    if any(w == "--approved-log" or w.startswith("--approved-log=") for w in every):
+    if any(w.startswith("--approved") for w in every):
         return "only the attended session starts a release worker"
     if not tokens:
         return None
     grant = release_grant(cwd)
-    if grant and any(tokens[:len(p)] == p for p in map(shlex.split, grant.get("commands", []))):
+    if grant and cmd != "git" and any(tokens[:len(p)] == p for p in map(shlex.split, grant.get("commands", []))):  # git goes through push_reason
         return write_reason(segment, cmd, args, cwd)  # a granted release command still may not write protected config
     if cmd in SHELLS or cmd == "eval":
         inner = args[args.index("-c") + 1] if "-c" in args[:-1] else " ".join(args) if cmd == "eval" else ""
         return check_bash(inner, cwd, depth + 1) if inner else None
     if cmd in INTERPRETERS and any(a in ("-c", "-e") for a in args):
         return check_text(" ".join(args))
-    if "GIT_CONFIG" in segment or (cmd == "git" and any(
+    if "GIT_CONFIG" in segment or (cmd == "git" and any(a.startswith("--config-env") for a in args)) or (cmd == "git" and any(
             args[i] == "-c" and re.match(r"(alias|remote|url|push|credential|core\.(sshcommand|hookspath))\.?",
                                          args[i + 1].lower()) for i in range(len(args) - 1))):
         return "git configuration overrides can redirect pushes and are not allowed"
@@ -319,7 +320,7 @@ def check_text(code):
     """Interpreter code: a command or secrets path in it is only text, so any mention blocks."""
     if re.search(r"--dangerously-skip-permissions\b", code):
         return "bypass flags are not allowed inside a worker"
-    if "--approved-log" in code:
+    if "--approved" in code:
         return "only the attended session starts a release worker"
     if re.search(r"\bgit(\s+(-C\s+\S+|-c\s+\S+|--\S+))*\s+push\b", code) or \
             re.search(r"""["']git["'](\s*,\s*["'][^"']*["'])*?\s*,\s*["']push["']""", code):
