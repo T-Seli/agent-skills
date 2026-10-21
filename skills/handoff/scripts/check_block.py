@@ -34,6 +34,8 @@ def problems(text):
             bare = word.strip(EDGE)
             if word.startswith("@"):
                 path = bare.lstrip("@")
+                if word != word.rstrip(EDGE):
+                    found.append(f"line {n}: {word} has punctuation touching the @-mention; put a space after it")
                 if not path.startswith("/"):
                     found.append(f"line {n}: {word} is not a file @-mention; use @ and an absolute path")
                 elif not os.path.isfile(path):

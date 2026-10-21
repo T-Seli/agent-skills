@@ -21,7 +21,7 @@ class HandoffPasteCheckTests(unittest.TestCase):
                 ("Config lives in release.repos of the workers file.", "release.repos"),
                 ("Start with --approved-log <log> --targets <t>.", "angle bracket"),
                 ("See https://example.com/x", "link"), ("Run /deploy next.", "slash command"),
-                ("Ask @buffington first.", "not a file @-mention"), ("Use `code` here.", "backtick"),
+                ("Ask @someone first.", "not a file @-mention"), ("Use `code` here.", "backtick"),
                 ("This is **bold**.", "bold"), ("# Heading", "heading"), ("an _emphasis_ word", "emphasis")]:
             with self.subTest(text=text):
                 code, out = run(text)
@@ -31,12 +31,16 @@ class HandoffPasteCheckTests(unittest.TestCase):
     def test_plain_text_and_existing_file_mentions_pass(self):
         with tempfile.NamedTemporaryFile(suffix=".md") as f:
             text = (f"Continue the work. First: read @{f.name} and the guard folder.\n"
-                    "- Done + verified: 494 tests, 6 known errors; ccm_backend and Signal7-Voice targets saved (user)\n"
+                    "- Done + verified: 494 tests, 6 known errors; two repos' targets saved (user)\n"
                     'Next: run "git status" in ~/Developer/agent-skills-canonical; e.g. at 10-24 05:00Z, 16/16 links.')
             self.assertEqual(run(text), (0, "ok\n"))
 
     def test_missing_file_mentions_and_the_cap_are_reported(self):
         self.assertIn("names no existing file", run("Read @/no/such/file.md first.")[1])
+        with tempfile.NamedTemporaryFile(suffix=".py") as f:
+            for text in (f"Read @{f.name}, then go.", f"Files: @{f.name}; next"):
+                with self.subTest(text=text):
+                    self.assertIn("punctuation touching", run(text)[1])
         self.assertIn("lines; the cap", run("x\n" * 41)[1])
         self.assertIn("words; the cap", run("word " * 451)[1])
 
