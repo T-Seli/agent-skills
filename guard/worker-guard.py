@@ -17,7 +17,8 @@ from pathlib import Path
 HOME = Path(os.environ.get("HOME", str(Path.home())))
 TELL = "Blocked by the worker guard: {}. Do not retry or work around it; report it to your parent as a blocker."
 
-PREFIX = {"sudo", "env", "nohup", "time", "exec", "command", "nice", "caffeinate", "xargs", "timeout"}
+PREFIX = {"sudo", "env", "nohup", "time", "exec", "command", "nice", "caffeinate", "xargs", "timeout",
+          "if", "then", "elif", "else", "while", "until", "do", "!", "{"}
 SHELLS = {"bash", "sh", "zsh", "dash", "fish"}
 INTERPRETERS = {"python", "python3", "node", "ruby", "perl"}
 REMOTE = {"ssh", "scp", "sftp", "mosh", "telnet"}
@@ -36,8 +37,14 @@ AWS_READ = {"describe", "get", "list", "head", "lookup", "filter", "search", "sc
 AWS_VALUE_OPTIONS = {"--region", "--profile", "--output", "--endpoint-url", "--query", "--color",
                      "--ca-bundle", "--cli-read-timeout", "--cli-connect-timeout"}
 GIT_CONFIG_READ = {"--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--get-urlmatch"}
+GH_READ = {"view", "list", "diff", "checks", "status", "download", "watch", "checkout"}
+METADATA = {"ls", "test", "[", "[[", "stat"}  # see that a secrets file exists without reading it
+READERS = {"cat", "less", "more", "head", "tail", "grep", "egrep", "rg", "sed", "awk", "source", ".", "cp",
+           "base64", "xxd", "od", "hexdump", "strings", "sort", "cut", "diff", "jq"}
 SECRET = re.compile(r"(^|[\s'\"=/<])\.env(\.(local|prod|production|development|dev|staging|test))?(?=$|[\s'\";|&)>])"
-                    r"|\.ssh/id_|\.aws/credentials|\.pem\b")
+                    r"|\.pem\b")
+KEY_DIRS = re.compile(r"(^|[\s'\"=:/<])\.(ssh|aws)(?=$|[/\s'\";|&)>])")  # anything under ~/.ssh or ~/.aws
+HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"]?)\\?([\w.@-]+)\2")
 PROJECT_PROTECTED = re.compile(r"(^|/)(\.git/(config|hooks)(/|$)|\.claude/(settings[^/]*\.json|hooks)(/|$)|\.mcp\.json$)")
 SHELL_RC = {".zshrc", ".zprofile", ".zshenv", ".bashrc", ".bash_profile", ".profile"}
 
@@ -53,7 +60,7 @@ def protected_roots():
 
 
 def protected(path, cwd):
-    p = Path(os.path.expanduser(str(path)))
+    p = Path(os.path.expanduser(os.path.expandvars(str(path))))
     p = (p if p.is_absolute() else Path(cwd) / p).resolve()
     if p.parent == HOME.resolve() and p.name in SHELL_RC:
         return True
@@ -63,14 +70,59 @@ def protected(path, cwd):
 
 
 def words(segment):
-    try:
-        return shlex.split(segment, posix=True)
-    except ValueError:  # unbalanced quotes (a separator split a quoted string): still inspect the words
-        return [w.strip("'\"") for w in segment.split()]
+    return shlex.split(segment, posix=True)  # ValueError on bad quoting blocks the call
 
 
-def segments(text):
-    return [s for s in re.split(r"\|\||&&|[;|&\n`()]|\$\(", text) if s.strip()]
+def scan(text, i=0, close=""):
+    """Cut shell text into command segments on separators outside quotes; returns (segments, heredocs, end).
+
+    A command substitution yields segments of its own and stands as `_` in the outer one. A heredoc
+    body is cut out and returned with the segments from the command it feeds to the end of its line.
+    """
+    segments, heredocs, pending, buf, quote = [], [], [], "", ""
+    while i < len(text):
+        c, two = text[i], text[i:i + 2]
+        if quote == "'":
+            buf, quote = buf + c, "" if c == "'" else quote
+        elif c == "\\":
+            buf, i = buf + ("" if two == "\\\n" else two), i + 2
+            continue
+        elif c == close and not quote:
+            break
+        elif two == "$(" or c == "`":
+            inner, docs, i = scan(text, i + len(two if c == "$" else c), ")" if c == "$" else "`")
+            segments, heredocs, buf = segments + inner, heredocs + docs, buf + "_"
+        elif c == '"' or (c == "'" and not quote):
+            buf, quote = buf + c, "" if quote else c
+        elif quote:
+            buf += c
+        elif c == "#" and buf[-1:] in ("", " ", "\t"):  # comment to end of line
+            i = text.find("\n", i) if "\n" in text[i:] else len(text)
+            continue
+        elif text.startswith("<<<", i):
+            buf, i = buf + "<<<", i + 3
+            continue
+        elif m := HEREDOC.match(text, i):
+            pending.append((m.group(3), m.group(1), len(segments)))
+            buf, i = buf + m.group(0), m.end()
+            continue
+        elif c in ";&|()\n" and not (c in "&|" and buf.endswith((">", "<")) or two == "&>"):  # not 2>&1, &>, >|
+            segments.append(buf)
+            buf = ""
+            if c == "\n":
+                for word, dash, start in pending:
+                    end = re.compile("^%s%s$" % ("\t*" if dash else "", re.escape(word)), re.M).search(text, i + 1)
+                    if not end:  # no terminator line: check the rest as commands
+                        break
+                    heredocs.append((text[i + 1:end.start()], segments[start:]))
+                    i = end.end()
+                pending = []
+        else:
+            buf += c
+        i += 1
+    if quote or (close and i >= len(text)):
+        raise ValueError("unbalanced quotes or substitution")
+    return [s for s in segments + [buf] if s.strip()], heredocs, i
 
 
 def command_words(tokens):
@@ -98,6 +150,8 @@ def aws_reason(args):
     if len(rest) < 2:
         return None
     service, op = rest[0], rest[1]
+    if service == "configure" and op not in ("list", "list-profiles"):
+        return "aws configure reads or changes ~/.aws credentials"
     if service == "s3":
         if op in ("rm", "mb", "rb") or (op in ("cp", "mv", "sync") and any(a.startswith("s3://") for a in rest[3:])):
             return f"aws s3 {op} writes to S3"
@@ -108,15 +162,22 @@ def aws_reason(args):
 
 
 def check_segment(segment, cwd, depth):
-    tokens = command_words(words(segment))
+    every = words(segment)
+    tokens = command_words(every)
+    cmd, args = (os.path.basename(tokens[0]), tokens[1:]) if tokens else ("", [])
+    if re.search(r"--dangerously-skip-permissions\b", segment):
+        return "bypass flags are not allowed inside a worker"
+    # A secrets path as an argument reads the file; a quoted sentence that mentions one does not.
+    if KEY_DIRS.search(segment) or cmd not in METADATA and any(
+            SECRET.search(" " + w) and (cmd in READERS or not re.search(r"\s", w)) for w in every):
+        return "reading secrets files is not allowed"
     if not tokens:
         return None
-    cmd, args = os.path.basename(tokens[0]), tokens[1:]
     if cmd in SHELLS or cmd == "eval":
         inner = args[args.index("-c") + 1] if "-c" in args[:-1] else " ".join(args) if cmd == "eval" else ""
         return check_bash(inner, cwd, depth + 1) if inner else None
     if cmd in INTERPRETERS and any(a in ("-c", "-e") for a in args):
-        return check_text(" ".join(args), code=True)
+        return check_text(" ".join(args))
     if cmd == "git":
         sub = git_subcommand(args)
         if sub[:1] == ["push"]:
@@ -126,12 +187,13 @@ def check_segment(segment, cwd, depth):
         if sub[:1] == ["remote"] and sub[1:2] and sub[1] in ("add", "set-url", "remove", "rename"):
             return "git remote changes repository configuration"
     if cmd == "gh":
-        if args[:2] in (["pr", "create"], ["pr", "merge"]) or (
-                args[:1] == ["release"] and args[1:2] not in (["view"], ["list"], ["download"])):
-            return f"gh {' '.join(args[:2])} publishes or merges"
-        if args[:1] == ["api"] and (re.search(r"(-X|--method)\s*(POST|PUT|PATCH|DELETE)", segment, re.I)
-                                    or re.search(r"\s(-f|-F|--field|--raw-field|--input)\b", segment)):
-            return "gh api request changes GitHub state"
+        if args[:1] == ["api"]:
+            method = re.search(r"(?:^|\s)(?:-X|--method)[\s=]*(\w+)", " ".join(args))
+            fields = any(re.match(r"-[fF]|--(raw-)?field|--input", a) for a in args)  # these default to POST
+            if (method.group(1).upper() if method else "POST" if fields else "GET") != "GET":
+                return "gh api request changes GitHub state"
+        elif args[1:2] and args[0] not in ("search", "help") and args[1] not in GH_READ:
+            return f"gh {' '.join(args[:2])} publishes or changes GitHub state"
     if "deploy" in cmd or (cmd in ("npm", "yarn", "pnpm", "bun", "make") and any("deploy" in a for a in args)):
         return "deploy commands are release actions"
     if cmd in DEPLOY_VERBS:
@@ -148,21 +210,23 @@ def check_segment(segment, cwd, depth):
         return f"{cmd} launches an agent outside delegate.py; use delegate.py start"
     if cmd in ("crontab", "launchctl") or (cmd == "defaults" and args[:1] == ["write"]):
         return f"{cmd} changes scheduled or system configuration"
-    writes = cmd in WRITERS or (cmd in ("sed", "perl") and any(a.startswith("-i") for a in args)) or ">" in segment
-    if writes:
-        targets = [a for a in args if not a.startswith("-")] + re.findall(r">>?\s*(\S+)", segment)
-        if any(protected(t, cwd) for t in targets):
-            return "writes to skills, settings, hooks or git configuration are not allowed"
+    writer = cmd in WRITERS or (cmd in ("sed", "perl") and any(a.startswith("-i") for a in args))
+    targets = [a for a in args if not a.startswith("-")] if writer else []
+    # Redirect targets; fd duplications (2>&1) do not match and /dev/null is not a write.
+    targets += [t.strip("'\"") for t in re.findall(r">>?\|?\s*([^\s;|&<>]+)", segment) if t != "/dev/null"]
+    if any(protected(t, cwd) for t in targets):
+        return "writes to skills, settings, hooks or git configuration are not allowed"
     return None
 
 
-def check_text(text, code=False):
-    if re.search(r"--dangerously-skip-permissions\b", text):
+def check_text(code):
+    """Interpreter code: a command or secrets path in it is only text, so any mention blocks."""
+    if re.search(r"--dangerously-skip-permissions\b", code):
         return "bypass flags are not allowed inside a worker"
-    # Inside interpreter code a command is only text; in a shell command the segment check sees it.
-    if code and re.search(r"\bgit(\s+(-C\s+\S+|-c\s+\S+|--\S+))*\s+push\b", text):
+    if re.search(r"\bgit(\s+(-C\s+\S+|-c\s+\S+|--\S+))*\s+push\b", code) or \
+            re.search(r"""["']git["'](\s*,\s*["'][^"']*["'])*?\s*,\s*["']push["']""", code):
         return "git push publishes commits"
-    if SECRET.search(text):
+    if SECRET.search(code) or KEY_DIRS.search(code):
         return "reading secrets files is not allowed"
     return None
 
@@ -170,16 +234,22 @@ def check_text(text, code=False):
 def check_bash(command, cwd, depth=0):
     if depth > 3:
         return "nested shell wrappers are too deep to inspect"
-    interpreted = re.search(r"\b(python3?|node|ruby|perl)\b[^|;&]*\s-[ce]\b", command)
-    reason = check_text(command, code=bool(interpreted))
-    for segment in segments(command):
+    found, heredocs, _ = scan(command)
+    for segment in found:
+        reason = check_segment(segment, cwd, depth)
+        if reason:
+            return reason
         tokens = command_words(words(segment))
         if tokens[:1] in (["cd"], ["pushd"]) and tokens[1:2]:
             # A later write in the same command lands relative to the new directory.
             cwd = str(Path(cwd) / os.path.expanduser(tokens[1]))
-            continue
-        reason = reason or check_segment(segment, cwd, depth)
-    return reason
+    for body, feeders in heredocs:  # a heredoc body is data unless it feeds a shell or an interpreter
+        heads = {os.path.basename(t[0]) for t in (command_words(words(s)) for s in feeders) if t}
+        reason = check_bash(body, cwd, depth + 1) if heads & SHELLS else (
+            check_text(body) if heads & INTERPRETERS else None)
+        if reason:
+            return reason
+    return None
 
 
 def check(event):
@@ -191,7 +261,8 @@ def check(event):
         path = data.get("file_path") or data.get("notebook_path")
         if protected(path, cwd):
             return f"editing {path} is not allowed"
-    if tool == "Read" and SECRET.search(" " + str(data.get("file_path", ""))):
+    target = " " + str(data.get("file_path", ""))
+    if tool == "Read" and (SECRET.search(target) or KEY_DIRS.search(target)):
         return "reading secrets files is not allowed"
     return None
 
