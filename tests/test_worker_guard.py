@@ -281,12 +281,19 @@ class ReleaseConfigTests(unittest.TestCase):
         (cfg / "workers.json").write_text(json.dumps({"release": {"repos": {"acme/widgets": {"base": "main", "targets": {
             "agents": {"commands": ["npm run sync:agents"]},
             "fe": {"commands": ["aws s3 sync dist/ s3://bucket-a/releases/*"], "credentials": ["aws"]},
-            "lambda": {"commands": ["./src/deploy/outbound-lambda.sh"], "credentials": ["aws"]}}}}}}))
-        self.grant["commands"] = ["aws s3 sync dist/ s3://bucket-a/releases/*", "./src/deploy/outbound-lambda.sh"]
+            "lambda": {"commands": ["./src/deploy/outbound-lambda.sh"], "credentials": ["aws"]},
+            "cdn": {"commands": ["aws cloudfront create-invalidation --distribution-id E1"], "credentials": ["aws"]},
+            "ship": {"commands": ["npm run deploy"], "credentials": ["aws"]}}},
+            "acme/gizmos": {"base": "main", "targets": {"x": {"commands": ["make ship-gizmos"]}}}}}}))
+        self.grant["commands"] = ["aws s3 sync dist/ s3://bucket-a/releases/*", "./src/deploy/outbound-lambda.sh",
+                                  "aws cloudfront create-invalidation --distribution-id E1", "npm run deploy"]
+        self.grant["repo"] = "Acme/Widgets"  # GitHub names are case-insensitive
 
     def test_listed_release_commands_need_a_grant(self):
         for command in ["npm run sync:agents", "npm run-script sync:agents", "npm --prefix . run sync:agents",
-                        "bash -c 'npm run sync:agents'", "aws s3 sync dist/ s3://bucket-a/releases/r1/ --delete"]:
+                        "bash -c 'npm run sync:agents'", "aws s3 sync dist/ s3://bucket-a/releases/r1/ --delete",
+                        "npx npm run sync:agents", "npm --prefix ../other run sync:agents", "make ship-gizmos",
+                        "cd /tmp && npm run sync:agents"]:
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command), 2)
         for command in ["npm run sync:agents:dry", "npm test", "aws s3 ls s3://bucket-a/releases/"]:
@@ -295,14 +302,20 @@ class ReleaseConfigTests(unittest.TestCase):
 
     def test_wildcards_pin_granted_resources(self):
         self.assertEqual(self.bash("aws s3 sync dist/ s3://bucket-a/releases/r1/ --delete --exclude index.html", self.grant), 0)
+        self.assertEqual(self.bash("aws cloudfront create-invalidation --distribution-id E1 --paths '/*'", self.grant), 0)
+        self.assertEqual(self.bash("npm run deploy -- --skip-tests", self.grant), 0)
         for command in ["aws s3 sync dist/ s3://bucket-b/releases/r1/", "aws s3 sync build/ s3://bucket-a/releases/r1/",
-                        "npm run sync:agents"]:
+                        "npm run sync:agents", "aws s3 sync dist/ s3://bucket-a/releases/../x/",
+                        "aws cloudfront create-invalidation --distribution-id E1 --distribution-id E2 --paths '/*'",
+                        "aws cloudfront create-invalidation --distribution-id E1 --distribution-id=E2",
+                        "npm --prefix ../other run deploy", "npm run deploy --workspace other", "make ship-gizmos"]:
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command, self.grant), 2)
 
     def test_deploy_folder_scripts_are_releases(self):
         for command in ["./src/deploy/ab-lambda.sh", "bash src/deploy/ab-lambda.sh", "sh scripts/deploy.sh",
-                        "npx ts-node src/deploy/agent-sync.ts --dry-run"]:
+                        "npx ts-node src/deploy/agent-sync.ts --dry-run", "npx -p ts-node ts-node src/deploy/agent-sync.ts",
+                        "cd src/deploy && npx ts-node agent-sync.ts", "cd src/deploy && ./ab-lambda.sh"]:
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command), 2)
         self.assertEqual(self.bash("./src/deploy/outbound-lambda.sh", self.grant), 0)

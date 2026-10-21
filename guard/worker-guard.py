@@ -106,7 +106,7 @@ def release_grant(cwd):
     try:
         grant = json.loads(os.environ["AGENT_SKILLS_GRANT"])
         expires = datetime.strptime(grant["expires"], "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
-        live = expires > datetime.now(timezone.utc) and origin_repo(cwd) == grant["repo"]
+        live = expires > datetime.now(timezone.utc) and (origin_repo(cwd) or "").lower() == grant["repo"].lower()
     except (KeyError, TypeError, ValueError, subprocess.CalledProcessError):
         return None
     return grant if live else None
@@ -157,7 +157,9 @@ def without_redirects(tokens):
 
 
 def canonical(tokens):
-    """npm aliases and options before `run` do not change which script runs."""
+    """For blocking: `npx npm`, npm aliases and options before `run` do not change which script runs."""
+    if tokens and os.path.basename(tokens[0]) == "npx" and "npm" in tokens[1:4]:
+        tokens = tokens[tokens.index("npm", 1):]
     if tokens and os.path.basename(tokens[0]) == "npm":
         for i, t in enumerate(tokens[1:], 1):
             if t in ("run", "run-script", "rum", "urn"):
@@ -166,28 +168,38 @@ def canonical(tokens):
 
 
 def matches(tokens, pattern):
-    """The command's leading words match the pattern's words; `*` in a pattern word is a wildcard."""
+    """For blocking: the command's leading words match the pattern's (npm forms folded; `*` is a wildcard)."""
     words, tokens = canonical(shlex.split(pattern)), canonical(tokens)
     return len(tokens) >= len(words) and all(fnmatch.fnmatchcase(t, w) for t, w in zip(tokens, words))
 
 
-def release_commands(cwd):
-    """Every command the release config lists for this repo's targets; each needs a grant."""
+def granted(tokens, pattern):
+    """For a grant: the exact leading words with `*` wildcards, no `..`, no npm --prefix/--workspace, and no repeat
+    of an option the pattern pins (a second `--id` would retarget the command)."""
+    words = shlex.split(pattern)
+    pinned = {w.split("=")[0] for w in words if w.startswith("-")}
+    elsewhere = {"--prefix", "-C", "--workspace", "-w"} if os.path.basename(tokens[0]) == "npm" else set()
+    return (len(tokens) >= len(words) and all(fnmatch.fnmatchcase(t, w) for t, w in zip(tokens, words))
+            and not any(".." in t for t in tokens)
+            and not any(t.split("=")[0] in pinned for t in tokens[len(words):])
+            and not any(t.split("=")[0] in elsewhere for t in tokens))
+
+
+def release_commands():
+    """Every command any repo's release config lists; each needs a grant wherever it is run from."""
     if not CONFIG.exists():
         return []
     repos = json.loads(CONFIG.read_text(encoding="utf-8")).get("release", {}).get("repos", {})
-    try:
-        repo = origin_repo(cwd)
-    except subprocess.CalledProcessError:  # not in a git repo: nothing repo-scoped to guard
-        return []
-    return [c for t in repos.get(repo, {}).get("targets", {}).values() for c in t.get("commands", [])]
+    return [c for r in repos.values() for t in r.get("targets", {}).values() for c in t.get("commands", [])]
 
 
-def runs_deploy_script(tokens):
-    """The command is, or runs through a shell or runner, a script from a deploy folder or named deploy*."""
+def runs_deploy_script(tokens, cwd):
+    """The command is, or runs through a shell or runner, a script from a deploy folder or named deploy*;
+    relative script paths resolve against the current directory."""
     runner = os.path.basename(tokens[0]) in SHELLS | INTERPRETERS | RUNNERS
-    scripts = [t for t in tokens[1:] if not t.startswith("-")][:2] if runner else []
-    return any(DEPLOY_PATH.search(t) for t in tokens[:1] + scripts)
+    paths = tokens[:1] + ([t for t in tokens[1:] if not t.startswith("-")] if runner else [])
+    return any(DEPLOY_PATH.search(t) or (re.search(r"\.(sh|ts|js|mjs|py)$", t) and DEPLOY_PATH.search(str(Path(cwd) / t)))
+               for t in paths)
 
 
 def remote_hosts(cmd, args):
@@ -306,11 +318,11 @@ def check_segment(segment, cwd, depth):
     if not tokens:
         return None
     grant = release_grant(cwd)
-    if grant and cmd != "git" and any(matches(tokens, p) for p in grant.get("commands", [])):  # git goes through push_reason
+    if grant and cmd != "git" and any(granted(tokens, p) for p in grant.get("commands", [])):  # git goes through push_reason
         return write_reason(segment, cmd, args, cwd)  # a granted release command still may not write protected config
-    if any(matches(tokens, p) for p in release_commands(cwd)):
+    if any(matches(tokens, p) for p in release_commands()):
         return "this repo's release config lists this command; it runs only under a release grant"
-    if runs_deploy_script(tokens):
+    if runs_deploy_script(tokens, cwd):
         return "deploy scripts are release actions"
     if cmd in SHELLS or cmd == "eval":
         inner = args[args.index("-c") + 1] if "-c" in args[:-1] else " ".join(args) if cmd == "eval" else ""
@@ -347,8 +359,8 @@ def check_segment(segment, cwd, depth):
         if verbs is None or (args and args[0] in verbs):
             return f"{cmd} {' '.join(args[:1])} changes deployed infrastructure"
     if cmd in REMOTE or (cmd == "rsync" and any(re.match(r"^[^/\s]*[^/\s:]:", a) for a in args)):
-        hosts, granted = remote_hosts(cmd, args), (grant or {}).get("hosts", [])
-        if hosts and all(h in granted or h.split("@")[-1] in granted for h in hosts):
+        hosts, allowed = remote_hosts(cmd, args), (grant or {}).get("hosts", [])
+        if hosts and all(h in allowed or h.split("@")[-1] in allowed for h in hosts):
             return None
         return f"{cmd} opens a remote shell or copy"
     if cmd in DATABASES:
