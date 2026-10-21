@@ -158,6 +158,11 @@ class MonitorJanitorTests(unittest.TestCase):
         self.assertEqual(expired_monitors(task, now=datetime(2026, 10, 20, 0, 0, tzinfo=timezone.utc))[0],
                          [{'taskId': 'm', 'deadline': '2026-10-19T23:59Z'}])
 
+    def test_a_task_without_a_cron_is_unparsed_not_a_crash(self):
+        adhoc = {'taskId': 'adhoc', 'description': 'no end date', 'enabled': True}
+        self.assertEqual(expired_monitors([adhoc, schedule('nulled', 'no end date', cron=None)], now=at(21, 16, 0)),
+                         ([], ['adhoc', 'nulled']))
+
     def test_cron_pinned_days_end_at_noon_utc_after_the_last_day(self):
         for cron, day in [('15,45 6-15 20 10 *', 21), ('20 6-15 21-23 10 *', 24),
                           ('30 7,11,15 21-23 10 *', 24), ('0 9 20,22 10 *', 23)]:

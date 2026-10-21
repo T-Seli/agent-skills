@@ -146,7 +146,8 @@ def expired_monitors(tasks, *, now):
     for task in tasks:
         if not task['enabled'] or task.get('fireAt'):
             continue
-        deadline = _deadline(task['description']) or _cron_deadline(task['cronExpression'], now.year)
+        cron = task.get('cronExpression')  # ad-hoc tasks have no cron
+        deadline = _deadline(task['description']) or (_cron_deadline(cron, now.year) if cron else None)
         if deadline is None:
             unparsed.append(task['taskId'])
         elif deadline < now:
