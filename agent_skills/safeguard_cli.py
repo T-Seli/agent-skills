@@ -12,11 +12,29 @@ from .release_maintenance import maintain_release
 from .task_checkpoint import operating_view
 from .task_reconciliation import reconcile_tasks
 from .approval_attempts import append_receipt, summarize
+from .keep_awake import Native, Supervisor, status as awake_status, control as awake_control, reuse as awake_reuse
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
     subs = parser.add_subparsers(dest='action', required=True)
+    awake = subs.add_parser('keep-awake', help='Explicit owned foreground protection; no implicit task-status launch')
+    operations = awake.add_subparsers(dest='operation', required=True)
+    operations.add_parser('host', help='Read-only current host/boot binding')
+    acquire = operations.add_parser('acquire', help='Remain foreground until bounded completion; retain execution handle')
+    acquire.add_argument('request', help='Explicit task/owner/host/deadline/approval/foreground JSON binding')
+    acquire.add_argument('receipt', help='New receipt in the existing task artifact directory')
+    acquire.add_argument('command', nargs=argparse.REMAINDER)
+    probe = operations.add_parser('status', help='Fresh process/assertion/AC observation; no receipt write')
+    probe.add_argument('receipt')
+    for operation in ('renew', 'release'):
+        item = operations.add_parser(operation, help='Queue exact-owner request, never signal a receipt PID')
+        item.add_argument('receipt'); item.add_argument('--owner', required=True)
+        item.add_argument('--generation', required=True)
+    reuse = operations.add_parser('reuse', help='Fresh consumer reference without transfer/control')
+    reuse.add_argument('receipt'); reuse.add_argument('--consumer', required=True)
+    reuse.add_argument('--task-id', required=True, help='Exact consuming task, separate from its owner')
+    reuse.add_argument('--until-utc', required=True)
     task = subs.add_parser('task-status')
     task.add_argument('record', help='Existing task-local JSON record; read only')
     task.add_argument('--now', help='Explicit UTC time for reproducible overdue checks')
@@ -67,7 +85,17 @@ def main(argv=None):
     sync.add_argument('--lock-path', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.action == 'task-status':
+        if args.action == 'keep-awake':
+            if args.operation == 'host': result = {'host_id': Native().host_id()}
+            elif args.operation == 'status': result = awake_status(args.receipt)
+            elif args.operation == 'reuse':
+                result = awake_reuse(args.receipt, consumer=args.consumer, task_id=args.task_id, until_utc=args.until_utc)
+            elif args.operation == 'acquire':
+                command = args.command[1:] if args.command[:1] == ['--'] else args.command
+                return Supervisor(json.loads(Path(args.request).read_text()), args.receipt).run(command or None)
+            else:
+                result = awake_control(args.receipt, owner=args.owner, generation=args.generation, operation=args.operation)
+        elif args.action == 'task-status':
             result = operating_view(json.loads(Path(args.record).read_text(encoding='utf-8')), now=args.now)
         elif args.action == 'task-reconcile':
             result = reconcile_tasks(json.loads(Path(args.snapshot).read_text()), now=args.now)

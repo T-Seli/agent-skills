@@ -63,11 +63,50 @@ class RecoveryTests(unittest.TestCase):
     def test_assertion_lifetime_and_other_owner(self):
         receipt = dict(owner='ML', pid=2324, process_identity_ref='process:fixture',
             assertion_ref='pmset:fixture', cleanup_ref='owner-only', observed_at_utc=T0, expires_at_utc=DUE)
-        row = keep_awake_assessment(receipt, now=T1, owner='audit')
+        row = keep_awake_assessment(receipt, now=T0, owner='audit')
+        self.assertEqual(row['state'], 'receipt-only')
         self.assertTrue(row['reuse_existing_owner'])
+        self.assertEqual(keep_awake_assessment(receipt, now=T1, owner='audit')['state'], 'unverified')
         self.assertFalse(row['cleanup_authorized'])
         self.assertEqual(keep_awake_assessment(receipt, now=LATE, owner='audit')['state'], 'unverified')
         self.assertEqual(keep_awake_assessment(None, now=T1, owner='audit')['state'], 'unverified')
+
+    def test_legacy_receipt_never_closes_critical_readiness_and_stales_within_expiry(self):
+        s=self.snapshot();r=s['records'][0]
+        s['observations'][0].update(critical_execution=True, keep_awake=dict(
+            owner=r['coordination']['canonical_owner'],pid=90000,process_identity_ref='fixture',
+            assertion_ref='fixture',cleanup_ref='owner-only',observed_at_utc=T0,expires_at_utc=EXP))
+        row=reconcile_tasks(s,now=T0)['tasks'][0]
+        self.assertEqual(row['keep_awake']['state'],'receipt-only')
+        self.assertIn('critical-keep-awake-unverified',row['issues'])
+        self.assertEqual(reconcile_tasks(s,now=T1)['tasks'][0]['keep_awake']['state'],'unverified')
+
+    def test_live_evidence_is_pure_and_bound_to_acknowledged_owner(self):
+        from test_keep_awake import Fake,request
+        from agent_skills import keep_awake as k
+        import tempfile
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as d:
+            b=Fake();p=Path(d)/'r';req=request(b,seconds=100,segment=100);req['task_id']=self.snapshot()['records'][0]['task_id']
+            runner=k.Supervisor(req,p,backend=b)
+            receipt={**req,'kind':'owned-keep-awake','generation':'g','state':'running',
+                     'supervisor_identity':b.process(__import__('os').getpid())}
+            runner._acquire(receipt)
+            try:
+                s=self.snapshot();s['records'][0]['coordination']['canonical_owner']=req['owner']
+                obs=s['observations'][0]
+                obs.update(critical_execution=True,keep_awake=receipt)
+                before=copy.deepcopy(s)
+                row=reconcile_tasks(s,now=k.stamp(b.now()))['tasks'][0]
+                self.assertEqual(row['keep_awake']['state'],'verified-now')
+                self.assertFalse(row['keep_awake']['live_probe_performed']);self.assertFalse(row['keep_awake']['cleanup_authorized'])
+                self.assertNotIn('critical-keep-awake-unverified',row['issues']);self.assertEqual(before,s)
+                wrong=copy.deepcopy(s);wrong['records'][0]['task_id']='another-task'
+                wrong['expected_task_ids']=['another-task'];wrong['observations'][0]['task_id']='another-task'
+                self.assertIn('critical-keep-awake-unverified',reconcile_tasks(wrong,now=k.stamp(b.now()))['tasks'][0]['issues'])
+                s['records'][0]['coordination']['canonical_owner']='incoming'
+                self.assertIn('critical-keep-awake-unverified',reconcile_tasks(s,now=k.stamp(b.now()))['tasks'][0]['issues'])
+            finally:
+                for grant in runner.grants:runner._stop_grant(*grant)
 
     def test_astra_medium_policy_and_owned_resume(self):
         policy = {'codex': {'involved': dict(model='gpt-6-astra', effort='medium', timeout_seconds=120)}}

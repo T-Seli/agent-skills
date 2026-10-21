@@ -124,5 +124,15 @@ class DepthNotBreadth(unittest.TestCase):
                                      text('skills/workflow-contracts/behavior.md'))
 
 
+class CriticalExecutionNavigation(unittest.TestCase):
+    def test_entrypoint_reaches_existing_concrete_foreground_contract(self):
+        body=text('skills/agent-coordination/SKILL.md')
+        self.assertIn('references/state.md § Bounded recovery assessment',body)
+        contract=text('skills/agent-coordination/references/state.md')
+        for command in ('keep-awake status', 'keep-awake acquire', 'keep-awake reuse', 'keep-awake renew|release'):
+            self.assertIn(command,contract)
+        self.assertIn('queues control, not completion',contract)
+
+
 if __name__ == '__main__':
     unittest.main()

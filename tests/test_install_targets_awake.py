@@ -190,25 +190,38 @@ class TargetAndAwakeTests(unittest.TestCase):
             self.assertEqual(config.read_text(), '{"edited": true}\n')
 
     def test_critical_wrapper_bounds_assertion_and_returns_child_status(self):
-        with tempfile.TemporaryDirectory() as temp:
+        # The shell adapter actually executes; a test Python shim injects only fake
+        # host/assertion probes before invoking the real foreground lifecycle.
+        import sys
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as temp:
             fake = Path(temp) / "caffeinate"
-            fake.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE\"\n")
+            fake.write_text("#!/bin/sh\nexit 99\n")  # must never be invoked
             fake.chmod(0o755)
+            python = Path(temp) / 'python3'
+            python.write_text('#!' + sys.executable + "\n" +
+                "import json, os, sys\n" +
+                "assert sys.argv[1:4] == ['-I', '-B', '-c']\n" +
+                "assert 'agent_skills.keep_awake' in sys.argv[4]\n" +
+                "root = sys.argv[5]\n" +
+                "sys.path[:0] = [root, root + '/tests']\n" +
+                "from test_keep_awake import RealFixture\n" +
+                "from agent_skills import keep_awake as k\n" +
+                "k.Native = RealFixture\n" +
+                "open(os.environ['CAPTURE'], 'w').write(json.dumps(sys.argv[5:]))\n" +
+                "sys.exit(k.legacy(sys.argv[6:]))\n")
+            python.chmod(0o755)
             capture = Path(temp) / "args"
             env = dict(os.environ, PATH=f"{temp}:{os.environ['PATH']}", CAPTURE=str(capture))
             script = str(ROOT / "scripts" / "critical-local-work.sh")
-            result = subprocess.run([script, "task-1", "60", "--", "/bin/sh", "-c", "exit 7"], env=env)
-            self.assertEqual(result.returncode, 7)
-            for _ in range(50):  # caffeinate runs beside the command; give it a moment to record
-                if capture.exists() and capture.read_text().count("\n") >= 5:
-                    break
-                time.sleep(0.05)
-            args = capture.read_text().splitlines()
-            self.assertEqual(args[:4], ["-i", "-t", "60", "-w"])
-            self.assertTrue(args[4].isdigit())
+            result = subprocess.run([script, "task-1", "60", "--", "/bin/sh", "-c", "exit 7"],
+                                    env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 7, result.stderr)
+            import json
+            args = json.loads(capture.read_text())
+            self.assertEqual(args[:4], [str(ROOT), 'task-1', '60', '--'])
             piped = subprocess.run([script, "task-1", "60", "--", "cat"], env=env, input=b"brief\n",
-                                   capture_output=True)
-            self.assertEqual(piped.stdout, b"brief\n")
+                                   capture_output=True, timeout=10)
+            self.assertEqual(piped.stdout, b"brief\n", piped.stderr)
             for value in ("0", "14401", "oops"):
                 result = subprocess.run([script, "task-1", value, "--", "/bin/true"],
                                         env=env, capture_output=True)

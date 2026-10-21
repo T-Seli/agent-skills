@@ -3,6 +3,7 @@ from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 import re
 from .task_checkpoint import operating_view, _time
+from .keep_awake import assess as assess_keep_awake
 
 # A time without `Z` is rejected rather than read as end of day.
 _WHEN = r'(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})Z|(?![T ]?\d))'
@@ -11,19 +12,22 @@ _DEADLINES = (re.compile(r'\bdeadline:\s*' + _WHEN, re.I),
 _PINNED = re.compile(r'\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*')
 
 
-def keep_awake_assessment(receipt, *, now, owner):
+def keep_awake_assessment(receipt, *, now, owner, task_id=None):
     """Check a structured assertion receipt; no process control or sleep attribution."""
     if not receipt:
         return {'state': 'unverified', 'reason': 'missing-receipt'}
+    if receipt.get('kind') == 'owned-keep-awake':
+        return assess_keep_awake(receipt, now=now, owner=owner, task_id=task_id)
     required = ('owner', 'pid', 'process_identity_ref', 'assertion_ref',
                 'observed_at_utc', 'expires_at_utc', 'cleanup_ref')
     if any(not receipt.get(k) for k in required):
         return {'state': 'unverified', 'reason': 'incomplete-receipt'}
     if type(receipt['pid']) is not int or receipt['pid'] <= 0:
         raise ValueError('positive PID required')
-    if not _time(receipt['observed_at_utc']) <= _time(now) < _time(receipt['expires_at_utc']):
+    age = (_time(now) - _time(receipt['observed_at_utc'])).total_seconds()
+    if not 0 <= age <= 120 or _time(now) >= _time(receipt['expires_at_utc']):
         return {'state': 'unverified', 'reason': 'stale-or-future-receipt'}
-    return {'state': 'receipt-verified', 'owner': receipt['owner'],
+    return {'state': 'receipt-only', 'owner': receipt['owner'],
             'reuse_existing_owner': receipt['owner'] != owner,
             'live_probe_performed': False, 'cleanup_authorized': False}
 
@@ -92,8 +96,8 @@ def reconcile_tasks(snapshot, *, now):
                 issues.append('overdue:' + item['id'])
         protection = None
         if obs and obs.get('critical_execution'):
-            protection = keep_awake_assessment(obs.get('keep_awake'), now=now, owner=c.get('canonical_owner'))
-            if protection['state'] != 'receipt-verified':
+            protection = keep_awake_assessment(obs.get('keep_awake'), now=now, owner=c.get('canonical_owner'), task_id=tid)
+            if protection['state'] != 'verified-now':
                 issues.append('critical-keep-awake-unverified')
         rows.append({'task_id': tid, 'issues': issues, 'keep_awake': protection,
                      'approval_recorded': bool(record.get('approvals')),
