@@ -6,7 +6,7 @@ argument-hint: "[draft folder | slug | one-line instruction]"
 
 # Implement
 
-Turn approved action items into tested changes in the authorized isolated workspace. Commit only when the user-approved workflow covers it; no shared-branch synchronization, publication or cleanup follows automatically. First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`: names, `<flow>`, `LOCK`, `DRAFT`, `TASK`, pending, record commits and the defaults named below are per it. No remote: `origin/<base>` below means `<base>`.
+Turn approved action items into tested changes in the authorized isolated workspace. Commit only when the user-approved workflow covers it; no shared-branch synchronization, publication or cleanup follows automatically. When the user or the brief asks to share, push the task branch (`git push -u origin <type>/<slug>`) and open a draft PR; that is sharing, not a release. First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`: names, `<flow>`, `LOCK`, `DRAFT`, `TASK`, pending, record commits and the defaults named below are per it. No remote: `origin/<base>` below means `<base>`.
 
 ## Inputs (first that exists; say which in one line)
 1. Args: a draft folder or slug; any other text is a one-line instruction → **One-line plan**.

@@ -21,7 +21,7 @@ scheduling are defined once in contracts.md (§ Layers, § Chain, § Consent,
 - Blueprint's `Plan` agents = read-only default subagents.
 - The scout is sandboxed read-only: it cannot run tests or create worktrees.
   `$test-review` runs the tests in its own session.
-- Sub-agents never take outward actions (§ Consent).
+- Sub-agents take no outward action beyond § Consent's task-branch push, draft PR and granted release.
 
 ## Scheduling and hooks
 - Schedules follow § Scheduler with Codex's automation tool. List existing

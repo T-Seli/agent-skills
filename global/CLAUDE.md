@@ -25,7 +25,7 @@ Tenant = what varies per install. § Tenancy `none` disables tenant rules.
 
 ## Git
 - Only `/implement` commits code: on its task branch, or on `<base>` when the project's flow is trunk (contracts.md `<flow>`). `/test-review` commits its log entry and `/deploy` its record commits. Nothing else commits unless asked.
-- Push, merge, deploy only via `/deploy`; open a PR only when the user asks (`/deploy PR`). Fetching follows contracts.md § Git.
+- Push a task branch or open a draft PR when the user asks; push to `<base>`, merge and deploy only via `/deploy`.
 - Commit and PR messages describe only the change.
 
 ## Verification
