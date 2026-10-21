@@ -8,6 +8,7 @@ Fail-closed: unreadable input or any internal error blocks the call (exit 2), be
 command hook that exits with any other non-zero code does not block.
 """
 import fnmatch
+import itertools
 import json
 import os
 import re
@@ -46,6 +47,9 @@ PUSH_OPTS = {"-u", "--set-upstream", "--no-verify", "-q", "--quiet", "-v", "--ve
 REDIRECT = re.compile(r"^(\d*|&)?(>>?\|?|<)(&?\S*)?$")  # 2>&1, >out, > out, 2>/dev/null, <in
 DEPLOY_PATH = re.compile(r"(^|/)deploy(/|[\w.-]*\.(sh|ts|js|mjs|py)$)")  # src/deploy/x.sh, scripts/deploy.sh
 RUNNERS = {"npx", "ts-node", "tsx"}
+XARGS_VALUE_OPTIONS = {"-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "-J", "-R"}
+# Commands whose real arguments would arrive from xargs input the guard cannot see.
+XARGS_BLIND = {"gh", "aws", "ssh", "scp", "sftp", "rsync", "npm", "npx", "yarn", "pnpm", "make", "eval"}
 SSH_VALUE_OPTIONS = set("-b -c -D -E -e -F -I -i -J -L -l -m -O -o -p -Q -R -S -W -w".split())
 METADATA = {"ls", "test", "[", "[[", "stat"}  # see that a secrets file exists without reading it
 READERS = {"cat", "less", "more", "head", "tail", "grep", "egrep", "rg", "sed", "awk", "source", ".", "cp",
@@ -271,7 +275,7 @@ def command_words(tokens):
     i = 0
     while i < len(tokens) and (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*|\d+[smhd]?", tokens[i]) or
                                os.path.basename(tokens[i]) in PREFIX or tokens[i].startswith("-")):
-        i += 1
+        i += 2 if tokens[i] in XARGS_VALUE_OPTIONS else 1
     return tokens[i:]
 
 
@@ -315,8 +319,28 @@ def check_segment(segment, cwd, depth):
         return "reading secrets files is not allowed"
     if any(w.startswith("--approved") for w in every):
         return "only the attended session starts a release worker"
+    prefix = every[:len(every) - len(tokens)]
+    if "env" in map(os.path.basename, prefix) and any(p.startswith(("-S", "--split-string")) for p in prefix):
+        return "env -S hides the command it runs; run the command directly"
     if not tokens:
         return None
+    if re.search(r"[$`]", tokens[0]) or tokens[0] == "_":
+        return "a command name built from a variable or substitution can't be inspected; spell it out"
+    named = canonical(tokens)
+    verbs = (git_subcommand(args)[:1] if cmd == "git" else named[1:3] if cmd == "npm"
+             else args[:1] if cmd in ("yarn", "pnpm", "npx", "make") else [])
+    if any(re.search(r"[$`]", v) or v == "_" for v in verbs):
+        return f"a {cmd} subcommand built from a variable or substitution can't be inspected; spell it out"
+    if "xargs" in map(os.path.basename, prefix) and (cmd in XARGS_BLIND | SHELLS | INTERPRETERS or
+                                                     cmd == "git" and git_subcommand(args)[:1] in ([], ["push"])):
+        return f"{cmd} through xargs takes arguments the guard can't see; run it directly"
+    if cmd == "find":
+        for i, a in enumerate(args):
+            if a in ("-exec", "-execdir", "-ok", "-okdir"):
+                inner = list(itertools.takewhile(lambda t: t not in (";", "+"), args[i + 1:]))
+                reason = check_segment(shlex.join(inner), cwd, depth + 1) if inner else None
+                if reason:
+                    return reason
     grant = release_grant(cwd)
     if grant and cmd != "git" and any(granted(tokens, p) for p in grant.get("commands", [])):  # git goes through push_reason
         return write_reason(segment, cmd, args, cwd)  # a granted release command still may not write protected config

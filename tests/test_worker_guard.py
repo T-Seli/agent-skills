@@ -45,7 +45,10 @@ class WorkerGuardTests(unittest.TestCase):
                         "aws s3 cp s3://bucket/key ./key", "aws s3 cp s3://b/k ./k --quiet --recursive",
                         "git config --get user.email",
                         "kubectl get pods", "terraform plan", "cat .env.example", "echo hi > out.txt 2>&1",
-                        "claude --version", "claude agents --json --all", "gh pr view 12", "gh release list"]:
+                        "claude --version", "claude agents --json --all", "gh pr view 12", "gh release list",
+                        "find . -name '*.py' -exec grep -l foo {} \\;", "find . -type f -exec ls -la {} +",
+                        "git ls-files | xargs grep -n foo", "git ls-files -z | xargs -0 wc -l", "echo a b | xargs -n1 echo",
+                        "printf 'a.txt\\n' | xargs git add", "for f in *.md; do wc -l \"$f\"; done", "npm run build"]:
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command), 0)
 
@@ -64,7 +67,13 @@ class WorkerGuardTests(unittest.TestCase):
                         "git config core.hooksPath /tmp/h", "git remote set-url origin x",
                         "claude -p 'do it' --dangerously-skip-permissions", "claude -p hi",
                         "codex exec hi", "crontab -l", "launchctl load x.plist", "defaults write com.x k v",
-                        "cat .env", "source config/.env.local", "cat ~/.ssh/id_ed25519", "eval 'git push'"]:
+                        "cat .env", "source config/.env.local", "cat ~/.ssh/id_ed25519", "eval 'git push'",
+                        "find . -maxdepth 0 -exec git push origin HEAD:main \\;", "find . -execdir git push origin HEAD:main +",
+                        "find . -name x -ok npm run deploy \\;", "echo push | xargs git", "echo origin | xargs git push",
+                        "echo x | xargs -I {} git push origin {}:main", "echo 'git push' | xargs -I{} sh -c {}", "echo s3 | xargs aws",
+                        "g=git; $g push origin HEAD:main", "$GIT push", "\"$(which git)\" push origin HEAD:main",
+                        "git $SUB origin HEAD:main", "S=deploy; npm run $S", "npm $CMD", "make $TARGET",
+                        "env -S 'git push origin HEAD:main'", "env --split-string='git push'"]:
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command), 2)
 
