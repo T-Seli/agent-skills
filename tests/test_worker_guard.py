@@ -114,6 +114,18 @@ class WorkerGuardTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command), 0)
 
+    def test_arithmetic_and_case_patterns_are_not_commands(self):
+        # Sanitized from live worker streams (Oct 20); read as commands built from a substitution or glob.
+        for command in ["awk -v t=$(($(date +%s)-1209600)) '$1>t{print $2}' f", "echo $(( (3+4) * $(( 2 )) ))",
+                        "B=$(cat /tmp/p); case \"$B\" in */wt/_base-*) ;; *) echo BADPATH; exit 1;; esac; ls $B/x",
+                        "case \"$f\" in\n  *.md|*.txt) echo doc;;\n  # other\n  *) echo other;;\nesac"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command), 0)
+        for command in ["echo $(( $(gh pr merge 1) + 1 ))", "echo $((gh pr merge 1) )", "case x in a|b) gh pr merge 1;; esac",
+                        "echo $(case x in x) gh pr merge 1;; esac)", "case x in a) echo;; # c\nesac | gh pr merge 1"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command), 2)
+
     def test_data_metadata_and_reads_pass(self):
         for command in ["cat ~/.config/agent-skills/workers.json 2>/dev/null", "ls -la .env", "test -f .env",
                         "[ -e .env ] && echo yes", "printf 'see .env docs' >> log.md", "git commit -m \"needs .env\"",
@@ -182,6 +194,7 @@ class WorkerGuardTests(unittest.TestCase):
         for command in ["echo \"unterminated", "git status 'x", "echo $(ls"]:
             with self.subTest(command=command):
                 self.assertIn("could not inspect", self.guard("Bash", command=command)[1])
+        self.assertIn("literal path", self.guard("Bash", command='cd "$TMPDIR/x" && git push -u origin feat/x')[1])
 
     def test_settings_deny_rules_parse(self):
         rules = json.loads((ROOT / "guard" / "worker-settings.json").read_text())["permissions"]["deny"]

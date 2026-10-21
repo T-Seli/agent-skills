@@ -64,6 +64,7 @@ SECRET = re.compile(r"(^|[\s'\"=/<])\.env(\.(local|prod|production|development|d
                     r"|\.pem\b")
 KEY_DIRS = re.compile(r"(^|[\s'\"=:/<])\.(ssh|aws)(?=$|[/\s'\";|&)>])")  # anything under ~/.ssh or ~/.aws
 HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"]?)\\?([\w.@-]+)\2")
+CASE = re.compile(r"\s*case\s+\S+\s+in(\s*$|\s+(?!esac\b)\S)")  # a case header, then its next pattern up to ")"
 PROJECT_PROTECTED = re.compile(r"(^|/)(\.git/(config|hooks)(/|$)|\.claude/(settings[^/]*\.json|hooks)(/|$)|\.mcp\.json$)")
 SHELL_RC = {".zshrc", ".zprofile", ".zshenv", ".bashrc", ".bash_profile", ".profile"}
 
@@ -241,10 +242,15 @@ def scan(text, i=0, close=""):
         elif c == "\\":
             buf, i = buf + ("" if two == "\\\n" else two), i + 2
             continue
+        elif two == ";;" and not quote:  # a case branch ends; the next pattern runs nothing
+            segments, buf, i = segments + [buf], "case _ in ", i + 2
+            continue
+        elif c in "|()\n" and not quote and CASE.match(buf) and not (c == "\n" and (pending or CASE.match(buf).group(1).strip())):
+            segments, buf = (segments + [buf], "") if c == ")" else (segments, buf + (" " if c == "\n" else c))
         elif c == close and not quote:
             break
         elif two == "$(" or c == "`":
-            inner, docs, i = scan(text, i + len(two if c == "$" else c), ")" if c == "$" else "`")
+            inner, docs, i = arithmetic(text, i) or scan(text, i + len(two if c == "$" else c), ")" if c == "$" else "`")
             segments, heredocs, buf = segments + inner, heredocs + docs, buf + "$_"
         elif c == '"' or (c == "'" and not quote):
             buf, quote = buf + c, "" if quote else c
@@ -277,6 +283,27 @@ def scan(text, i=0, close=""):
     if quote or (close and i >= len(text)):
         raise ValueError("unbalanced quotes or substitution")
     return [s for s in segments + [buf] if s.strip()], heredocs, i
+
+
+def arithmetic(text, i):
+    """`$((` at i is arithmetic when its parens close as `))`: returns the commands its substitutions run, as
+    scan() does, ending on the last `)`; else None (`$((cmd) …)` is a substitution holding a subshell)."""
+    if not text.startswith("$((", i):
+        return None
+    depth, i, segments, heredocs = 2, i + 3, [], []
+    while i < len(text):
+        c = text[i]
+        if text.startswith("$(", i) or c == "`":
+            inner, docs, i = arithmetic(text, i) or scan(text, i + (1 if c == "`" else 2), "`" if c == "`" else ")")
+            segments, heredocs = segments + inner, heredocs + docs
+        elif c in "()":
+            depth += 1 if c == "(" else -1
+            if depth == 1 and text[i + 1:i + 2] != ")":
+                return None
+            if depth == 0:
+                return segments, heredocs, i
+        i += 1
+    return None
 
 
 def command_words(tokens):
@@ -496,7 +523,8 @@ def main():
     try:
         reason = check(json.load(sys.stdin))
     except Exception as error:  # fail closed: a broken guard must not let the call through
-        reason = f"the guard could not inspect this call ({type(error).__name__})"
+        hint = "; run git in the repo by its literal path" if isinstance(error, subprocess.CalledProcessError) else ""
+        reason = f"the guard could not inspect this call ({type(error).__name__}){hint}"
     if reason:
         print(TELL.format(reason), file=sys.stderr)
         sys.exit(2)
