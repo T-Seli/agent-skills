@@ -45,7 +45,7 @@ For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-cont
    | architecture | 4 | minimal fix · config-driven & generalized · redesign · stress-test |
    | list | ≤4 | one per cluster needing a design choice, angle: root cause; S clusters take their fix straight from the scout |
 
-   § Tenancy is `none`: root cause replaces config-driven & generalized. Nothing to choose (one obvious S change the scout already pinned, or an approach the user or brief already chose) → no architects, or one stress-test at most; say so. Use agent type `Plan` (built-in, cannot edit; Codex: a read-only default subagent). Angles:
+   § Tenancy is `none`: root cause replaces config-driven & generalized. Nothing to choose (one obvious S change the scout already pinned, or an approach the user or brief already chose) → no architects; say so. Use agent type `Plan` (built-in, cannot edit; Codex: a read-only default subagent). Angles:
    - **Minimal fix**: the smallest change that fully solves it.
    - **Root cause**: fix the mechanism, at its most central point.
    - **Config-driven & generalized**: the behavior becomes config or data, so a new tenant or project adopts it with no code edit.

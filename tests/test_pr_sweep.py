@@ -147,7 +147,7 @@ class PrSweepTests(unittest.TestCase):
         self.assertEqual(comments[0]["body"].splitlines(), [
             "**Ready to merge: YES**", f"Reviewed head: `{HEAD[:12]}`", "",
             "Tests pass on the head; no blockers.", "",
-            "_Automated review by Thomas's Claude worker. It never approves, merges or deploys._",
+            "_Automated review by a Claude worker. It never approves, merges or deploys._",
             f"<!-- agent-skills:verdict sha={HEAD} -->"])
 
     def test_post_refuses_without_posting(self):

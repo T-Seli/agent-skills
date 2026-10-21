@@ -22,7 +22,7 @@ CONFIG = Path(os.environ.get("AGENT_SKILLS_CONFIG", "~/.config/agent-skills/work
 REFUSED = 3  # exit code: this verdict must not be posted
 MAX_BODY = 3000
 MARKER = "<!-- agent-skills:verdict sha={sha} -->"
-FOOTER = "_Automated review by Thomas's Claude worker. It never approves, merges or deploys._"
+FOOTER = "_Automated review by a Claude worker. It never approves, merges or deploys._"
 
 
 def settings():
