@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,7 +169,96 @@ class WorkerGuardTests(unittest.TestCase):
 
     def test_settings_deny_rules_parse(self):
         rules = json.loads((ROOT / "guard" / "worker-settings.json").read_text())["permissions"]["deny"]
-        self.assertIn("Bash(git push:*)", rules)
+        self.assertNotIn("Bash(git push:*)", rules)  # the guard decides pushes: task branches yes, base only with a grant
+        self.assertIn("Bash(ssh:*)", rules)
+
+
+class PushAndGrantTests(unittest.TestCase):
+    """Sharing pushes the task branch; only a live release grant for this repo reaches its base."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name).resolve()
+        self.repo = self.home / "widgets"
+        self.repo.mkdir()
+        self.git("init", "-q", "-b", "main")
+        self.git("remote", "add", "origin", "https://github.com/acme/widgets.git")
+        (self.repo / "CLAUDE.md").write_text("## Deploy\n- Base branch: `main` · Release branch: `release` · Protected: `main`, `stable`\n")
+        self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x")
+        self.git("checkout", "-q", "-b", "feat/x")
+        later = (datetime.now(timezone.utc) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%MZ")
+        self.grant = {"repo": "acme/widgets", "base": "main", "targets": ["prod"], "expires": later,
+                      "commands": ["npm run deploy:prod", "aws lambda update-function-code"],
+                      "hosts": ["ubuntu@203.0.113.7"], "task_id": "t-1", "source": "chat"}
+
+    def git(self, *args):
+        subprocess.run(["git", "-C", str(self.repo), *args], check=True, capture_output=True)
+
+    def bash(self, command, grant=None):
+        env = {k: v for k, v in os.environ.items() if k != "AGENT_SKILLS_GRANT"} | {"HOME": str(self.home)}
+        if grant is not None:
+            env["AGENT_SKILLS_GRANT"] = grant if isinstance(grant, str) else json.dumps(grant)
+        raw = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(self.repo)}).encode()
+        return subprocess.run([sys.executable, str(GUARD)], input=raw, capture_output=True, env=env).returncode
+
+    def test_task_branch_push_and_draft_pr_pass(self):
+        for command in ["git push origin feat/x", "git push -u origin feat/x", "git push --set-upstream origin HEAD",
+                        "git push origin HEAD:feat/x", "git push origin feat/x:refs/heads/feat/x",
+                        "git push -u origin feat/x --no-verify", "cd . && git push -u origin feat/x",
+                        "gh pr create --draft --title t --body b", "gh pr create -d --fill"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command), 0)
+
+    def test_other_pushes_and_pr_changes_block(self):
+        for command in ["git push", "git push origin", "git push origin main", "git push origin feat/x:main",
+                        "git push origin HEAD:main", "git push upstream feat/x", "git push origin other",
+                        "git push -f origin feat/x", "git push --force-with-lease origin feat/x", "git push -uf origin feat/x",
+                        "git push origin +feat/x", "git push origin :feat/x", "git push --tags origin feat/x",
+                        "git push --follow-tags origin feat/x", "git push --delete origin feat/x", "git push --mirror origin",
+                        "git push --all origin", "gh pr create --fill", "gh pr ready 1", "gh pr merge 1",
+                        "python3 ~/.claude/skills/agent-coordination/scripts/delegate.py start --approved-log t/log.md --targets prod",
+                        "bash -c 'delegate.py start --approved-log=t/log.md'",
+                        "git -c remote.origin.push=refs/heads/feat/x:refs/heads/main push origin feat/x",
+                        "git -c alias.p=push p origin HEAD:main", "GIT_CONFIG_PARAMETERS=\"'alias.p=push'\" git p origin HEAD:main",
+                        "export GIT_CONFIG_COUNT=1; git status", "git -c url.x.insteadOf=y push origin feat/x"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command), 2)
+        self.assertEqual(self.bash("python3 delegate.py start --prompt-file b.md --cwd ."), 0)
+
+    def test_protected_and_detached_branches_block(self):
+        for branch in ("stable", "main"):
+            self.git("checkout", "-q", "-B", branch)
+            with self.subTest(branch=branch):
+                self.assertEqual(self.bash(f"git push -u origin {branch}"), 2)
+        self.git("checkout", "-q", "--detach")
+        self.assertEqual(self.bash("git push origin HEAD"), 2)
+        self.git("checkout", "-q", "feat/x")
+        self.git("config", "remote.origin.push", "refs/heads/feat/x:refs/heads/main")
+        self.assertEqual(self.bash("git push origin feat/x"), 2)
+
+    def test_a_live_grant_reaches_only_its_base_commands_and_hosts(self):
+        for command in ["git push origin HEAD:main", "git push origin abc1234:main", "npm run deploy:prod",
+                        "aws lambda update-function-code --function-name f --zip-file fileb://f.zip",
+                        "ssh ubuntu@203.0.113.7 uptime", "ssh -i /tmp/deploy_key -o StrictHostKeyChecking=yes ubuntu@203.0.113.7 ls",
+                        "scp dist.tgz ubuntu@203.0.113.7:/tmp/", "git push -u origin feat/x"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command, self.grant), 0)
+        for command in ["git push --force origin HEAD:main", "git push origin HEAD:release", "git push origin +HEAD:main",
+                        "ssh root@203.0.113.7 uptime", "ssh ubuntu@198.51.100.1", "scp x ubuntu@198.51.100.1:/tmp",
+                        "npm run deploy:staging", "aws ec2 terminate-instances --instance-ids i-1", "psql -c 'select 1'",
+                        "cat .env", "npm run deploy:prod > ~/.claude/settings.json", "gh pr merge 1"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command, self.grant), 2)
+
+    def test_expired_foreign_or_malformed_grants_are_no_grant(self):
+        expired = self.grant | {"expires": "2020-01-01T00:00Z"}
+        foreign = self.grant | {"repo": "acme/other"}
+        for grant in (expired, foreign, "not json", {"repo": "acme/widgets"}):
+            with self.subTest(grant=grant):
+                self.assertEqual(self.bash("git push origin HEAD:main", grant), 2)
+                self.assertEqual(self.bash("npm run deploy:prod", grant), 2)
+                self.assertEqual(self.bash("git status", grant), 0)
 
 
 if __name__ == "__main__":

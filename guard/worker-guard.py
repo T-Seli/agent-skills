@@ -11,7 +11,9 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 HOME = Path(os.environ.get("HOME", str(Path.home())))
@@ -38,6 +40,8 @@ AWS_VALUE_OPTIONS = {"--region", "--profile", "--output", "--endpoint-url", "--q
                      "--ca-bundle", "--cli-read-timeout", "--cli-connect-timeout"}
 GIT_CONFIG_READ = {"--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--get-urlmatch"}
 GH_READ = {"view", "list", "diff", "checks", "status", "download", "watch", "checkout"}
+PUSH_OPTS = {"-u", "--set-upstream", "--no-verify", "-q", "--quiet", "-v", "--verbose", "--porcelain", "--progress"}
+SSH_VALUE_OPTIONS = set("-b -c -D -E -e -F -I -i -J -L -l -m -O -o -p -Q -R -S -W -w".split())
 METADATA = {"ls", "test", "[", "[[", "stat"}  # see that a secrets file exists without reading it
 READERS = {"cat", "less", "more", "head", "tail", "grep", "egrep", "rg", "sed", "awk", "source", ".", "cp",
            "base64", "xxd", "od", "hexdump", "strings", "sort", "cut", "diff", "jq"}
@@ -67,6 +71,79 @@ def protected(path, cwd):
     if PROJECT_PROTECTED.search(p.as_posix()):
         return True
     return any(p == r or r in p.parents for r in protected_roots())
+
+
+def git_out(cwd, *args):
+    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True).stdout.strip()
+
+
+def origin_repo(cwd):
+    """owner/name of the origin remote, from an https or ssh URL."""
+    m = re.search(r"[:/]([^/:]+/[^/]+?)(\.git)?/?$", git_out(cwd, "remote", "get-url", "origin"))
+    return m and m.group(1)
+
+
+def protected_branches(cwd):
+    """main, master and the branches the repo's CLAUDE.md names as base, release or protected."""
+    names, claude = {"main", "master"}, Path(git_out(cwd, "rev-parse", "--show-toplevel")) / "CLAUDE.md"
+    for line in claude.read_text(encoding="utf-8").splitlines() if claude.is_file() else []:
+        if re.match(r"\s*-\s*(Base branch|Release branch|Protected):", line):
+            names |= set(re.findall(r"`([^`\s]+)`", line))
+    return names
+
+
+def release_grant(cwd):
+    """The grant delegate.py put in this worker's environment, while unexpired and for this repo; else None.
+    The hook inherits the worker process's environment, which the worker's own commands cannot change."""
+    if "AGENT_SKILLS_GRANT" not in os.environ:
+        return None
+    try:
+        grant = json.loads(os.environ["AGENT_SKILLS_GRANT"])
+        expires = datetime.strptime(grant["expires"], "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
+        live = expires > datetime.now(timezone.utc) and origin_repo(cwd) == grant["repo"]
+    except (KeyError, TypeError, ValueError, subprocess.CalledProcessError):
+        return None
+    return grant if live else None
+
+
+def push_reason(args, cwd):
+    """Sharing: push the task branch you are on. A release grant also allows pushing to its base."""
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        if args[i] == "-C":
+            cwd = str(Path(cwd) / os.path.expanduser(args[i + 1]))
+        i += 2 if args[i] in ("-C", "-c") else 1
+    rest = args[i + 1:]
+    if {a for a in rest if a.startswith("-")} - PUSH_OPTS:
+        return "git push may not force, delete, mirror or push tags"
+    refs = [a for a in rest if not a.startswith("-")]
+    if len(refs) != 2 or refs[0] != "origin":
+        return "name the remote and branch: git push -u origin <branch>"
+    if subprocess.run(["git", "-C", str(cwd), "config", "--get-all", "remote.origin.push"], capture_output=True).stdout:
+        return "remote.origin.push is configured, so this push would not land where it names"
+    current = git_out(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+    src, _, dst = refs[1].partition(":")
+    src = current if src == "HEAD" else src
+    dst = (dst or src).removeprefix("refs/heads/")
+    if not src or src.startswith("+"):
+        return "git push may not force or delete a branch"
+    grant = release_grant(cwd)
+    if grant and dst == grant["base"]:
+        return None
+    if current == "HEAD" or src != current or dst != current:
+        return "a worker pushes only the task branch it is on"
+    if current in protected_branches(cwd):
+        return f"{current} is a protected branch; pushing it is a release"
+    return None
+
+
+def remote_hosts(cmd, args):
+    if cmd == "ssh":
+        i = 0
+        while i < len(args) and args[i].startswith("-"):
+            i += 2 if args[i] in SSH_VALUE_OPTIONS else 1
+        return args[i:i + 1]
+    return [a.split(":", 1)[0] for a in args if re.match(r"^[^/\s]*[^/\s:]:", a)]
 
 
 def words(segment):
@@ -171,22 +248,34 @@ def check_segment(segment, cwd, depth):
     if KEY_DIRS.search(segment) or cmd not in METADATA and any(
             SECRET.search(" " + w) and (cmd in READERS or not re.search(r"\s", w)) for w in every):
         return "reading secrets files is not allowed"
+    if any(w == "--approved-log" or w.startswith("--approved-log=") for w in every):
+        return "only the attended session starts a release worker"
     if not tokens:
         return None
+    grant = release_grant(cwd)
+    if grant and any(tokens[:len(p)] == p for p in map(shlex.split, grant.get("commands", []))):
+        return write_reason(segment, cmd, args, cwd)  # a granted release command still may not write protected config
     if cmd in SHELLS or cmd == "eval":
         inner = args[args.index("-c") + 1] if "-c" in args[:-1] else " ".join(args) if cmd == "eval" else ""
         return check_bash(inner, cwd, depth + 1) if inner else None
     if cmd in INTERPRETERS and any(a in ("-c", "-e") for a in args):
         return check_text(" ".join(args))
+    if "GIT_CONFIG" in segment or (cmd == "git" and any(
+            args[i] == "-c" and re.match(r"(alias|remote|url|push|credential|core\.(sshcommand|hookspath))\.?",
+                                         args[i + 1].lower()) for i in range(len(args) - 1))):
+        return "git configuration overrides can redirect pushes and are not allowed"
     if cmd == "git":
         sub = git_subcommand(args)
         if sub[:1] == ["push"]:
-            return "git push publishes commits"
+            return push_reason(args, cwd)
         if sub[:1] == ["config"] and not GIT_CONFIG_READ & set(sub):
             return "git config changes repository or user configuration"
         if sub[:1] == ["remote"] and sub[1:2] and sub[1] in ("add", "set-url", "remove", "rename"):
             return "git remote changes repository configuration"
     if cmd == "gh":
+        if args[:2] == ["pr", "create"]:
+            return None if {"--draft", "-d"} & set(args) else \
+                "gh pr create must open a draft (--draft); marking it ready stays with the user"
         if args[:1] == ["api"]:
             method = re.search(r"(?:^|\s)(?:-X|--method)[\s=]*(\w+)", " ".join(args))
             fields = any(re.match(r"-[fF]|--(raw-)?field|--input", a) for a in args)  # these default to POST
@@ -201,6 +290,9 @@ def check_segment(segment, cwd, depth):
         if verbs is None or (args and args[0] in verbs):
             return f"{cmd} {' '.join(args[:1])} changes deployed infrastructure"
     if cmd in REMOTE or (cmd == "rsync" and any(re.match(r"^[^/\s]*[^/\s:]:", a) for a in args)):
+        hosts, granted = remote_hosts(cmd, args), (grant or {}).get("hosts", [])
+        if hosts and all(h in granted or h.split("@")[-1] in granted for h in hosts):
+            return None
         return f"{cmd} opens a remote shell or copy"
     if cmd in DATABASES:
         return f"{cmd} connects to a database; use a read-only data tool instead"
@@ -210,6 +302,10 @@ def check_segment(segment, cwd, depth):
         return f"{cmd} launches an agent outside delegate.py; use delegate.py start"
     if cmd in ("crontab", "launchctl") or (cmd == "defaults" and args[:1] == ["write"]):
         return f"{cmd} changes scheduled or system configuration"
+    return write_reason(segment, cmd, args, cwd)
+
+
+def write_reason(segment, cmd, args, cwd):
     writer = cmd in WRITERS or (cmd in ("sed", "perl") and any(a.startswith("-i") for a in args))
     targets = [a for a in args if not a.startswith("-")] if writer else []
     # Redirect targets; fd duplications (2>&1) do not match and /dev/null is not a write.
@@ -223,6 +319,8 @@ def check_text(code):
     """Interpreter code: a command or secrets path in it is only text, so any mention blocks."""
     if re.search(r"--dangerously-skip-permissions\b", code):
         return "bypass flags are not allowed inside a worker"
+    if "--approved-log" in code:
+        return "only the attended session starts a release worker"
     if re.search(r"\bgit(\s+(-C\s+\S+|-c\s+\S+|--\S+))*\s+push\b", code) or \
             re.search(r"""["']git["'](\s*,\s*["'][^"']*["'])*?\s*,\s*["']push["']""", code):
         return "git push publishes commits"
