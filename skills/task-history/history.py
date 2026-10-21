@@ -27,6 +27,7 @@ STATUS = {"active", "blocked", "canceled", "done"}
 FIELDS = {"schema_version", "event_id", "task_id", "session_id", "revision", "record_owner", "execution_owner", "at_utc", "observed_at_utc", "kind", "summary", "status", "scope", "approval_ref", "decision", "reason", "failed_approach", "files", "evidence", "uncertainty", "next_step", "open_checks", "resolved_checks", "lesson_proposal", "source_ref", "correction_of", "base_sha", "head_sha", "dirty_diff_digest", "environment", "new_record_owner", "transfer_ack_ref", "verified_revision", "source_version", "runtime_version", "context", "implementation", "validation", "outcomes", "monitoring", "excluded_scope", "module_changes", "repo_ref", "branch_ref", "clear_next_step", "feedback_category", "feedback_issue", "feedback_impact", "feedback_correction", "feedback_prevention_check", "feedback_check_state", "feedback_check_ref", "feedback_cause", "feedback_cause_basis"}
 REQUIRED = {"schema_version", "event_id", "task_id", "session_id", "revision", "record_owner", "at_utc", "observed_at_utc", "kind", "summary"}
 EVIDENCE_FIELDS = {"state", "claim", "ref", "sha", "environment", "command", "outcome", "verified_by"}
+CONFIG = Path(os.environ.get("AGENT_SKILLS_CONFIG", "~/.config/agent-skills/workers.json")).expanduser()
 
 
 def fail(message):
@@ -201,10 +202,13 @@ def path_for(repo, task_id, create=False):
 
 @contextmanager
 def task_lock(path, exclusive):
-    lock = path.with_suffix(".lock")
+    # Locks live in the checkout's git dir, keeping the working tree clean for every writer of it.
+    git_dir = subprocess.run(["git", "-C", str(path.parent.parent), "rev-parse", "--absolute-git-dir"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+    lock = Path(git_dir) / "task-history-locks" / path.parent.name / path.with_suffix(".lock").name
     if lock.is_symlink():
         fail("unsafe lock path")
-    lock.parent.mkdir(mode=0o700, exist_ok=True)
+    lock.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with os.fdopen(os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600), "r+") as handle:
         if stat.S_IMODE(os.fstat(handle.fileno()).st_mode) & 0o077:
             fail("unsafe lock permissions; run init")
@@ -381,9 +385,29 @@ def initialize(repo):
     return str(directory)
 
 
+def configured():
+    """Return (checkout, None) when central history is on, else (None, reason). Reads only."""
+    if not CONFIG.exists():
+        return None, f"missing config {CONFIG}"
+    value = json.loads(CONFIG.read_text()).get("task_history_repo")
+    if not value:
+        return None, f"task_history_repo unset in {CONFIG}"
+    repo = Path(value).expanduser()
+    if not repo.exists():
+        return None, f"task_history_repo path missing: {repo}"
+    try:
+        repo = checkout(repo)
+    except ValueError as exc:
+        return None, f"not initialized: {repo}: {exc}"
+    events = repo / "events"
+    if events.is_symlink() or not events.is_dir() or stat.S_IMODE(events.stat().st_mode) & 0o077:
+        return None, f"not initialized: {repo} has no private events/; run init"
+    return repo, None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", type=Path, required=True)
+    parser.add_argument("--repo", type=Path)
     sub = parser.add_subparsers(dest="action", required=True)
     add = sub.add_parser("append")
     add.add_argument("packet", type=Path)
@@ -392,9 +416,19 @@ def main():
     view.add_argument("task_id")
     view.add_argument("--events", action="store_true")
     sub.add_parser("init")
+    sub.add_parser("configured", help="print the configured history checkout, or `History: not configured` and exit 1")
     args = parser.parse_args()
+    if args.action != "configured" and args.repo is None:
+        parser.error("--repo is required")
     try:
-        if args.action == "append":
+        if args.action == "configured":
+            repo, reason = configured()
+            if reason:
+                print("History: not configured")
+                print(reason, file=sys.stderr)
+                return 1
+            print(repo)
+        elif args.action == "append":
             result, value = append(args.repo, json.loads(args.packet.read_text()), args.expected_digest)
             print(json.dumps({"result": result, "digest": value}))
         elif args.action == "init":

@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -427,6 +428,57 @@ class HistoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'private'): history.events(self.repo, 'task-001')
         history.initialize(self.repo)
         self.assertEqual(len(history.events(self.repo, 'task-001')), 1)
+
+    def test_locks_stay_out_of_the_working_tree(self):
+        self.add(packet())
+        with history.task_lock(self.repo.resolve() / 'views/task-001.md', True): pass
+        git = ['git', '-C', str(self.repo), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false']
+        subprocess.run([*git, 'add', 'events/task-001.jsonl'], check=True)
+        subprocess.run([*git, 'commit', '-qm', 'journal'], check=True)
+        status = subprocess.run([*git, 'status', '--porcelain', '--untracked-files=all'], capture_output=True, text=True, check=True)
+        self.assertEqual(status.stdout, '')
+        git_dir = Path(subprocess.run([*git, 'rev-parse', '--absolute-git-dir'], capture_output=True, text=True, check=True).stdout.strip())
+        self.assertTrue((git_dir / 'task-history-locks/events/task-001.lock').is_file())
+
+
+class ConfiguredTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name).resolve()
+        self.repo = self.root / 'history'
+        subprocess.run(['git', 'init', '-q', str(self.repo)], check=True)
+        subprocess.run(['git', '-C', str(self.repo), 'remote', 'add', 'origin', 'https://github.com/T-Seli/agent-task-history.git'], check=True)
+        self.config = self.root / 'workers.json'
+
+    def tearDown(self): self.temp.cleanup()
+
+    def configured(self, settings=None):
+        if settings is not None: self.config.write_text(json.dumps(settings))
+        return subprocess.run([sys.executable, str(MODULE), 'configured'], capture_output=True, text=True,
+                              env={**os.environ, 'AGENT_SKILLS_CONFIG': str(self.config), 'HOME': str(self.root)})
+
+    def test_initialized_checkout_prints_its_path(self):
+        history.initialize(self.repo)
+        for value in (str(self.repo), '~/history'):
+            result = self.configured({'task_history_repo': value})
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, f'{self.repo}\n', ''))
+
+    def test_missing_unset_or_uninitialized_is_not_configured(self):
+        cases = [(None, 'missing config'), ({}, 'unset'), ({'task_history_repo': None}, 'unset'),
+                 ({'task_history_repo': str(self.root / 'absent')}, 'path missing'),
+                 ({'task_history_repo': str(self.root)}, 'not initialized'),
+                 ({'task_history_repo': str(self.repo)}, 'not initialized')]
+        for settings, reason in cases:
+            with self.subTest(reason=reason, settings=settings):
+                result = self.configured(settings)
+                self.assertEqual((result.returncode, result.stdout), (1, 'History: not configured\n'))
+                self.assertIn(reason, result.stderr)
+                self.assertEqual(result.stderr.count('\n'), 1)
+        self.assertFalse((self.repo / 'events').exists())
+        (self.repo / 'events').mkdir(); (self.repo / 'events').chmod(0o755)
+        result = self.configured()
+        self.assertEqual((result.returncode, result.stdout), (1, 'History: not configured\n'))
+        self.assertIn('not initialized', result.stderr)
 
 
 if __name__ == '__main__': unittest.main()
