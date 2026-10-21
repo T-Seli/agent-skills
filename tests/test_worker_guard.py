@@ -270,5 +270,46 @@ class PushAndGrantTests(unittest.TestCase):
                 self.assertEqual(self.bash("git status", grant), 0)
 
 
+class ReleaseConfigTests(unittest.TestCase):
+    """Commands the release config lists need a grant; `*` pins resources; deploy-folder scripts are releases."""
+    setUp_repo, git, bash = PushAndGrantTests.setUp, PushAndGrantTests.git, PushAndGrantTests.bash
+
+    def setUp(self):
+        self.setUp_repo()
+        cfg = self.home / ".config" / "agent-skills"
+        cfg.mkdir(parents=True)
+        (cfg / "workers.json").write_text(json.dumps({"release": {"repos": {"acme/widgets": {"base": "main", "targets": {
+            "agents": {"commands": ["npm run sync:agents"]},
+            "fe": {"commands": ["aws s3 sync dist/ s3://bucket-a/releases/*"], "credentials": ["aws"]},
+            "lambda": {"commands": ["./src/deploy/outbound-lambda.sh"], "credentials": ["aws"]}}}}}}))
+        self.grant["commands"] = ["aws s3 sync dist/ s3://bucket-a/releases/*", "./src/deploy/outbound-lambda.sh"]
+
+    def test_listed_release_commands_need_a_grant(self):
+        for command in ["npm run sync:agents", "npm run-script sync:agents", "npm --prefix . run sync:agents",
+                        "bash -c 'npm run sync:agents'", "aws s3 sync dist/ s3://bucket-a/releases/r1/ --delete"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command), 2)
+        for command in ["npm run sync:agents:dry", "npm test", "aws s3 ls s3://bucket-a/releases/"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command), 0)
+
+    def test_wildcards_pin_granted_resources(self):
+        self.assertEqual(self.bash("aws s3 sync dist/ s3://bucket-a/releases/r1/ --delete --exclude index.html", self.grant), 0)
+        for command in ["aws s3 sync dist/ s3://bucket-b/releases/r1/", "aws s3 sync build/ s3://bucket-a/releases/r1/",
+                        "npm run sync:agents"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command, self.grant), 2)
+
+    def test_deploy_folder_scripts_are_releases(self):
+        for command in ["./src/deploy/ab-lambda.sh", "bash src/deploy/ab-lambda.sh", "sh scripts/deploy.sh",
+                        "npx ts-node src/deploy/agent-sync.ts --dry-run"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command), 2)
+        self.assertEqual(self.bash("./src/deploy/outbound-lambda.sh", self.grant), 0)
+        for command in ["cat src/deploy/README.md", "python3 scripts/pre-deploy/check.py", "rg deploy docs/", "ls src/deploy"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

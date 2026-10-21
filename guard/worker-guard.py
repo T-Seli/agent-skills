@@ -7,6 +7,7 @@ this hook also sees compound commands and `bash -c`/`python -c` wrappers.
 Fail-closed: unreadable input or any internal error blocks the call (exit 2), because a
 command hook that exits with any other non-zero code does not block.
 """
+import fnmatch
 import json
 import os
 import re
@@ -17,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HOME = Path(os.environ.get("HOME", str(Path.home())))
+CONFIG = Path(os.environ.get("AGENT_SKILLS_CONFIG", str(HOME / ".config" / "agent-skills" / "workers.json")))
 TELL = "Blocked by the worker guard: {}. Do not retry or work around it; report it to your parent as a blocker."
 
 PREFIX = {"sudo", "env", "nohup", "time", "exec", "command", "nice", "caffeinate", "xargs", "timeout",
@@ -42,6 +44,8 @@ GIT_CONFIG_READ = {"--get", "--get-all", "--get-regexp", "--list", "-l", "--show
 GH_READ = {"view", "list", "diff", "checks", "status", "download", "watch", "checkout"}
 PUSH_OPTS = {"-u", "--set-upstream", "--no-verify", "-q", "--quiet", "-v", "--verbose", "--porcelain", "--progress"}
 REDIRECT = re.compile(r"^(\d*|&)?(>>?\|?|<)(&?\S*)?$")  # 2>&1, >out, > out, 2>/dev/null, <in
+DEPLOY_PATH = re.compile(r"(^|/)deploy(/|[\w.-]*\.(sh|ts|js|mjs|py)$)")  # src/deploy/x.sh, scripts/deploy.sh
+RUNNERS = {"npx", "ts-node", "tsx"}
 SSH_VALUE_OPTIONS = set("-b -c -D -E -e -F -I -i -J -L -l -m -O -o -p -Q -R -S -W -w".split())
 METADATA = {"ls", "test", "[", "[[", "stat"}  # see that a secrets file exists without reading it
 READERS = {"cat", "less", "more", "head", "tail", "grep", "egrep", "rg", "sed", "awk", "source", ".", "cp",
@@ -150,6 +154,40 @@ def without_redirects(tokens):
         else:
             out.append(t)
     return out
+
+
+def canonical(tokens):
+    """npm aliases and options before `run` do not change which script runs."""
+    if tokens and os.path.basename(tokens[0]) == "npm":
+        for i, t in enumerate(tokens[1:], 1):
+            if t in ("run", "run-script", "rum", "urn"):
+                return ["npm", "run"] + tokens[i + 1:]
+    return tokens
+
+
+def matches(tokens, pattern):
+    """The command's leading words match the pattern's words; `*` in a pattern word is a wildcard."""
+    words, tokens = canonical(shlex.split(pattern)), canonical(tokens)
+    return len(tokens) >= len(words) and all(fnmatch.fnmatchcase(t, w) for t, w in zip(tokens, words))
+
+
+def release_commands(cwd):
+    """Every command the release config lists for this repo's targets; each needs a grant."""
+    if not CONFIG.exists():
+        return []
+    repos = json.loads(CONFIG.read_text(encoding="utf-8")).get("release", {}).get("repos", {})
+    try:
+        repo = origin_repo(cwd)
+    except subprocess.CalledProcessError:  # not in a git repo: nothing repo-scoped to guard
+        return []
+    return [c for t in repos.get(repo, {}).get("targets", {}).values() for c in t.get("commands", [])]
+
+
+def runs_deploy_script(tokens):
+    """The command is, or runs through a shell or runner, a script from a deploy folder or named deploy*."""
+    runner = os.path.basename(tokens[0]) in SHELLS | INTERPRETERS | RUNNERS
+    scripts = [t for t in tokens[1:] if not t.startswith("-")][:2] if runner else []
+    return any(DEPLOY_PATH.search(t) for t in tokens[:1] + scripts)
 
 
 def remote_hosts(cmd, args):
@@ -268,8 +306,12 @@ def check_segment(segment, cwd, depth):
     if not tokens:
         return None
     grant = release_grant(cwd)
-    if grant and cmd != "git" and any(tokens[:len(p)] == p for p in map(shlex.split, grant.get("commands", []))):  # git goes through push_reason
+    if grant and cmd != "git" and any(matches(tokens, p) for p in grant.get("commands", [])):  # git goes through push_reason
         return write_reason(segment, cmd, args, cwd)  # a granted release command still may not write protected config
+    if any(matches(tokens, p) for p in release_commands(cwd)):
+        return "this repo's release config lists this command; it runs only under a release grant"
+    if runs_deploy_script(tokens):
+        return "deploy scripts are release actions"
     if cmd in SHELLS or cmd == "eval":
         inner = args[args.index("-c") + 1] if "-c" in args[:-1] else " ".join(args) if cmd == "eval" else ""
         return check_bash(inner, cwd, depth + 1) if inner else None
