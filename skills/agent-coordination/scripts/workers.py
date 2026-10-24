@@ -24,6 +24,7 @@ REPORT_SCHEMA = {
         "tests": {"type": "string"}, "need": {"type": "string"},
         # For a blocked report: the exact action and target the user would approve.
         "action": {"type": "string"}, "target": {"type": "string"},
+        "scope": {"type": "string"},
         # Present for a bound task. The reducer rejects an active result unless every value
         # echoes its current task/deliverable tuple.
         "task_id": {"type": "string"}, "deliverable_id": {"type": "string"},
@@ -286,11 +287,13 @@ class RunResult:
         return (self.state, self.stdout)[index]
 
 
-def _owned_process(argv, *, cwd, capture_output, text, timeout, stdin=None, input=None):
+def _owned_process(argv, *, cwd, capture_output, text, timeout, stdin=None, input=None, on_started=None):
     """Time bounds affect only this newly created process group, never an existing session."""
     p = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text,
                          stdin=subprocess.PIPE if input is not None else stdin, start_new_session=True)
     try:
+        if on_started is not None:
+            on_started(p.pid)
         stdout, stderr = p.communicate(input=input, timeout=timeout)
     except subprocess.TimeoutExpired as error:
         try:
@@ -308,12 +311,23 @@ def _owned_process(argv, *, cwd, capture_output, text, timeout, stdin=None, inpu
         error.output, error.stderr, error.pid = stdout, stderr, p.pid
         error.returncode = p.returncode
         raise
+    except BaseException:
+        # A failed launch-receipt write must not abandon this newly owned child.
+        try:
+            os.killpg(p.pid, signal.SIGTERM)
+            p.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.wait()
+        except ProcessLookupError:
+            pass
+        raise
     result = subprocess.CompletedProcess(argv, p.returncode, stdout, stderr)
     result.pid = p.pid
     return result
 
 
-def run(argv, *, cwd, timeout, runner=None, input=None):
+def run(argv, *, cwd, timeout, runner=None, input=None, on_started=None):
     """Preserve stdout/stderr and identity; timeout remains uncertain even after local exit."""
     if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 3600:
         raise ValueError("positive timeout required")
@@ -327,6 +341,8 @@ def run(argv, *, cwd, timeout, runner=None, input=None):
         # An open stdin makes a CLI wait for piped input until the timeout, so a worker gets
         # either its prompt (then EOF) or nothing.
         stdin = {"input": input} if input is not None else {"stdin": subprocess.DEVNULL}
+        if on_started is not None:
+            stdin['on_started'] = on_started
         p = (runner or _owned_process)(argv, cwd=cwd, capture_output=True, text=True,
                                        timeout=timeout, **stdin)
     except FileNotFoundError as error:
@@ -350,7 +366,7 @@ def events(task_id, dispatch_id, parsed, started, finished):
         return out
     digest = hashlib.sha256(json.dumps(rep, sort_keys=True).encode()).hexdigest()[:16]
     data = {k: rep.get(k) if rep.get(k) is not None else None for k in (
-        "commit", "tests", "summary", "need", "action", "target", "task_id",
+        "commit", "tests", "summary", "need", "action", "target", "scope", "task_id",
         "deliverable_id", "revision", "contract_digest", "next_action", "packet_sha256",
         "final_diff_digest", "completion_report", "verifier_report", "artifact_kind",
         "artifact_ref", "result", "remaining", "next_owner", "decision_source_ref", "material_facts")}

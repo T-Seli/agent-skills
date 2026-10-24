@@ -82,7 +82,7 @@ class DelegateTests(unittest.TestCase):
                               env={**self.env, **(env or {})})
 
     def start(self, *extra, env=None, cwd=None):
-        return self.delegate("start", "--prompt-file", str(self.prompt), "--cwd", str(cwd or self.work), *extra,
+        return self.delegate("start", "--legacy-unbound", "--prompt-file", str(self.prompt), "--cwd", str(cwd or self.work), *extra,
                              env=env)
 
     def captured(self):

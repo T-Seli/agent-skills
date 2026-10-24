@@ -17,6 +17,7 @@ the worker a release grant (AGENT_SKILLS_GRANT) for those targets of the cwd's r
 """
 import argparse
 import json
+import math
 import os
 import re
 import shlex
@@ -33,7 +34,7 @@ ROOT = HERE.parents[2]
 sys.path[:0] = [str(HERE), str(ROOT)]
 import tasks  # noqa: E402
 import workers  # noqa: E402
-from agent_skills import worker_execution, keep_awake  # noqa: E402
+from agent_skills import worker_execution, keep_awake, producer_contract, task_checkpoint  # noqa: E402
 
 CONFIG = Path(os.environ.get("AGENT_SKILLS_CONFIG", "~/.config/agent-skills/workers.json")).expanduser()
 EXAMPLE = ROOT / "agent_skills" / "delegate_config.example.json"
@@ -431,18 +432,54 @@ def start(args):
     critical = critical_spec(args, task_id, dispatch_id, pin)
     parent = os.environ.get("AGENT_SKILLS_TASK_ID", "top-level")
     decision = args.decision_ref or f"delegated-by:{parent}"
+    contract_path = getattr(args, 'contract_file', None)
+    legacy = getattr(args, 'legacy_unbound', False)
+    contract_value = json.loads(Path(contract_path).read_text()) if contract_path else None
+    def require_budget():
+        cost = route.get('max_cost_usd')
+        if type(cost) not in (int, float) or not math.isfinite(cost) or cost <= 0:
+            refuse('contract-bound launch requires an explicit positive cost budget in existing route policy')
+    if contract_value is not None:
+        require_budget()
+    if contract_value is None and not args.resume and not legacy:
+        refuse('new work requires --contract-file; --legacy-unbound explicitly preserves old caller semantics')
     if args.resume:
         session_id = tasks.load(root, task_id)["worker"]["session_id"]
         if not session_id:
             sys.exit(f"delegate: task {task_id} has no owned session to resume")
-        tasks.update(root, task_id, lambda r: tasks.begin_dispatch(worker_execution.bind_route(
-            r, route, source_pin=pin, decision_ref=decision, change_ref=decision), dispatch_id, resume=True))
+        def resumed(r):
+            if contract_value is not None:
+                r = producer_contract.bind(tasks, r, contract_value)
+            if not r['coordination'].get('active_deliverable') and not legacy:
+                raise ValueError('legacy resume requires --legacy-unbound or a current contract')
+            if r['coordination'].get('active_deliverable'):
+                require_budget()
+                producer_contract.require_execution_authority(tasks, r)
+            return tasks.begin_dispatch(worker_execution.bind_route(
+                r, route, source_pin=pin, decision_ref=decision, change_ref=decision), dispatch_id, resume=True)
+        record = tasks.update(root, task_id, resumed)
     else:
         session_id = str(uuid.uuid4())
         record = tasks.new_task(task_id, args.work_item or task_id, worker_kind="claude", owner="assistant",
                                 repo=str(cwd), worktree=str(cwd), source_thread=parent)
+        if contract_value is not None:
+            record = producer_contract.bind(tasks, record, contract_value)
+        else:
+            record['contract_mode'] = 'legacy-unbound'
         record = worker_execution.bind_route(record, route, source_pin=pin, decision_ref=decision)
         tasks.create(root, tasks.begin_dispatch(record, dispatch_id, resume=False))
+
+    bound = bool(record['coordination'].get('active_deliverable'))
+    if bound:
+        def checkpoint(r):
+            if not r['coordination']['active_deliverable'].get('checkpoint'):
+                r = task_checkpoint.record_checkpoint(r, critical=bool(critical), rank=1,
+                    blocker=None, next_action=r['coordination']['active_deliverable']['next_action'],
+                    next_check_at_utc=stamp(now() + timedelta(minutes=20)),
+                    observed_at_utc=stamp(now()), receipt_ref=f'delegate:{task_id}:{dispatch_id}:checkpoint')
+            return task_checkpoint.stage_checkpoint_intents(r, now=stamp(now()))
+        record = tasks.update(root, task_id, checkpoint)
+        prompt = producer_contract.execution_prompt(tasks, record, prompt)
 
     run = runs_root() / task_id / dispatch_id
     run.mkdir(parents=True, mode=0o700)
@@ -455,7 +492,8 @@ def start(args):
         "task_id": task_id, "dispatch_id": dispatch_id, "cwd": str(cwd), "depth": depth + 1,
         "argv": claude.command(session_id=session_id, resume=args.resume),
         "timeout_seconds": route["timeout_seconds"], "route": {k: route[k] for k in ("tier", "model", "effort")},
-        "critical": critical,
+        "critical": critical, "session_id": session_id,
+        "contract_binding": tasks.current_task_binding(record) if bound else None,
         "env": env_changes(cfg, depth, task_id, grant, credentials),
         "grant": grant and {k: grant[k] for k in ("repo", "base", "targets", "expires", "source")}})
     log = open(run / "supervisor.log", "w")
@@ -465,6 +503,72 @@ def start(args):
     print(json.dumps({"task_id": task_id, "dispatch_id": dispatch_id, "session_id": session_id,
                       "run_dir": str(run), "depth": depth + 1, "route": route["tier"],
                       "state": "admitted-awaiting-protection" if critical else "admitted"}))
+
+
+def contract_readback(run, params, env):
+    """No-tools phase in the same owned session; missing proof holds execution."""
+    record = tasks.load(tasks.state_dir(), params['task_id'])
+    producer_contract.require_execution_authority(tasks, record)
+    if tasks.current_task_binding(record) != params['contract_binding']:
+        raise ValueError('contract changed after admission')
+    argv = list(params['argv'])
+    argv[argv.index('--json-schema') + 1] = json.dumps(producer_contract.acknowledgment_schema(tasks, record))
+    budget_index = argv.index('--max-budget-usd') + 1
+    total_budget = float(argv[budget_index])
+    ack_budget = min(.50, total_budget / 2)
+    argv[budget_index] = str(ack_budget)
+    argv += ['--tools', '', '--disable-slash-commands']
+    payload = {**producer_contract.envelope(tasks, record),
+               'acknowledgment': producer_contract.acknowledgment_binding(tasks, record)}
+    prompt = ('Read this task contract. Do no work. Return only the acknowledgment object, '
+              'acknowledging its original decision source and acceptance criteria.\n' +
+              json.dumps(payload, sort_keys=True))
+    started = time.monotonic()
+    sup_path = run / 'supervisor.json'
+    sup = json.loads(sup_path.read_text())
+    write_json(sup_path, {**sup, 'phase':'readback-uncertain', 'worker_pid':None})
+    def launched(pid):
+        write_json(sup_path, {**sup, 'phase':'readback-running', 'worker_pid':pid})
+    # run() bounds this owned process and retains uncertainty on interruption/timeout.
+    old_env = os.environ.copy()
+    try:
+        os.environ.clear()
+        os.environ.update(env)
+        result = workers.run(argv, cwd=params['cwd'], timeout=min(120, params['timeout_seconds']),
+                             input=prompt, on_started=launched)
+    finally:
+        os.environ.clear()
+        os.environ.update(old_env)
+    (run / 'contract-readback.jsonl').write_text(result.stdout)
+    parsed = workers.Claude().parse(result.stdout)
+    receipt = {'state': result.state, 'exit_code': result.returncode,
+               'session_id': parsed['session_id'], 'binding': parsed['report'],
+               'execution': parsed.get('execution'), 'requested_tools': [],
+               'remaining_seconds': params['timeout_seconds'] - (time.monotonic() - started)}
+    receipt['cost_usd'] = (parsed.get('execution') or {}).get('reported_cost_usd')
+    tool_calls = [part.get('name') for row in workers._rows(result.stdout)
+                  for part in (row.get('message') or {}).get('content', [])
+                  if isinstance(part, dict) and part.get('type') == 'tool_use']
+    receipt['observed_tool_calls'] = tool_calls
+    write_json(run / 'contract-readback-receipt.json', receipt)
+    write_json(sup_path, {**sup, 'phase':'readback-complete', 'worker_pid':None})
+    if result.state in ('done', 'failed') and parsed['session_id'] == params['session_id']:
+        tasks.update(tasks.state_dir(), params['task_id'], producer_contract.retain_seed_session,
+            session_id=parsed['session_id'], expected_session_id=params['session_id'],
+            receipt_ref=str(run / 'contract-readback-receipt.json'))
+    if result.state != 'done' or parsed['error'] or any(name != 'StructuredOutput' for name in tool_calls):
+        raise ValueError('contract readback failed or uncertain; execution held')
+    tasks.update(tasks.state_dir(), params['task_id'], producer_contract.consume, tasks=tasks,
+                 acknowledgment=parsed['report'], session_id=parsed['session_id'],
+                 expected_session_id=params['session_id'], receipt_ref=str(run / 'contract-readback-receipt.json'))
+    # Resuming the exact seeded session is execution, not a second worker owner.
+    execution_argv = list(params['argv'])
+    if '--session-id' in execution_argv:
+        execution_argv[execution_argv.index('--session-id')] = '--resume'
+    execution_argv[execution_argv.index('--max-budget-usd') + 1] = str(total_budget - ack_budget)
+    if receipt['remaining_seconds'] <= 0:
+        raise ValueError('execution deadline expired during readback')
+    return execution_argv, receipt['remaining_seconds']
 
 
 def supervise(run):
@@ -484,25 +588,57 @@ def supervise(run):
                        'outcome': 'protection-held', 'finished_at': stamp(now()),
                        'keep_awake': protection.view(), 'worker_started': False})
             return
+    argv, timeout_seconds = p['argv'], p['timeout_seconds']
+    if p.get('contract_binding'):
+        try:
+            argv, timeout_seconds = contract_readback(run, p, env)
+        except (ValueError, OSError, KeyError, TypeError) as error:
+            tasks.update(root, task_id, tasks.settle_dispatch, dispatch_id, 'not-sent')
+            ack_path = run / 'contract-readback-receipt.json'
+            ack = json.loads(ack_path.read_text()) if ack_path.exists() else {}
+            write_json(run / 'receipt.json', {'task_id': task_id, 'dispatch_id': dispatch_id,
+                       'outcome': 'contract-held', 'error': str(error), 'worker_started': False,
+                       'readback_phase_started': True, 'readback_session_id': ack.get('session_id'),
+                       'contract_readback': str(ack_path), 'cost_usd': ack.get('cost_usd'),
+                       'finished_at': stamp(now())})
+            return
     try:
         with open(run / "prompt.md") as prompt, open(run / "stream.jsonl", "w") as out, \
                 open(run / "stderr.log", "w") as err:
+            if p.get('contract_binding'):
+                current = tasks.load(root, task_id)
+                worker_execution.require_unfrozen(current)
+                producer_contract.require_execution_authority(tasks, current)
+                if (tasks.current_task_binding(current) != p['contract_binding'] or
+                        not current['coordination']['active_deliverable'].get('readback_ref') or
+                        json.loads((run / 'contract-readback-receipt.json').read_text())['binding'] !=
+                        producer_contract.acknowledgment_binding(tasks, current)):
+                    raise ValueError('contract changed before execution')
             if protection and protection.tick(refresh=False)['gate'] != 'open':
                 raise ProtectionHold('protection lost before worker launch')
-            worker = subprocess.Popen(p["argv"], cwd=p["cwd"], stdin=prompt, stdout=out, stderr=err,
+            if p.get('contract_binding'):
+                sup_path = run / 'supervisor.json'
+                sup = json.loads(sup_path.read_text())
+                write_json(sup_path, {**sup, 'phase':'execution-uncertain', 'worker_pid':None})
+            worker = subprocess.Popen(argv, cwd=p["cwd"], stdin=prompt, stdout=out, stderr=err,
                                       env=env, start_new_session=True)
-    except (FileNotFoundError, ProtectionHold) as error:
+    except (FileNotFoundError, ProtectionHold, ValueError) as error:
         tasks.update(root, task_id, tasks.settle_dispatch, dispatch_id, "not-sent")
         feedback(task_id, [{"kind": "worker-unavailable"}])
         write_json(run / "receipt.json", {"task_id": task_id, "dispatch_id": dispatch_id,
-                                          "outcome": "protection-held" if isinstance(error, ProtectionHold) else "unavailable",
+                                          "outcome": ("protection-held" if isinstance(error, ProtectionHold) else
+                                                      "contract-held" if isinstance(error, ValueError) else "unavailable"),
                                           "keep_awake": protection.view() if protection else 'not-started',
                                           "error": str(error), "finished_at": stamp(now())})
         return
     sup = json.loads((run / "supervisor.json").read_text())
-    write_json(run / "supervisor.json", {**sup, "worker_pid": worker.pid})
+    write_json(run / "supervisor.json", {**sup, "phase":"execution-running", "worker_pid": worker.pid})
     # The session id was fixed before launch, so a started process settles the dispatch.
     tasks.update(root, task_id, tasks.settle_dispatch, dispatch_id, "sent")
+    if p.get('contract_binding'):
+        tasks.receive(root, {'id': f'{dispatch_id}:dispatched', 'task': task_id,
+            'ts': t0, 'source': 'adapter', 'kind': 'dispatched',
+            'data': {'session_id': p['session_id']}})
     awake = "not-applicable"
     if protection:
         awake = protection.view()
@@ -511,7 +647,7 @@ def supervise(run):
         awake = "launched-unverified"
     outcome = "done"
     try:
-        deadline = time.monotonic() + p['timeout_seconds']
+        deadline = time.monotonic() + timeout_seconds
         while protection and worker.poll() is None:
             protection.tick()
             remaining = deadline - time.monotonic()
@@ -522,7 +658,7 @@ def supervise(run):
             except subprocess.TimeoutExpired:
                 continue
         if not protection:
-            worker.wait(timeout=p["timeout_seconds"])
+            worker.wait(timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
         outcome = "timeout"
         for sig, grace in ((signal.SIGTERM, 10), (signal.SIGKILL, None)):
@@ -546,8 +682,13 @@ def supervise(run):
     try:
         tasks.update(root, task_id, worker_execution.record_execution, dispatch_id, execution, parsed,
                      receipt_ref=ref)
+        if p.get('contract_binding') and not tasks.load(root, task_id)['worker']['last_execution']['result_received']:
+            raise ValueError('contract result held: execution/session/route evidence unqualified')
         for event in workers.events(task_id, dispatch_id, parsed, t0, time.time()):
             tasks.receive(root, event)
+        if p.get('contract_binding') and (parsed.get('report') or {}).get('status') in ('answered', 'ready'):
+            tasks.update(root, task_id, producer_contract.record_reported_result, tasks=tasks,
+                dispatch_id=dispatch_id, report=parsed['report'], receipt_ref=f'{dispatch_id}:reported-result')
     except Exception as error:  # the receipt still lands, naming what the task record missed
         bookkeeping = f"{type(error).__name__}: {error}"
         print(f"delegate: task record not updated: {bookkeeping}", file=sys.stderr)
@@ -567,6 +708,15 @@ def supervise(run):
         "report": {k: report.get(k) for k in ("status", "summary", "commit", "tests", "need")},
         "record_status": tasks.load(root, task_id)["status"], "bookkeeping_error": bookkeeping,
         "stream": str(run / "stream.jsonl")})
+    if p.get('contract_binding'):
+        readback_receipt = json.loads((run / 'contract-readback-receipt.json').read_text())
+        receipt_path = run / 'receipt.json'
+        value = json.loads(receipt_path.read_text())
+        value['contract_readback'] = str(run / 'contract-readback-receipt.json')
+        value['cost_usd'] = ((value['cost_usd'] or 0) + (readback_receipt.get('cost_usd') or 0))
+        write_json(receipt_path, value)
+    if p.get('contract_binding'):
+        tasks.update(root, task_id, task_checkpoint.stage_checkpoint_intents, now=stamp(now()))
 
 
 def head(command):
@@ -595,9 +745,12 @@ def latest_run(task_id, dispatch_id=None):
 
 def wait(args):
     run = latest_run(args.task_id, args.dispatch)
+    bound = bool(json.loads((run / 'params.json').read_text()).get('contract_binding'))
     deadline = time.time() + min(args.timeout, 3600)
     unknown = False
     while time.time() < deadline:
+        if bound:
+            tasks.update(tasks.state_dir(), args.task_id, task_checkpoint.stage_checkpoint_intents, now=stamp(now()))
         if (run / "receipt.json").exists():
             receipt = json.loads((run / "receipt.json").read_text())
             current = current_protection(run)
@@ -621,6 +774,8 @@ def settle_lost(run):
     """The supervisor died before writing a receipt: the run is lost unless its worker still runs or
     this environment can't tell."""
     sup = json.loads((run / "supervisor.json").read_text())
+    if sup.get('phase') in ('readback-uncertain', 'execution-uncertain') and not sup.get('worker_pid'):
+        return 'liveness-unknown'  # launch window unknown; never invent non-execution
     worker = alive(sup["worker_pid"], "claude") if sup.get("worker_pid") else False
     if worker is None:
         return "liveness-unknown"
@@ -638,6 +793,8 @@ def status(args):
         if args.task_id and run.parent.name != args.task_id:
             continue
         params = json.loads((run / "params.json").read_text())
+        if params.get('contract_binding'):
+            tasks.update(tasks.state_dir(), run.parent.name, task_checkpoint.stage_checkpoint_intents, now=stamp(now()))
         receipt = json.loads((run / "receipt.json").read_text()) if (run / "receipt.json").exists() else {}
         print(json.dumps({"task_id": run.parent.name, "dispatch_id": run.name, "state": run_state(run),
                           "started_at": json.loads((run / "supervisor.json").read_text())["started_at"],
@@ -645,6 +802,32 @@ def status(args):
                           "depth": params["depth"], "cost_usd": receipt.get("cost_usd"),
                           'keep_awake_current': current_protection(run),
                           "summary": (receipt.get("report") or {}).get("summary")}))
+
+
+def readback(args):
+    """The parent explicitly consumes the matching result; acceptance stays separate."""
+    run = latest_run(args.task_id, args.dispatch)
+    receipt = json.loads((run / 'receipt.json').read_text())
+    binding = json.loads(Path(args.binding_file).read_text())
+    record = tasks.load(tasks.state_dir(), args.task_id)
+    active = record['coordination'].get('active_deliverable') or {}
+    if (receipt.get('outcome') != 'done' or receipt.get('bookkeeping_error') or
+            not active.get('result_receipt_ref', '').startswith(run.name + ':') or
+            (record.get('worker') or {}).get('session_id') != receipt.get('session_id')):
+        raise ValueError('matching completed worker result required')
+    def consume(r):
+        result = r['coordination']['active_deliverable'].get('reported_result') or {}
+        if result.get('dispatch_id') != run.name:
+            raise ValueError('current reported artifact required')
+        r = worker_execution.consume_result(r, run.name, stdout_sha256=result['stdout_sha256'],
+                                            receipt_ref=args.read_receipt)
+        return tasks.reconcile_parent_readback(r, binding=binding,
+            result_receipt_ref=active['result_receipt_ref'], decision_source_ref=binding.get('decision_source_ref'),
+            read_receipt_ref=args.read_receipt, answer_ref=args.answer_ref)
+    record = tasks.update(tasks.state_dir(), args.task_id, consume)
+    print(json.dumps({'task_id':args.task_id, 'binding':tasks.current_task_binding(record),
+        'parent_readback':record['coordination']['active_deliverable']['parent_readback'],
+        'acceptance_state':record['coordination']['acceptance_state']}))
 
 
 def reconcile(_args):
@@ -698,6 +881,8 @@ def main(argv=None):
     s.add_argument("--reason", default="delegated work")
     s.add_argument("--decision-ref")
     s.add_argument("--resume", action="store_true", help="continue the task's owned session")
+    s.add_argument('--contract-file', help='JSON with contract kwargs and pinned acceptance_packet')
+    s.add_argument('--legacy-unbound', action='store_true', help='explicit compatibility mode; no enforced contract claim')
     s.add_argument("--approved-log", help="the task's log.md: its newest Approved: line grants a release")
     s.add_argument("--targets", help="comma-separated release targets, each in the approval and configured")
     s.add_argument('--critical-protection-receipt', help='existing retained foreground owner receipt')
@@ -709,6 +894,12 @@ def main(argv=None):
     w.add_argument("--timeout", type=int, default=540)
     st = sub.add_parser("status")
     st.add_argument("task_id", nargs="?")
+    rd = sub.add_parser('readback')
+    rd.add_argument('task_id')
+    rd.add_argument('--dispatch')
+    rd.add_argument('--binding-file', required=True)
+    rd.add_argument('--read-receipt', required=True)
+    rd.add_argument('--answer-ref', required=True)
     sub.add_parser("reconcile")
     r = sub.add_parser("report")
     r.add_argument("--days", type=int, default=7)
@@ -718,12 +909,15 @@ def main(argv=None):
     if args.cmd == "start" and bool(args.approved_log) != bool(args.targets):
         parser.error("--approved-log and --targets go together")
     if args.cmd == 'start':
+        if args.contract_file and args.legacy_unbound:
+            parser.error('--contract-file and --legacy-unbound are mutually exclusive')
         critical = [args.critical_protection_receipt, args.critical_until_utc, args.critical_authority_ref]
         if any(x is not None for x in critical) and not all(x and x.strip() for x in critical):
             parser.error('all three --critical-* inputs go together and must be nonempty')
     if args.cmd == "_supervise":
         return supervise(args.run)
-    return {"start": start, "wait": wait, "status": status, "reconcile": reconcile, "report": report}[args.cmd](args)
+    return {"start": start, "wait": wait, "status": status, "readback": readback,
+            "reconcile": reconcile, "report": report}[args.cmd](args)
 
 
 if __name__ == "__main__":

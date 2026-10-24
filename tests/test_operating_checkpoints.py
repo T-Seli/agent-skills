@@ -55,8 +55,11 @@ class AuditedRegressions(unittest.TestCase):
     def test_buried_approved_critical_blocker_stays_visible(self):
         r = bound()
         r['status'] = 'blocked'
-        r['pending_decision'] = {'need': 'Read approved', 'action': 'read', 'target': 'fixture'}
-        r['approvals'] = [{'action': 'read', 'target': 'fixture', 'scope': 'read only'}]
+        active = r['coordination']['active_deliverable']
+        authority = {'action': 'read', 'target': 'fixture', 'scope': 'read only',
+                     'revision': active['revision'], 'contract_digest': active['contract_digest']}
+        r['pending_decision'] = {'need': 'Read approved', **authority}
+        r['approvals'] = [{**authority, 'binding':'current-contract'}]
         r['coordination']['active_deliverable']['checkpoint'] = checkpoint_shape()
         messages = tasks.attention([r])
         self.assertTrue(any('critical' in m for _, m in messages))

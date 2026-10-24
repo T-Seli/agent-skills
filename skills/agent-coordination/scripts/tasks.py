@@ -241,6 +241,8 @@ def result_binding(record, *, deliverable_id, revision, contract_digest=None,
         return "stale-deliverable"
     if revision != active["revision"]:
         return "stale-revision"
+    if type(revision) is not int:
+        return 'stale-revision'
     if contract_digest != active.get("contract_digest"):
         return "stale-contract"
     if next_action is not _UNSET and next_action != active.get("next_action"):
@@ -514,13 +516,8 @@ def communication_brief(record, *, priority_candidates, result, remaining, next_
         raise ValueError("remaining work must be a string list")
     coordination = _coord(record)
     decision = pending(record)
-    def matches(item):
-        required = {key: decision.get(key) for key in (
-            "action", "target", "scope", "revision", "contract_digest")
-                    if decision.get(key) is not None}
-        return all(item.get(key) == value for key, value in required.items())
     satisfied = (approved_parts(record, decision["parts"]) if decision.get("parts") else
-                 any(matches(item) for item in record["approvals"]))
+                 approved(record, decision.get("action"), decision.get("target")))
     approval_need = None if satisfied or not (decision.get("action") and decision.get("target")) else {
         "need": decision.get("need"), "action": decision["action"], "target": decision["target"],
         "scope": decision.get("scope"), "revision": decision.get("revision")}
@@ -864,12 +861,15 @@ def _apply(r, kind, source, data, ts, event_id):
             if source != "user" or not (data.get("action") and data.get("target") and data.get("scope")):
                 return "rejected"
             active = (r.get("coordination") or {}).get("active_deliverable") or {}
-            if active and (data.get("revision"), data.get("contract_digest")) != (
-                    active.get("revision"), active.get("contract_digest")):
+            if active and (type(data.get("revision")) is not int or
+                           (data.get("revision"), data.get("contract_digest")) != (
+                               active.get("revision"), active.get("contract_digest"))):
                 return "rejected"
             r["approvals"].append({k: data[k] for k in ("action", "target", "scope")} | {
                 "ts": str(ts), "revision": data.get("revision"),
-                "contract_digest": data.get("contract_digest")})
+                "contract_digest": data.get("contract_digest"),
+                "binding": "current-contract" if active else "legacy-unbound",
+                "source_ref": event_id})
         if kind == "proposal":
             if source != "thread":
                 return "rejected"
@@ -916,6 +916,22 @@ def _apply(r, kind, source, data, ts, event_id):
         return "unsupported"  # a completion claim without a commit and tests is not ready for review
     if kind == "answered" and data.get("commit"):
         return "unsupported"  # a commit is code: it is reported as ready and reviewed
+    if active and kind == 'answered' and r.get('producer_contract_version') == 1:
+        try:
+            worker_return = assess_worker_return(
+                r, deliverable_id=data.get('deliverable_id'), revision=data.get('revision'),
+                contract_digest=data.get('contract_digest'), artifact_kind=data.get('artifact_kind'),
+                artifact_ref=data.get('artifact_ref'), result=data.get('result'),
+                remaining=data.get('remaining'), next_owner=data.get('next_owner'),
+                decision_source_ref=data.get('decision_source_ref'), material_facts=data.get('material_facts'))
+        except ValueError:
+            return 'unsupported'
+        if worker_return['status'] != 'current-artifact':
+            return 'unsupported'
+        r['worker_return'] = worker_return
+        active['result_receipt_ref'] = event_id
+        active['material_facts'] = worker_return.get('material_facts', [])
+        active.pop('parent_readback', None)
     if active and kind == "ready":
         try:
             _hex(data.get("commit"), "commit", {40, 64})
@@ -942,6 +958,13 @@ def _apply(r, kind, source, data, ts, event_id):
             # An approval: both must have been asked, and the yes must name both exactly.
             if not (p["action"] and p["target"]) or (data.get("action"), data.get("target")) != (p["action"], p["target"]):
                 return "rejected"
+            identity = _approval_identity(r, p["action"], p["target"])
+            if identity is None:
+                return "rejected"  # a stale pending decision cannot authorize the current contract
+            if not p.get("parts") and (any(data.get(key) != value for key, value in identity.items()
+                                           if key not in ("action", "target")) or
+                                        ("revision" in identity and type(data.get("revision")) is not int)):
+                return "rejected"  # exact scoped/current yes, never an inferred authority backfill
             if p.get("parts") and not approved_parts(r, p["parts"]):
                 return "rejected"  # no positive decision until every distinct scope is authenticated
         elif data.get("action") or data.get("target"):
@@ -973,15 +996,19 @@ def _apply(r, kind, source, data, ts, event_id):
                                      "contract_digest": data.get("contract_digest")}
                                     if data.get("revision") is not None else {}),
                                  **({"parts": copy.deepcopy(parts)} if parts is not None else {})}
-        if data.get("action") and approved(r, data["action"], data.get("target")):
+        satisfied = (approved_parts(r, parts) if parts is not None else
+                     approved(r, data.get("action"), data.get("target")))
+        if data.get("action") and satisfied:
             r.setdefault("counts", {}).setdefault("unneeded_asks", 0)
             r["counts"]["unneeded_asks"] += 1  # asked again for something the user already approved
     if kind in ("blocked", "decided"):
         r["proposal"] = None  # a proposal answers the decision it was made on, not a later one
     if kind == "decided":
-        if data.get("approve") is True:
-            r["approvals"].append({"action": data["action"], "target": data.get("target"),
-                                   "scope": "the pending decision", "ts": str(ts)})
+        if data.get("approve") is True and not pending(r).get("parts"):
+            identity = _approval_identity(r, data["action"], data.get("target"))
+            r["approvals"].append({**identity, "scope": identity.get("scope", "the pending decision"),
+                                   "ts": str(ts), "source_ref": event_id,
+                                   "binding": "current-contract" if active else "legacy-unbound"})
         r["pending_decision"] = None
         r["resume_after"] = len(r["outbox"])  # only a later resume receipt can prove new execution
     if kind == "ready" and packet:
@@ -1009,9 +1036,9 @@ def _apply(r, kind, source, data, ts, event_id):
                 active.pop(key, None)
         r.pop("worker_return", None)
     coordination = _coord(r)
-    if active and kind == "ready":
+    if active and kind in ("ready", "answered"):
         _record_contract_consumption(
-            coordination, "final", "tasks.apply:ready", event_id)
+            coordination, "final", "tasks.apply:" + kind, event_id)
     elif active and kind == "verified":
         _record_contract_consumption(
             coordination, "acceptance", "tasks.apply:verified", event_id)
@@ -1052,23 +1079,60 @@ def pending(record):
             "revision": None, "contract_digest": None}
 
 
-def approved(record, action, target):
-    """True only for a recorded user approval of this exact action and target (both named)."""
-    return bool(action and target) and any(
-        a.get("action") == action and a.get("target") == target for a in record["approvals"])
+def _approval_identity(record, action, target, *, scope=None):
+    """Required current authority identity; None means the pending binding is incomplete/stale.
+
+    Old unbound records remain readable. They never acquire a contract binding from a later
+    query, and a current contract always requires its own revision and digest on the grant.
+    """
+    if not action or not target:
+        return None
+    identity = {"action": action, "target": target}
+    decision = pending(record)
+    same_decision = (decision.get("action"), decision.get("target")) == (action, target)
+    if scope is None and same_decision:
+        scope = decision.get("scope")
+    if scope is not None:
+        identity["scope"] = scope
+    active = (record.get("coordination") or {}).get("active_deliverable")
+    if active:
+        if scope is None:
+            return None  # a bound query cannot widen a grant by omitting its scope
+        binding = {key: active.get(key) for key in ("revision", "contract_digest")}
+        if any(value is None for value in binding.values()):
+            return None
+        if same_decision and (type(decision.get("revision")) is not int or
+                              any(decision.get(key) != value for key, value in binding.items())):
+            return None
+        if same_decision and scope is None and not decision.get("parts"):
+            return None
+        identity.update(binding)
+    elif same_decision:
+        identity.update({key: decision[key] for key in ("revision", "contract_digest")
+                         if decision.get(key) is not None})
+    return identity
+
+
+def approved(record, action, target, *, scope=None):
+    """Recorded user grant matching exact current action/target/scope and contract identity.
+
+    A legacy caller without a pending scoped decision can still query its historical
+    action/target. Binding a contract makes that unbound authority insufficient.
+    """
+    identity = _approval_identity(record, action, target, scope=scope)
+    return identity is not None and any(
+        (not (record.get('coordination') or {}).get('active_deliverable') or
+         item.get('binding') == 'current-contract') and
+        all(item.get(key) == value and (key != "revision" or type(item.get(key)) is int)
+            for key, value in identity.items())
+        for item in record.get("approvals", []))
 
 
 def approved_parts(record, parts):
-    """Every distinct pending part was admitted for the current contract binding."""
-    decision = pending(record)
-    binding = {key: decision.get(key) for key in ("revision", "contract_digest")
-               if decision.get(key) is not None}
-    return valid_approval_parts(parts) and all(any(
-        (a.get("action"), a.get("target"), a.get("scope")) ==
-        (p["action"], p["target"], p["scope"]) and
-        all(a.get(key) == value for key, value in binding.items())
-        for a in record["approvals"])
-        for p in parts)
+    """Every distinct scope has a grant for the current contract, including old pending records."""
+    return valid_approval_parts(parts) and all(
+        approved(record, part["action"], part["target"], scope=part["scope"])
+        for part in parts)
 
 
 def begin_dispatch(record, dispatch_id, *, resume):
