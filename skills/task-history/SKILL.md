@@ -5,6 +5,8 @@ description: 'Write and retrieve sanitized central task evidence for audit and r
 
 # Central task history
 
+For exact-scope retrieval, `knowledge.py --repo <checkout> --task <id> --repo-ref <ref> --environment <env> --scope <scope>` rebuilds evidence from selected journals. Supply independently checked source/runtime/code pins with `--context-file`; missing freshness remains unknown. `source_ref` retains event provenance and is never a configuration version. Claims retain explicit corrections and conflicts. Approvals stay task-specific history, never reusable authority. Publication verification compares the complete journal-derived view under its renderer; edited or incompatible historical views are preserved for reconciliation.
+
 The private `agent-task-history` repository holds the cross-session record. This central writer is separate from `agent_skills/history.py`, which remains a compact local timeline; do not write the same event through both without an explicit reference. The project `TASK/log.md` remains the local receipt and retains its existing parsed tokens and record commits. Never copy a raw project log wholesale into central history.
 
 ## New task and handoff workflow

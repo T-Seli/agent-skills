@@ -55,7 +55,8 @@ def capture(repo, checkpoint):
     return {"result": result, "event_id": event["event_id"], "digest": digest}
 
 
-def verify_publication(repo, *, task_id, event_id, expected_digest, reader_ref):
+def verify_publication(repo, *, task_id, event_id, expected_digest, reader_ref,
+                       expected_renderer_sha256=None):
     """Verify journal, generated view, and index from the caller's fresh reader checkout."""
     if not isinstance(reader_ref, str) or not reader_ref.strip():
         raise ValueError("fresh reader reference is required")
@@ -64,6 +65,9 @@ def verify_publication(repo, *, task_id, event_id, expected_digest, reader_ref):
         raise ValueError("published journal digest does not match expected digest")
     if event_id not in {row["event_id"] for row in rows}:
         raise ValueError("published journal is missing the expected event")
+    renderer_sha256 = hashlib.sha256(Path(markdown.__file__).read_bytes()).hexdigest()
+    if expected_renderer_sha256 is not None and expected_renderer_sha256 != renderer_sha256:
+        raise ValueError("renderer version mismatch; preserve the existing view and reconcile")
     view = Path(repo).resolve() / "views" / f"{task_id}.md"
     if not view.is_file() or view.is_symlink():
         raise ValueError("published generated view is missing or unsafe")
@@ -72,6 +76,9 @@ def verify_publication(repo, *, task_id, event_id, expected_digest, reader_ref):
     if (not marker or marker.group(2) != current or
             hashlib.sha256(content[marker.end():].encode()).hexdigest() != marker.group(1)):
         raise ValueError("published generated view does not match the journal")
+    expected = markdown.document(rows, history.project(rows, current))
+    if content != expected:
+        raise ValueError("published view is not journal-derived under the current renderer; preserve and reconcile")
     index = Path(repo).resolve() / "INDEX.md"
     if not index.is_file() or index.is_symlink():
         raise ValueError("published index is missing or unsafe")
@@ -80,6 +87,7 @@ def verify_publication(repo, *, task_id, event_id, expected_digest, reader_ref):
         raise ValueError("published index is missing the task journal or view link")
     return {"task_id": task_id, "event_id": event_id, "revision": len(rows),
             "record_owner": history.owner(rows), "digest": current,
+            "renderer_sha256": renderer_sha256, "view_format": "generated-marker-v1",
             "reader_ref": reader_ref.strip(), "view": str(view), "index": str(index)}
 
 
