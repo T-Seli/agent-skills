@@ -17,8 +17,9 @@ EDGE = "\"'(),;:.!?"
 def problems(text):
     found = []
     lines = text.strip("\n").splitlines()
-    if len(lines) > MAX_LINES:
-        found.append(f"{len(lines)} lines; the cap is {MAX_LINES}")
+    nonblank_lines = [line for line in lines if line.strip()]
+    if len(nonblank_lines) > MAX_LINES:
+        found.append(f"{len(nonblank_lines)} nonblank lines; the cap is {MAX_LINES}")
     if len(text.split()) > MAX_WORDS:
         found.append(f"{len(text.split())} words; the cap is {MAX_WORDS}")
     for n, line in enumerate(lines, 1):

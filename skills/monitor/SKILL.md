@@ -14,6 +14,9 @@ argument-hint: "[repo path] [task folder | commit]"
 3. The conversation, including compaction summaries and pasted handoffs.
 4. Discovery: `git log origin/<release> --since="<Monitor window> ago"` by the user or with the assistant co-author trailer; `deploy:` entries in `<tasks>/*/log.md` on `origin/<base>` from that window.
 
+## Expired invocation gate
+Before **Build the change list** or any live probe, compare the supplied deadline with current UTC and inspect this task's `monitor:` entries. If that exact deadline already has a final entry, report `duplicate expired invocation` and exit without probing, recording or changing a schedule. Otherwise this is the one final run: its **Record** entry includes `Deadline: <UTC>; final`. It never creates or re-enables a recheck schedule.
+
 ## 1. Build the change list
 Group commits into changes, one user-visible behaviour each. Backfills, config flips and scheduled jobs are changes too. One line per change.
 
@@ -65,7 +68,7 @@ There is no push tool: the alert is the report's first line, which the task's co
 - **Regressed:** alert (what broke, impact, one line) and keep the schedule.
 - **All confirmed:** note it in the entry, then **End**.
 - **Anything not yet exercised:** keep the schedule.
-- **Past the deadline** (from the args): alert if anything is unverified, then **End**.
+- **Past the deadline** (from the args): this rule overrides the three outcomes above. Produce the final report and alert if anything is unverified. Disabling follows **End**. Do not schedule another check.
 - Manual run, something pending, nothing scheduled: first check the log for a `Scheduler:` line and the list for the id, so none is duplicated. The id exists but is disabled: update it with the new fields and `enabled: true`, then confirm it lists as enabled. Neither exists: create it with `/deploy`'s fields (recheck times, deadline = deploy + `Monitor window`), `Deadline: <YYYY-MM-DDTHH:MMZ>` in the task description, and append `Scheduler: <runtime> <id>` to the entry. Scheduler unavailable: end with the next recheck time and the command (contracts.md).
 - **Janitor run:** only an existing configured authorized janitor lists schedules through its supported route and passes them, with now in UTC, to `agent_skills.task_reconciliation.expired_monitors` via `python3 -c` (repo root on `PYTHONPATH`: `cd -P "${CLAUDE_SKILL_DIR}/../.."`). It ends each expired one per **End** with a final verdict line `<id>: past deadline <deadline>, disabled`, and reports the unparsed ids as lacking a `Deadline:`. A cron that pins its calendar days ends after its last pinned day.
 

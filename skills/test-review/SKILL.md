@@ -60,7 +60,7 @@ Report only these: no nice-to-haves, style, refactor or dedupe suggestions, no "
 6. **Unplanned:** anything outside the plan (compare `git diff --name-only $BASE <head>` with the plan, its Out of scope and action items).
 
 ## Log
-Before publishing a release-ready YES, persist the review evidence: `test-review: <YES|NO>` per contracts.md, holding `Reviewed: <head sha> <YES|NO>`, exact tree/manifest identity, the Tests line and relevant reused-evidence comparison. Read the saved receipt back and recheck the candidate identity. A failed/unconfirmed log write is a recording gap, not release evidence; use an authorized task-local equivalent if the normal log is unavailable, otherwise hold release. Do not require another test run solely to repair receipt storage.
+Before displaying a release-ready YES or following § Chain, persist the review evidence: `test-review: <YES|NO>` per contracts.md, holding `Reviewed: <head sha> <YES|NO>`, exact tree/manifest identity, the Tests line and relevant reused-evidence comparison. Read the saved receipt back and verify its `Reviewed:` SHA is the current candidate head. A failed/unconfirmed log write is a recording gap, not release evidence; use an authorized task-local equivalent if the normal log is unavailable, otherwise hold the report and release. Do not require another test run solely to repair receipt storage.
 - PR mode: append to `$MAIN/.claude/drafts/<date>-pr-<n>/log.md` (the newest existing `drafts/*-pr-<n>/` if any), so `/deploy` finds it. No commit.
 - `TASK` on the branch: append to `TASK/log.md` and make a record commit of only that file, subject `review <slug>`.
 - Otherwise: append to `DRAFT/log.md`.
@@ -72,7 +72,7 @@ For a scheduled run. `python3 "${CLAUDE_SKILL_DIR}/scripts/pr_sweep.py" pending`
 Same review for a PR, plus its summary line in the report and its own log (§ Log). Post the report as a PR comment only if the user asks, or when the PR sweep runs this: then post only through `${CLAUDE_SKILL_DIR}/scripts/pr_sweep.py post` (one authenticated comment per head/base/policy on the configured publisher host; `pr_sweep.authorization` in the agent-skills config is the user's standing approval). Never approve, request changes or merge.
 
 ## Report (readable markdown for someone who hasn't seen the code; never a fenced block)
-After saving and reading back § Log, print the verdict before any authorized deploy or implementation loop. Include the review receipt reference; a preliminary chat YES alone is not release evidence. Caps per contracts.md § Report. These lines, in order; nothing else:
+Only after the exact-head § Log receipt is saved and read back, print the verdict; only after both succeed may any authorized deploy or implementation loop follow. Include the review receipt reference; a preliminary chat YES alone is not release evidence. Caps per contracts.md § Report. These lines, in order; nothing else:
 
 1. PR mode only: **What it does:** two plain sentences, the problem and then the change, from the PR body and diff.
 2. **Ready to deploy: YES.** or **Not ready to deploy: <k> blocker(s).** plus a short clause, e.g. "each needs a small fix".
