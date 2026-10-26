@@ -131,6 +131,27 @@ class DepthNotBreadth(unittest.TestCase):
             self.assertIn('$ui-design', (Path(home) / '.codex/AGENTS.md').read_text())
 
 
+class WorkflowAuditGuardrails(unittest.TestCase):
+    def test_expired_monitor_gate_precedes_probe_and_forbids_recheck(self):
+        body = text('skills/monitor/SKILL.md')
+        gate = body.index('## Expired invocation gate')
+        self.assertLess(gate, body.index('## 1. Build the change list'))
+        self.assertLess(gate, body.index('## 4. Probe'))
+        self.assertIn('exit without probing, recording or changing a schedule', body)
+        self.assertIn('Do not schedule another check.', body)
+        self.assertIn('Disabling follows **End**.', body)
+
+    def test_review_receipt_precedes_report_and_chain(self):
+        body = text('skills/test-review/SKILL.md')
+        log = body.index('## Log')
+        report = body.index('## Report')
+        chain = body.index('With the persisted exact-candidate review receipt')
+        self.assertLess(log, report)
+        self.assertLess(report, chain)
+        self.assertIn('verify its `Reviewed:` SHA is the current candidate head', body)
+        self.assertIn('Only after the exact-head § Log receipt is saved and read back', body)
+
+
 class CriticalExecutionNavigation(unittest.TestCase):
     def test_entrypoint_reaches_existing_concrete_foreground_contract(self):
         body=text('skills/agent-coordination/SKILL.md')
