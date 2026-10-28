@@ -34,9 +34,9 @@ class DryRun:
         self.gh, self.next, self.fake = gh, 900001, set()
 
     def __call__(self, args, stdin=None):
-        if args[0] == 'api' and '-X' not in args and re.fullmatch(r'repos/.+/issues/\d+', args[1]):
-            if int(args[1].rsplit('/', 1)[1]) in self.fake:
-                return '0'
+        m = args[0] == 'api' and '-X' not in args and re.fullmatch(r'repos/.+/issues/(\d+)(/.+)?', args[1])
+        if m and int(m[1]) in self.fake:
+            return '' if m[2] else '0'  # a would-be issue has id 0 and no links yet
         if not is_write(args):
             return self.gh(args, stdin)
         print(shlex.join(['gh', *args]))
@@ -89,6 +89,15 @@ def issue_id(gh, repo, n):
     return gh(['api', f'repos/{repo}/issues/{n}', '--jq', '.id']).strip()
 
 
+def link(gh, repo, n, path, field, targets):
+    """POST each target issue to `issues/<n>/<path>` unless GitHub already lists it there."""
+    url = f'repos/{repo}/issues/{n}/{path}'
+    have = {int(x) for x in gh(['api', url, '--paginate', '--jq', '.[].number']).split()}
+    for t in targets:
+        if t not in have:
+            gh(['api', '-X', 'POST', url, '-F', f'{field}={issue_id(gh, repo, t)}'])
+
+
 def publish(gh, repo, folder, title, body_file, label, dry_run):
     plan_path, items_path = folder / 'plan.md', folder / 'action-items.md'
     plan = plan_path.read_text()
@@ -116,16 +125,17 @@ def publish(gh, repo, folder, title, body_file, label, dry_run):
     print(f'Issue: {repo}#{parent}')
     numbers, lines = {t['n']: t['issue'] for t in tickets if t['issue']}, items.split('\n')
     for t in tickets:
-        if t['issue']:
-            continue
         blockers = [numbers[k] for k in t['after']]
-        n = numbers[t['n']] = create(gh, repo, t['title'], ticket_body(t, parent, blockers))
-        gh(['api', '-X', 'POST', f'repos/{repo}/issues/{parent}/sub_issues', '-F', f'sub_issue_id={issue_id(gh, repo, n)}'])
-        for b in blockers:
-            gh(['api', '-X', 'POST', f'repos/{repo}/issues/{n}/dependencies/blocked_by', '-F', f'issue_id={issue_id(gh, repo, b)}'])
-        lines[t['line']] += f' · issue #{n}'
-        dry_run or items_path.write_text('\n'.join(lines))
+        n = t['issue']
+        if not n:
+            # Record the number before linking, so a rerun after a failed link adds the link instead of a duplicate.
+            n = numbers[t['n']] = create(gh, repo, t['title'], ticket_body(t, parent, blockers))
+            lines[t['line']] += f' · issue #{n}'
+            dry_run or items_path.write_text('\n'.join(lines))
+        link(gh, repo, n, 'dependencies/blocked_by', 'issue_id', blockers)
         print(f"ticket {t['n']}: #{n}")
+    if tickets:
+        link(gh, repo, parent, 'sub_issues', 'sub_issue_id', [numbers[t['n']] for t in tickets])
 
 
 def view(gh, repo, n, fields):

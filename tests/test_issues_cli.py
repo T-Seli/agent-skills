@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -32,12 +33,17 @@ Tickets: 3
 
 
 class FakeGh:
-    """Records every call; issue numbers start at 100 and an issue's id is its number × 1000."""
-    def __init__(self, issues=None, viewer='me'):
-        self.calls, self.next, self.issues, self.viewer = [], 100, issues or {}, viewer
+    """Records every call and the links it was asked to make; issue numbers start at 100 and an issue's id is its
+    number × 1000. `fail` names a call (by predicate) that raises once, as gh does on an API error."""
+    def __init__(self, issues=None, viewer='me', fail=None):
+        self.calls, self.next, self.issues, self.viewer, self.fail = [], 100, issues or {}, viewer, fail
+        self.links = {}  # 'repos/o/r/issues/<n>/<sub_issues|dependencies/blocked_by>' -> [linked numbers]
 
     def __call__(self, args, stdin=None):
         self.calls.append((args, stdin))
+        if self.fail and self.fail(args):
+            self.fail = None
+            raise subprocess.CalledProcessError(1, ['gh', *args], stderr='HTTP 502: Bad Gateway')
         if args[:2] == ['issue', 'create']:
             self.next += 1
             return f'https://github.com/{REPO}/issues/{self.next - 1}\n'
@@ -45,6 +51,11 @@ class FakeGh:
             return self.viewer + '\n'
         if args[0] == 'api' and re.fullmatch(rf'repos/{REPO}/issues/\d+', args[1]):
             return f"{int(args[1].rsplit('/', 1)[1]) * 1000}\n"
+        if args[:3] == ['api', '-X', 'POST']:
+            self.links.setdefault(args[3], []).append(int(args[-1].split('=')[1]) // 1000)
+            return '{}'
+        if args[0] == 'api':
+            return ''.join(f'{n}\n' for n in self.links.get(args[1], []))
         if args[:2] == ['issue', 'view']:
             return json.dumps(self.issues[int(args[2])])
         return ''
@@ -106,12 +117,12 @@ class Publish(unittest.TestCase):
         self.assertIn('#100', out)
 
     def test_republish_creates_nothing(self):
-        d = draft()
-        run(FakeGh(), 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
-        gh = FakeGh()
+        d, gh = draft(), FakeGh()
+        run(gh, 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        before = len(gh.calls)
         code, _, _ = run(gh, 'publish', '--repo', REPO, str(d))
         self.assertEqual(code, 0)
-        self.assertEqual(gh.writes(), [])
+        self.assertEqual([a for a, _ in gh.calls[before:] if issues_cli.is_write(a)], [])
 
     def test_partly_published_reuses_existing_issue_numbers(self):
         items = ITEMS.replace('**1. Store widgets** · M', '**1. Store widgets** · M · issue #50')
@@ -124,6 +135,22 @@ class Publish(unittest.TestCase):
         self.assertIn('## Blocked by\n\n- #50', creates[0])
         self.assertIn((f'repos/{REPO}/issues/100/dependencies/blocked_by', 'issue_id=50000'),
                       [(a[3], a[-1]) for a, _ in gh.writes() if a[0] == 'api'])
+
+    def test_rerun_after_a_failed_link_adds_the_link_and_creates_nothing(self):
+        d = draft()
+        gh = FakeGh(fail=lambda a: a[:3] == ['api', '-X', 'POST'] and a[3].endswith('/issues/102/dependencies/blocked_by'))
+        code, _, err = run(gh, 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        self.assertEqual(code, 1)
+        self.assertIn('502', err)
+        self.assertIn('**2. Show widgets** · S · after #1 · issue #102', (d / 'action-items.md').read_text())
+        before = len(gh.calls)
+        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d))
+        self.assertEqual(code, 0)
+        rerun_creates = [a[a.index('--title') + 1] for a, _ in gh.calls[before:] if a[:2] == ['issue', 'create']]
+        self.assertEqual(rerun_creates, ['Count widgets'])  # only the ticket never reached; #101 and #102 not repeated
+        self.assertEqual(sorted(gh.links[f'repos/{REPO}/issues/100/sub_issues']), [101, 102, 103])
+        self.assertEqual(gh.links[f'repos/{REPO}/issues/102/dependencies/blocked_by'], [101])
+        self.assertEqual(sorted(gh.links[f'repos/{REPO}/issues/103/dependencies/blocked_by']), [101, 102])
 
     def test_single_task_without_tickets_gets_one_issue(self):
         d, gh = draft(items=None), FakeGh()
