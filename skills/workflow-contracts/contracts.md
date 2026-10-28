@@ -38,8 +38,7 @@ Every skill reads this file first, then [behavior.md](behavior.md) for Depth, no
   - blueprint Answer with a fix → implement once there is a go-ahead ("fix it").
   - implement → test-review. NO with blockers inside the plan → implement fixes them: at most `Attempts before blocked` rounds counted in `log.md`, never editing tests the plan names, and the same blocker twice stops. YES → deploy once there is a go-ahead.
   - deploy → monitor.
-- Failure, a NO outside the plan, or anything outside the plan stops the chain.
-- Codex: start the next skill by reading `${CLAUDE_SKILL_DIR}/../<next>/SKILL.md` and following it. `${CLAUDE_SKILL_DIR}` = the folder holding the SKILL.md being run.
+- Failure, a NO outside the plan, or anything outside the plan stops the chain. Codex: start the next skill by reading `${CLAUDE_SKILL_DIR}/../<next>/SKILL.md` and following it. `${CLAUDE_SKILL_DIR}` = the folder holding the SKILL.md being run.
 
 ## Consent
 - A go-ahead is any clear permission from the user: "approved", "fix it", "deploy", "merge and deploy", a request that already names the step ("build this, merge, deploy and monitor"), or a request phrased as a question ("can you close this out?"; "should we…?" asks for advice, not action). A bare approval ("approved", "yes", a reaction) covers the concrete pending gated step it answers. A request that names steps covers every step it names, through the last one named; don't ask again or per step. Before any ask, reread the user's messages since the task began and never ask for a step they already cover. No go-ahead yet: when work is ready for its next gated step (build after a plan, deploy after a YES), ask once in one line, offering every remaining step the task needs ("build, review, deploy and monitor?"), and wait.
@@ -53,6 +52,7 @@ Every skill reads this file first, then [behavior.md](behavior.md) for Depth, no
 
 ## Git
 - `git fetch` is fine anywhere, given up after about 8s; after a failed fetch, say so and label remote refs as possibly stale.
+- Issues: in a repo § Map `Issues` names, every task that ends in a PR is tracked per [issues.md](issues.md): published at plan approval, claimed, linked by a draft PR and closed on landing.
 
 ## Task log (`log.md`) — Central history is configured when `python3 "${CLAUDE_SKILL_DIR:-$HOME/.agents/skills/workflow-contracts}/../task-history/history.py" configured` exits 0 (it reads `task_history_repo` in `~/.config/agent-skills/workers.json`; run it before each log entry, never assume; any exit but 0 or 1 is an error to report, not "not configured"); that setting is the standing authorization for sanitized milestone events. Then use `/task-history` at milestones and handoff; keep this receipt, reconcile failed writes, distinguish performed/reported/verified claims, and review improvement proposals. Exit 1: the log entry says `History: not configured`.
 - Append-only. Heading `## <UTC time> — <stage>: <one line>`; `<stage>` = the skill's name. Never edit an earlier entry.

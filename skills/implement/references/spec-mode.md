@@ -9,7 +9,7 @@ Read by `/implement` when the action items are tickets (`Tickets: <n>` in the pa
 
 ## Setup
 1. **Steps** run as usual through **Start record**. Branch flow: the **Branch** worktree `<type>/<slug>` is the **integration branch**. Trunk flow: take `LOCK` as **Workspace** does for trunk, then create the same integration worktree. Write the full-suite failing ids to `DRAFT/baseline.txt`.
-2. Tickets need facts that plan `## Facts` lacks: one `scout` gathers them; save its answer to `DRAFT/notes.md`.
+2. Tracked: Start record publishes the spec and every ticket in one `ICLI publish` and claims the spec issue. Tickets need facts that plan `## Facts` lacks: one `scout` gathers them; save its answer to `DRAFT/notes.md`.
 
 ## Dispatch (every frontier ticket)
 1. Worktree off the integration tip, then the worktree setup from CLAUDE.md § Run & test:
@@ -24,7 +24,7 @@ Read by `/implement` when the action items are tickets (`Tickets: <n>` in the pa
 
 ## Merge
 - On each `ready` receipt, check every acceptance criterion has a named test that went red then green (a prefactor ticket: the existing tests covering the moved code stay green). Then the **merger** (task id `<slug>-merger`, started on the first merge and resumed with `start --resume` after; it is the only worker in the integration worktree, so merges run one at a time) runs `git merge --no-ff <type>/<slug>-t<N>` and `Fast tests`, compares with the baseline and returns within the receipt cap. The orchestrator then removes the merged ticket worktree without `--force` and deletes its branch with `git branch -d`. A non-trivial conflict or a new failure: it aborts the merge and reports; the ticket goes back to its worker (`start --resume --task-id <slug>-t<N>`).
-- Merged: tick it, log it, recompute the frontier and dispatch newly ready tickets at once. A blocked ticket holds only its dependents.
+- Merged: tick it, log it (tracked per `${CLAUDE_SKILL_DIR}/../workflow-contracts/issues.md`: `ICLI tick` its issue, push the integration branch; the first push opens the draft PR), recompute the frontier and dispatch newly ready tickets at once. A blocked ticket holds only its dependents.
 
 ## Review, fix, finish
 1. All tickets merged: review per `references/review-axes.md` on the integration branch.

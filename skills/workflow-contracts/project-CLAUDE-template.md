@@ -14,6 +14,7 @@
 - Task records: `tasks` | none (task folders stay in local drafts; nothing is recorded in git)
 - Commits: <convention, e.g. `<type>(<scope>): <summary>`> · attribution: <trailer policy, or none>
 - Git host CLI: `<command>` | none
+- Issues: `<owner/repo>`, … (repos whose tasks are tracked as issues; workflow-contracts issues.md; needs § Deploy `Flow` `branch`) | none
 
 ## Run & test
 <!-- Exact commands a fresh session can paste, plus what a fresh worktree needs before they work. -->

@@ -6,7 +6,7 @@ argument-hint: "[tests | PR <n> | PR URL | branch | commit range]"
 
 # Test review
 
-Decide one thing: is this ready to deploy? Strictly read-only: no code or test edits, code commits, rebases or merges; fixes go through `/implement`. Its only writes: its log entry (§ Log), and the temp worktrees and test services it makes and removes. First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`: names, `DRAFT`, `TASK`, temp worktrees, record commits, "outside the plan" and the defaults named below are per it.
+Decide one thing: is this ready to deploy? Strictly read-only: no code or test edits, code commits, rebases or merges; fixes go through `/implement`. Its only writes: its log entry (§ Log), `gh pr ready <PR>` on a YES for a tracked task's draft PR (`${CLAUDE_SKILL_DIR}/../workflow-contracts/issues.md`), and the temp worktrees and test services it makes and removes. First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`: names, `DRAFT`, `TASK`, temp worktrees, record commits, "outside the plan" and the defaults named below are per it.
 
 ## Inputs (first that exists; name it and its head sha in one line first)
 1. Args: `PR <n>`, `#<n>` or a PR URL → **PR mode**; `sweep` → **PR sweep**; a branch → it against `UP`; a commit range → those commits. A leading `tests` → **Tests mode**.

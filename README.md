@@ -122,6 +122,7 @@ Each skill starts from the user's plain words and starts the next one itself; th
 | `CLAUDE.md` | This repo's own project facts (it is a project like any other) | When working in this repo |
 | `install.sh` | Links everything into Claude Code and Codex and builds `~/.codex/AGENTS.md`; idempotent | Run on install and after each deploy |
 | `settings.snippet.json` | Turns on the style and the hook; lets skills read `skills/workflow-contracts/` | Merged once at install |
+| `skills/workflow-contracts/issues.md`, `scripts/issues-cli` | Issue tracking for repos § Map `Issues` names: which work gets issues, their format, publish, claim, draft PR, tick, close, consent | Cited by blueprint, implement, test-review and deploy |
 | `skills/workflow-contracts/project-CLAUDE-template.md` | Every project field, with `none` options | On demand (onboarding) |
 | `skills/prime-context` | Repo briefing, stale-work list, newest handoff | Description always; body on invoke |
 | `skills/grill-me` | Dependency-ordered technical decision interview in the owning session | Description always; shared decision contract on invoke |

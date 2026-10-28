@@ -15,7 +15,7 @@ For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-cont
 - Something urgent turns up → lead the reply with it and wait. Naming a fix is in scope; applying it is not. Blueprint stays read-only whatever the reply; what runs next, and on which words, is per contracts.md § Chain and § Consent.
 
 ## Inputs (first that exists; say which in one line)
-1. Args. 2. A plan for this topic: a pending draft with `plan.md`, or `TASK/plan.md` on the current branch → revise it (**Iterate**). A follow-up `-rN` folder without `plan.md` → **Answer** mode, its regression as the input. 3. The conversation. 4. Discovery: project CLAUDE.md sections, git state, repo docs.
+1. Args; an issue `#<n>` or its URL is read as the spec per `${CLAUDE_SKILL_DIR}/../workflow-contracts/issues.md`, and `plan.md` records it under the title as `Issue: <owner/repo>#<n>`. 2. A plan for this topic: a pending draft with `plan.md`, or `TASK/plan.md` on the current branch → revise it (**Iterate**). A follow-up `-rN` folder without `plan.md` → **Answer** mode, its regression as the input. 3. The conversation. 4. Discovery: project CLAUDE.md sections, git state, repo docs.
 
 ## Mode (picked by the input)
 - **Answer**: a question, bug report, alert, or trace of one entity (lead, call, job, record), or any fix whose evidence pins one S change, however many entities it spans. Evidence and a short answer; no agents, no `plan.md`.
