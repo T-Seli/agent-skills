@@ -57,7 +57,7 @@ def parse_tickets(text):
 def parse_issue_text(text):
     """The session's plain-language issue text per ticket (`issue-text.md`): {n: (title, what to build, criteria)}."""
     out = {}
-    for sec in re.split(r'^(?=## \d+\. )', text, flags=re.M):
+    for sec in re.split(r'^(?=## )', text, flags=re.M):  # any heading ends a ticket's section
         m = re.match(r'## (\d+)\. (.+)\n', sec)
         if m:
             lines = sec[m.end():].strip().split('\n')

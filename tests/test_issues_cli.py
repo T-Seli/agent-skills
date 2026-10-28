@@ -49,6 +49,10 @@ People see the widgets they saved.
 A badge shows how many widgets are saved.
 
 - [ ] The badge matches the list.
+
+## Notes for reviewers
+Shared context that belongs to no ticket.
+- [ ] an open question
 """
 
 
@@ -127,6 +131,8 @@ class Publish(unittest.TestCase):
             self.assertNotIn('server/widgets.js', body)
             self.assertNotIn('nothing keeps them today', body)
         self.assertIn('- [ ] The badge matches the list.', creates[3][1])
+        self.assertNotIn('Notes for reviewers', creates[3][1])  # another heading ends a ticket's section
+        self.assertNotIn('open question', creates[3][1])
         self.assertIn('None: can start now.', creates[1][1])
         posts = [a for a, _ in gh.writes() if a[0] == 'api']
         subs = [a for a in posts if a[3].endswith('/sub_issues')]
