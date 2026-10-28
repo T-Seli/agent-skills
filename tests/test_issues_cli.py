@@ -2,10 +2,12 @@
 import contextlib
 import io
 import json
+import os
 import re
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from agent_skills import issues_cli
@@ -100,7 +102,8 @@ class Publish(unittest.TestCase):
                      '## Acceptance criteria\n\n- [ ] the list shows a saved widget\n- [ ] an empty list says so',
                      '## Blocked by\n\n- #101'):
             self.assertIn(part, t2)
-        self.assertIn('Where: `server/widgets.js`', creates[1][1])
+        self.assertNotIn('server/widgets.js', creates[1][1])  # issues carry no file paths (issues.md § Format)
+        self.assertIn('nothing keeps them today.', creates[1][1])
         self.assertIn('- [ ] the badge shows the count', creates[3][1])
         self.assertIn('None: can start now.', creates[1][1])
         posts = [a for a, _ in gh.writes() if a[0] == 'api']
@@ -219,6 +222,28 @@ class Claim(unittest.TestCase):
         code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session s1']))
         self.assertEqual(code, 0)
         self.assertEqual(writes, [])
+
+
+    def test_session_defaults_to_the_desktop_session_id(self):
+        gh = FakeGh(issues={7: issue()})
+        env = {'CLAUDE_CODE_HOST_SESSION_ID': 'local_abc', 'CLAUDE_CODE_SESSION_ID': 'cli-123'}
+        with unittest.mock.patch.dict(os.environ, env):
+            code, _, _ = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x')
+        self.assertEqual(code, 0)
+        self.assertIn('session local_abc', gh.writes()[1][1])
+
+    def test_session_falls_back_to_the_cli_id_and_fails_without_either(self):
+        gh = FakeGh(issues={7: issue()})
+        with unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_SESSION_ID': 'cli-123'}):
+            os.environ.pop('CLAUDE_CODE_HOST_SESSION_ID', None)
+            self.assertEqual(run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x')[0], 0)
+        self.assertIn('session cli-123', gh.writes()[1][1])
+        gh = FakeGh(issues={7: issue()})
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x')
+        self.assertNotEqual(code, 0)
+        self.assertIn('--session', err)
+        self.assertEqual(gh.writes(), [])
 
 
 class Tick(unittest.TestCase):

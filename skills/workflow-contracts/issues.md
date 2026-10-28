@@ -19,7 +19,7 @@ The one home for issue tracking. Skills cite it; they never restate it. It appli
 ## Who and when
 - Only the session running the task acts on issues: the orchestration session for a big implementation, else the session running `/implement`. Ticket workers, the merger and the fixer never touch issues; their brief carries `Issue: #<n>`.
 - **Publish** at implement's Start record: write the spec or task body to a scratch file, then `ICLI publish --repo <owner/repo> DRAFT --title "<title>" --body-file <file> [--label ready-for-agent]`. Tickets publish in the same call.
-- **Claim** right after: `ICLI claim --repo <owner/repo> <n> --branch <type>/<slug> --session <session id>`. It assigns the signed-in user and leaves one comment naming the branch and session. It refuses an issue assigned to someone else (ask the user; never take it over) and one filed by someone else unless the user OK'd claiming it (`--approved`).
+- **Claim** right after: `ICLI claim --repo <owner/repo> <n> --branch <type>/<slug>`. It assigns the signed-in user and leaves one comment naming the branch and session (the desktop session id from the environment, else the CLI one). It refuses an issue assigned to someone else (ask the user; never take it over) and one filed by someone else unless the user OK'd claiming it (`--approved`).
 - **Draft PR** at the first push of the task branch: title = the plan's title; body = the plan's one-line goal, then `ICLI closes DRAFT` (`Closes #<spec>` plus one `Closes #` per ticket). One task, one PR; a big implementation opens it from its integration branch.
 - **Tick** after each ticket merge: `ICLI tick --repo <owner/repo> <ticket n>`.
 - **Ready** at test-review YES: `gh pr ready <PR>`.

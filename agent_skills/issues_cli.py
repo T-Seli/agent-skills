@@ -5,6 +5,7 @@ The draft folder stays the working copy: `plan.md` records `Issue: <owner/repo>#
 """
 import argparse
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -47,12 +48,12 @@ class DryRun:
 
 
 def parse_tickets(text):
-    """Ticket items in order: number, title, after, issue, why, where, criteria and the item line's index."""
+    """Ticket items in order: number, title, after, issue, why, criteria and the item line's index."""
     tickets, t = [], None
     for i, line in enumerate(text.split('\n')):
         m = ITEM.match(line)
         if m:
-            t = {'n': int(m[1]), 'title': m[2], 'line': i, 'criteria': [], 'why': '', 'where': '',
+            t = {'n': int(m[1]), 'title': m[2], 'line': i, 'criteria': [], 'why': '',
                  'after': [int(k) for seg in m[3].split(' · ') if seg.startswith('after ')
                            for k in re.findall(r'#(\d+)', seg)],
                  'issue': next((int(x) for x in re.findall(r' · issue #(\d+)', m[3])), None)}
@@ -61,8 +62,6 @@ def parse_tickets(text):
             s = line.strip()
             if s.startswith('- Why: '):
                 t['why'] = s[7:]
-            elif s.startswith('- Where: '):
-                t['where'] = s[9:]
             elif s.startswith('- Done when:') and s[12:].strip():
                 t['criteria'].append(s[12:].strip())
             elif BOX.match(line) and line.startswith('    '):
@@ -74,7 +73,7 @@ def parse_tickets(text):
 
 def ticket_body(t, parent, blockers):
     parts = [f'## Parent\n\n#{parent}', f"## What to build\n\n{t['title']}"]
-    parts += [x for x in (t['why'], t['where'] and f"Where: {t['where']}") if x]
+    parts += [t['why']] if t['why'] else []  # no Where line: issues carry no file paths (issues.md § Format)
     parts.append('## Acceptance criteria\n\n' + '\n'.join(f'- [ ] {c}' for c in t['criteria']))
     parts.append('## Blocked by\n\n' + ('\n'.join(f'- #{b}' for b in blockers) or 'None: can start now.'))
     return '\n\n'.join(parts) + '\n'
@@ -143,6 +142,9 @@ def view(gh, repo, n, fields):
 
 
 def claim(gh, repo, n, branch, session, approved):
+    session = session or os.environ.get('CLAUDE_CODE_HOST_SESSION_ID') or os.environ.get('CLAUDE_CODE_SESSION_ID')
+    if not session:
+        raise Refused('no session id in the environment; pass --session')
     me = gh(['api', 'user', '--jq', '.login']).strip()
     data = view(gh, repo, n, 'assignees,author,comments')
     others = [a['login'] for a in data['assignees'] if a['login'] != me]
@@ -188,7 +190,8 @@ def main(argv=None, gh=None):
     p.add_argument('--title'); p.add_argument('--body-file'); p.add_argument('--label')
     c = subs.add_parser('claim')
     c.add_argument('--repo', required=True); c.add_argument('number', type=int)
-    c.add_argument('--branch', required=True); c.add_argument('--session', required=True)
+    c.add_argument('--branch', required=True)
+    c.add_argument('--session', help='default: the desktop session id, else the CLI session id')
     c.add_argument('--approved', action='store_true', help="the user OK'd claiming an issue someone else filed")
     t = subs.add_parser('tick', help="tick a ticket's acceptance criteria after its merge")
     t.add_argument('--repo', required=True); t.add_argument('number', type=int)
