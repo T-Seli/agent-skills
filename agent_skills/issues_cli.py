@@ -48,34 +48,29 @@ class DryRun:
 
 
 def parse_tickets(text):
-    """Ticket items in order: number, title, after, issue, why, criteria and the item line's index."""
-    tickets, t = [], None
-    for i, line in enumerate(text.split('\n')):
-        m = ITEM.match(line)
+    """Ticket items in order: number, after, issue and the item line's index."""
+    return [{'n': int(m[1]), 'line': i, 'issue': next((int(x) for x in re.findall(r' · issue #(\d+)', m[3])), None),
+             'after': [int(k) for seg in m[3].split(' · ') if seg.startswith('after ') for k in re.findall(r'#(\d+)', seg)]}
+            for i, line in enumerate(text.split('\n')) if (m := ITEM.match(line))]
+
+
+def parse_issue_text(text):
+    """The session's plain-language issue text per ticket (`issue-text.md`): {n: (title, what to build, criteria)}."""
+    out = {}
+    for sec in re.split(r'^(?=## \d+\. )', text, flags=re.M):
+        m = re.match(r'## (\d+)\. (.+)\n', sec)
         if m:
-            t = {'n': int(m[1]), 'title': m[2], 'line': i, 'criteria': [], 'why': '',
-                 'after': [int(k) for seg in m[3].split(' · ') if seg.startswith('after ')
-                           for k in re.findall(r'#(\d+)', seg)],
-                 'issue': next((int(x) for x in re.findall(r' · issue #(\d+)', m[3])), None)}
-            tickets.append(t)
-        elif t and line.startswith('  '):
-            s = line.strip()
-            if s.startswith('- Why: '):
-                t['why'] = s[7:]
-            elif s.startswith('- Done when:') and s[12:].strip():
-                t['criteria'].append(s[12:].strip())
-            elif BOX.match(line) and line.startswith('    '):
-                t['criteria'].append(BOX.match(line)[2])
-        elif line.strip():
-            t = None  # a header or a non-ticket line ends the item
-    return tickets
+            lines = sec[m.end():].strip().split('\n')
+            criteria = [b[2] for line in lines if (b := BOX.match(line))]
+            what = '\n'.join(line for line in lines if not BOX.match(line)).strip()
+            out[int(m[1])] = (m[2].strip(), what, criteria)
+    return out
 
 
-def ticket_body(t, parent, blockers):
-    parts = [f'## Parent\n\n#{parent}', f"## What to build\n\n{t['title']}"]
-    parts += [t['why']] if t['why'] else []  # no Where line: issues carry no file paths (issues.md § Format)
-    parts.append('## Acceptance criteria\n\n' + '\n'.join(f'- [ ] {c}' for c in t['criteria']))
-    parts.append('## Blocked by\n\n' + ('\n'.join(f'- #{b}' for b in blockers) or 'None: can start now.'))
+def ticket_body(what, criteria, parent, blockers):
+    parts = [f'## Parent\n\n#{parent}', f'## What to build\n\n{what}',
+             '## Acceptance criteria\n\n' + '\n'.join(f'- [ ] {c}' for c in criteria),
+             '## Blocked by\n\n' + ('\n'.join(f'- #{b}' for b in blockers) or 'None: can start now.')]
     return '\n\n'.join(parts) + '\n'
 
 
@@ -98,17 +93,19 @@ def link(gh, repo, n, path, field, targets):
 
 
 def publish(gh, repo, folder, title, body_file, label, dry_run):
-    plan_path, items_path = folder / 'plan.md', folder / 'action-items.md'
+    plan_path, items_path, text_path = folder / 'plan.md', folder / 'action-items.md', folder / 'issue-text.md'
     plan = plan_path.read_text()
     items = items_path.read_text() if items_path.exists() else ''
     tickets = parse_tickets(items) if re.search(r'^Tickets: \d+', items, re.M) else []
+    text = parse_issue_text(text_path.read_text()) if text_path.exists() else {}
     known = {t['n'] for t in tickets}
     for t in tickets:
         missing = [k for k in t['after'] if k not in known]
         if missing:
             raise Refused(f"ticket {t['n']} is after unknown ticket(s) {missing}")
-        if not t['criteria'] and not t['issue']:
-            raise Refused(f"ticket {t['n']} has no acceptance criteria")
+        if not t['issue'] and not (t['n'] in text and all(text[t['n']])):
+            raise Refused(f"ticket {t['n']} needs a '## {t['n']}. <title>' section in issue-text.md "
+                          'with a plain what-to-build paragraph and - [ ] criteria')
     m = PLAN_ISSUE.search(plan)
     if m and m[1] != repo:
         raise Refused(f'plan.md is tracked in {m[1]}, not {repo}')
@@ -128,7 +125,8 @@ def publish(gh, repo, folder, title, body_file, label, dry_run):
         n = t['issue']
         if not n:
             # Record the number before linking, so a rerun after a failed link adds the link instead of a duplicate.
-            n = numbers[t['n']] = create(gh, repo, t['title'], ticket_body(t, parent, blockers))
+            title, what, criteria = text[t['n']]
+            n = numbers[t['n']] = create(gh, repo, title, ticket_body(what, criteria, parent, blockers))
             lines[t['line']] += f' · issue #{n}'
             dry_run or items_path.write_text('\n'.join(lines))
         link(gh, repo, n, 'dependencies/blocked_by', 'issue_id', blockers)

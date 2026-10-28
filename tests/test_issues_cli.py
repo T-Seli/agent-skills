@@ -32,6 +32,24 @@ Tickets: 3
 **Decisions / blockers**
 - [ ] Decide 1: colour (default: grey)
 """
+TEXT = """# Issue text
+
+## 1. Keep saved widgets
+Widgets people save are kept, so they are still there next time.
+
+- [ ] A saved widget is still there after a reload.
+
+## 2. Show saved widgets
+People see the widgets they saved.
+
+- [ ] The list shows a saved widget.
+- [ ] An empty list says there are none yet.
+
+## 3. Count saved widgets
+A badge shows how many widgets are saved.
+
+- [ ] The badge matches the list.
+"""
 
 
 class FakeGh:
@@ -66,11 +84,13 @@ class FakeGh:
         return [(a, s) for a, s in self.calls if issues_cli.is_write(a)]
 
 
-def draft(plan=PLAN, items=ITEMS):
+def draft(plan=PLAN, items=ITEMS, text=TEXT):
     d = Path(tempfile.mkdtemp())
     (d / 'plan.md').write_text(plan)
     if items is not None:
         (d / 'action-items.md').write_text(items)
+    if text is not None:
+        (d / 'issue-text.md').write_text(text)
     return d
 
 
@@ -96,15 +116,17 @@ class Publish(unittest.TestCase):
         creates = [(a, s) for a, s in gh.writes() if a[:2] == ['issue', 'create']]
         self.assertEqual(len(creates), 4)
         self.assertIn('--label', creates[0][0])
-        self.assertEqual(creates[0][0][creates[0][0].index('--title') + 1], 'Spec: widgets')
+        self.assertEqual([a[a.index('--title') + 1] for a, _ in creates],
+                         ['Spec: widgets', 'Keep saved widgets', 'Show saved widgets', 'Count saved widgets'])
         t2 = creates[2][1]
-        for part in ('## Parent\n\n#100', '## What to build\n\nShow widgets',
-                     '## Acceptance criteria\n\n- [ ] the list shows a saved widget\n- [ ] an empty list says so',
+        for part in ('## Parent\n\n#100', '## What to build\n\nPeople see the widgets they saved.',
+                     '## Acceptance criteria\n\n- [ ] The list shows a saved widget.\n- [ ] An empty list says there are none yet.',
                      '## Blocked by\n\n- #101'):
             self.assertIn(part, t2)
-        self.assertNotIn('server/widgets.js', creates[1][1])  # issues carry no file paths (issues.md § Format)
-        self.assertIn('nothing keeps them today.', creates[1][1])
-        self.assertIn('- [ ] the badge shows the count', creates[3][1])
+        for body in [s for _, s in creates[1:]]:  # the session's text only, never the worker ticket (issues.md § Format)
+            self.assertNotIn('server/widgets.js', body)
+            self.assertNotIn('nothing keeps them today', body)
+        self.assertIn('- [ ] The badge matches the list.', creates[3][1])
         self.assertIn('None: can start now.', creates[1][1])
         posts = [a for a, _ in gh.writes() if a[0] == 'api']
         subs = [a for a in posts if a[3].endswith('/sub_issues')]
@@ -129,12 +151,14 @@ class Publish(unittest.TestCase):
 
     def test_partly_published_reuses_existing_issue_numbers(self):
         items = ITEMS.replace('**1. Store widgets** · M', '**1. Store widgets** · M · issue #50')
-        d, gh = draft(plan=f'# Plan: add widgets\nIssue: {REPO}#40\n', items=items), FakeGh()
+        d, gh = draft(plan=f'# Plan: add widgets\nIssue: {REPO}#40\n', items=items,
+                      text=TEXT.replace('## 1.', '## 9.')), FakeGh()  # a published ticket needs no issue text
         code, _, _ = run(gh, 'publish', '--repo', REPO, str(d))
         self.assertEqual(code, 0)
         creates = [s for a, s in gh.writes() if a[:2] == ['issue', 'create']]
         self.assertEqual(len(creates), 2)
         self.assertIn('## Parent\n\n#40', creates[0])
+        self.assertIn('## What to build\n\nPeople see the widgets they saved.', creates[0])
         self.assertIn('## Blocked by\n\n- #50', creates[0])
         self.assertIn((f'repos/{REPO}/issues/100/dependencies/blocked_by', 'issue_id=50000'),
                       [(a[3], a[-1]) for a, _ in gh.writes() if a[0] == 'api'])
@@ -150,7 +174,7 @@ class Publish(unittest.TestCase):
         code, _, _ = run(gh, 'publish', '--repo', REPO, str(d))
         self.assertEqual(code, 0)
         rerun_creates = [a[a.index('--title') + 1] for a, _ in gh.calls[before:] if a[:2] == ['issue', 'create']]
-        self.assertEqual(rerun_creates, ['Count widgets'])  # only the ticket never reached; #101 and #102 not repeated
+        self.assertEqual(rerun_creates, ['Count saved widgets'])  # only the ticket never reached; #101 and #102 not repeated
         self.assertEqual(sorted(gh.links[f'repos/{REPO}/issues/100/sub_issues']), [101, 102, 103])
         self.assertEqual(gh.links[f'repos/{REPO}/issues/102/dependencies/blocked_by'], [101])
         self.assertEqual(sorted(gh.links[f'repos/{REPO}/issues/103/dependencies/blocked_by']), [101, 102])
@@ -166,6 +190,9 @@ class Publish(unittest.TestCase):
             (draft(items=ITEMS.replace('after #1, #2', 'after #9')), ('--title', 'T', '--body-file', spec_body())),
             (draft(), ()),  # no spec issue yet and no title/body to create it
             (draft(plan=f'# Plan\nIssue: other/repo#4\n'), ()),
+            (draft(text=None), ('--title', 'T', '--body-file', spec_body())),  # tickets need the session's issue text
+            (draft(text=TEXT.split('## 3.')[0]), ('--title', 'T', '--body-file', spec_body())),
+            (draft(text=TEXT.replace('- [ ] The badge matches the list.', '')), ('--title', 'T', '--body-file', spec_body())),
         ]
         for d, extra in cases:
             gh = FakeGh()
