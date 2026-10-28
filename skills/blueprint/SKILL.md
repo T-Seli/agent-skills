@@ -27,7 +27,7 @@ For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-cont
 3. **Reply** (Answer report). The fix is S (one obvious change the evidence pins) → end with the `Fix:` line; implement it now if a go-ahead was already given (contracts.md § Consent), else stop for "fix it". The fix isn't S → end with `Fix: needs a plan` and switch to Plan mode, reusing these facts: the scout fills only what is missing.
 
 ## Plan mode
-1. **State the question** in one sentence. A reported cause is a hypothesis, not a fact. For material ambiguity use `${CLAUDE_SKILL_DIR}/../workflow-contracts/decisions.md`: research facts first, ask prerequisite-ready choices in the owning worker, and preserve settled decisions. Clear authorized work needs no extra interview.
+1. **State the question** in one sentence. A reported cause is a hypothesis, not a fact. For material ambiguity use `${CLAUDE_SKILL_DIR}/../workflow-contracts/decisions.md`: research facts first, ask prerequisite-ready choices in the owning worker, and preserve settled decisions. Clear authorized work needs no extra interview, except a big implementation (contracts.md § Chain): it runs `/grill-me` first unless one already settled its design, and the settled answers are the chosen approach, so no architects. Found to be L only from the scout's facts: stop and grill before any architect runs.
 2. **Classify**: bug · feature · architecture · list (feedback lists use `list`). Pick a `<slug>` and `<type>`.
 3. **Scout.** One `scout` sub-agent gathers the facts every architect needs, so no architect re-surveys the repo. Ask for, with `path:line` and proven/inferred marks:
    - where the behavior lives; its callers and callees; who owns its data and config (§ Map, § Tenancy);
@@ -73,7 +73,7 @@ For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-cont
    ## Adoption · ## System fit · ## Risks · ## Out of scope
    ## Rejected         one line each: angle — why
    ## Open decisions   question + your default
-   ## Verify           Behavior boundary: <where the outcome is observed> · 1. <step> — Done when: <observable check>
+   ## Verify           Seams (big implementation): <public interfaces tests drive, highest existing first; each: what it catches, what it misses; prior-art test> · Behavior boundary: <where the outcome is observed> · 1. <step> — Done when: <observable check>
    ## Revisions        <UTC> — what changed and why
    ```
 7. **Reply** (Plan report), then start action-items per contracts.md § Chain.
@@ -91,7 +91,7 @@ Fix: <one line> — say "fix it"      (or "Fix: needs a plan"; no fix needed →
 Working from: <input>
 Recommend: <approach> — <why it won>      (≤2 lines)
 Rejected: <angle> — <why>; <angle> — <why>
-Verify: <the 1–3 checks that prove it works>
+Verify: <the 1–3 checks that prove it works> · Seams: <seams to confirm>
 Size: <S/M/L> · Draft: <path to plan.md>
 Decide: 1. <question>? Default: <default>   (one line each, or "none")
 Next: action-items follows within existing scope; build only dependency-ready items with scoped authority. Resolve material open choices without treating defaults as accepted.

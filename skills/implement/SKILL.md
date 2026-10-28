@@ -20,6 +20,8 @@ Consent is scoped user authority per contracts.md § Consent. Use `${CLAUDE_SKIL
 
 **Item kinds:** code | prompt | config, from the paths in the item's `Where`. A prompt item (a prompt, knowledge base or agent config) records a before/after diff of the changed text under What changed in its log entry, and runs § Run & test `Prompt checks` in **Loop** step 2: in addition to `Fast tests` when it also touches code, instead of them otherwise.
 
+**Spec mode**: the action items carry `Tickets: <n>` → follow `${CLAUDE_SKILL_DIR}/references/spec-mode.md`: one worker per ticket in its own worktree off an integration branch, a merger, two-axis review and one fixer, in place of **Loop**.
+
 **Clean check** (trunk): `git -C "$MAIN" status --porcelain` shows no changes outside the current item's paths and pending `log.md` changes. Else stop and name the other paths.
 
 **Resume**: bind the latest authenticated task, decision/source revision and open items before choosing a draft. Complete applicable **Deployment readiness**, inspect the owned workspace and preserve dirty files. Do not automatically rebase, reset or switch branches. Branch: enter the verified existing owned worktree by its path; verify its branch/source before editing. Trunk: reacquire the owned LOCK and run Clean check. Reuse baseline evidence only when source and environment match, otherwise run affected checks. Do not rerun Sync on resume; continue Loop from the first ready authorized item.
@@ -40,7 +42,7 @@ Consent is scoped user authority per contracts.md § Consent. Use `${CLAUDE_SKIL
    - Run the full test suite once. Its failing test ids are the baseline.
 4. **Start record.** Reuse the bound existing task record. Append source identity, authorized scope, baseline results and collision decisions. Copy or commit only explicitly scoped task files when the workflow authorizes it; preserve drafts and unrelated content, with no automatic deletion.
 5. **Loop**, one action item at a time, in the order given:
-   1. Verify the item's prerequisites and `needs D<id>` decisions are settled at the current revision; hold only dependent items and never take an unanswered default. Make the change. Touch only what the item needs. A bug's reproduction test and its fix go in the same commit.
+   1. Verify the item's prerequisites and `needs D<id>` decisions are settled at the current revision; hold only dependent items and never take an unanswered default. Make the change; build a code item test-first per `/tdd`. Touch only what the item needs. A bug's reproduction test and its fix go in the same commit.
    2. Run § Run & test `Fast tests` (not defined: the full suite), or `Prompt checks` per **Item kinds**. A failure not in the baseline set blocks the commit. Blocked after `Attempts before blocked` tries: preserve the failed candidate and diagnostics, log it under Not done, and stop edits/tests in that shared worktree so failures cannot contaminate later items. Continue only independent read-only work or an already-authorized isolated workspace with a clean bound baseline. Cleanup or restoration requires its own scope; never delete files automatically.
    3. Trunk: run the **Clean check**. Stage only this item's paths plus pending `log.md` changes (`git add <paths>`, never `-A`). If commits are authorized, commit per § Map's convention (default `<type>(<scope>): <item in plain words>`); trunk commits on `<base>`.
    4. Append a log entry `implement: <item>` with the commit's short sha. It rides in the next commit.

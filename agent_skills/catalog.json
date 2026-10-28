@@ -182,6 +182,24 @@
         "skills/workflow-contracts/behavior.md",
         "skills/workflow-contracts/decisions.md"
       ]
+    },
+    {
+      "id": "company.tdd",
+      "layer": "company",
+      "summary": "Build a ticket test-first, red then green per slice, at agreed seams.",
+      "phrases": [
+        "test first",
+        "red green",
+        "tdd ticket"
+      ],
+      "roles": [
+        "worker"
+      ],
+      "body": "skills/tdd/SKILL.md",
+      "requires": [
+        "skills/workflow-contracts/contracts.md",
+        "skills/workflow-contracts/behavior.md"
+      ]
     }
   ]
 }

@@ -124,7 +124,7 @@ class V0Tests(unittest.TestCase):
                          "skills/approval-handoff/SKILL.md", "skills/system-audit/SKILL.md",
                          "skills/system-audit/references/reviewers.md",
                          "skills/blueprint/SKILL.md", "skills/handoff/SKILL.md",
-                         "skills/task-history/SKILL.md"):
+                         "skills/task-history/SKILL.md", "skills/tdd/SKILL.md"):
                 (root / path).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / path, root / path)
             catalog = Catalog(root)
@@ -215,7 +215,7 @@ class V0Tests(unittest.TestCase):
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
         result = subprocess.run(["python3", "-m", "agent_skills", "evaluate"], cwd=ROOT, env=env,
                                 capture_output=True, text=True, check=True)
-        self.assertEqual(json.loads(result.stdout)["passed"], 4)
+        self.assertEqual(json.loads(result.stdout)["passed"], 5)
         result = subprocess.run(["python3", "-m", "agent_skills", "handoff", "company.handoff",
                                  "--role", "worker", "--to", "dot", "--work-item", "local-1",
                                  "--next-step", "Review the result", "--evidence", "tests/test_v0.py"],

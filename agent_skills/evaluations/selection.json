@@ -4,6 +4,7 @@
     {"name": "worker review", "task": "review change before release", "role": "worker", "expected": "company.test-review"},
     {"name": "orchestrate", "task": "coordinate task dependencies", "role": "dot", "expected": "company.agent-coordination"},
     {"name": "handoff", "task": "handoff task with evidence", "role": "worker", "expected": "company.handoff"},
-    {"name": "meta improvement", "task": "improve skill after feedback", "role": "dot", "expected": "meta.skill-steward"}
+    {"name": "meta improvement", "task": "improve skill after feedback", "role": "dot", "expected": "meta.skill-steward"},
+    {"name": "test-first ticket", "task": "build ticket test first red green", "role": "worker", "expected": "company.tdd"}
   ]
 }

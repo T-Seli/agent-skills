@@ -15,7 +15,7 @@ Reconcile the current request and settled decisions. Resolve available facts you
 
 Keep technical decisions in the owning worker; route broad priority and scope choices to the parent. Provide a verified session route when the user wants to answer there; never invent one or create another owner. Respect a preference to answer on the current surface.
 
-Finish an explicit interview with a concise understanding check, open/deferred decisions and the acceptance criteria. Understanding confirmation is not execution approval. Continue only actions already authorized for their exact scope; do not automatically commit, publish, install, deploy, send, clean up or start another workflow.
+Finish an explicit interview with a concise understanding check, open/deferred decisions and the acceptance criteria; for a big implementation (contracts.md § Chain) also the test seams to confirm, so blueprint writes the spec without re-interviewing. Understanding confirmation is not execution approval. Continue only actions already authorized for their exact scope; do not automatically commit, publish, install, deploy, send, clean up or start another workflow.
 
 ## Report (≤6 lines)
 Report the settled scope, the next ready question IDs or confirmed understanding, and the current owner/next action. Do not repeat questions already answered unless a named changed assumption invalidates them.

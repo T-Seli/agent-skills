@@ -19,7 +19,12 @@ Turn the source into items the user can approve and tick off, and that `/impleme
 3. Order by dependency, then value. Per `${CLAUDE_SKILL_DIR}/../workflow-contracts/decisions.md`, use meaningful behavior slices carrying the decision/spec revision, owner and prerequisite IDs; unresolved decisions block only dependent slices.
 4. Code items keep the paths from the source; `/implement` needs them. Tag an item `parallel-safe` when no other open item touches its files. A bug's reproduction test and its fix are one item. For a wide mechanical migration, consider expand, migrate in bounded batches, then contract; preserve compatibility and dependency checks at each boundary.
 5. Every item and step gets a `Done when` that a person or a test can check. "It works" is not a check.
-6. For behavior changes, carry the current approved matrix/source identity per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`; retain existing capabilities, producer paths, exceptions and per-task approval boundaries. Split implementation, deployment, observed behavior and promised manual follow-through into their relevant completion checks. Keep unsent replies, holds and deferrals open with their owner and next action.
+6. **Tickets** (a big implementation, contracts.md § Chain): add `Tickets: <n>` to the page header, and every item is a ticket:
+   - A tracer bullet: a narrow but complete path through every layer it touches (data, logic, interface, tests), demoable or testable on its own. Never one horizontal layer ("all migrations", "all tests").
+   - Sized for one fresh worker context: the plan, the ticket and the files in `Where` are all it needs to read. No L tickets: split them. Prefactoring ("make the change easy") is its own first ticket; its acceptance is the existing tests staying green.
+   - `after #k` lists only the tickets that truly block it; number tickets blockers first. `parallel-safe` is dropped: each ticket gets its own worktree.
+   - `Done when` becomes acceptance checkboxes, one per behavior, each observable at a seam named in the plan's `## Verify`.
+7. For behavior changes, carry the current approved matrix/source identity per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`; retain existing capabilities, producer paths, exceptions and per-task approval boundaries. Split implementation, deployment, observed behavior and promised manual follow-through into their relevant completion checks. Keep unsent replies, holds and deferrals open with their owner and next action.
 
 ## Item format
 ```
@@ -51,7 +56,7 @@ Revision: <plan/source revision> · settled <decision IDs> · open <decision IDs
 
 ## Report
 Source is a plan: write the list to `action-items.md` next to `plan.md` (overwrite your own earlier version, keeping its numbers). Otherwise: chat only. Then one of two outputs:
-- **After blueprint** (started per contracts.md § Chain): print only the summary line without its suffix, then the numbered decisions (`<k>. <choice> — default: <x>`), then name open `D<id>` choices and held items. Say `building now` only for ready items already authorized; otherwise ask approval for the specifically ready scope. Never treat a default as an answer. Nothing else; the list stays in the file.
+- **After blueprint** (started per contracts.md § Chain): print only the summary line without its suffix, then the numbered decisions (`<k>. <choice> — default: <x>`; tickets add `Breakdown: <n> tickets, frontier #<ids>: are the blocking edges right, and should any be merged or split? — default: as written`), then name open `D<id>` choices and held items. Say `building now` only for ready items already authorized; otherwise ask approval for the specifically ready scope. Never treat a default as an answer. Nothing else; the list stays in the file.
 - **Standalone** (a pasted list, a file, or "action items"): the page, then the summary line last, within the action-items cap in contracts.md § Report. Over it → drop `Why` lines, then collapse S items to their title line.
 
 Summary line: `<n> items (<x> S, <y> M, <z> L) · <path written | chat only>`, plus ` · building now` or ` · say "approved" to build` when the source is a plan.

@@ -103,6 +103,7 @@ prime-context → blueprint → action-items → [user approves] → implement �
                    ↑                                                                             │
                    └──────────── findings become a new draft (-r2) with action items ────────────┘
 ```
+A big implementation (contracts.md § Chain) runs grill-me first, writes action items as tickets, and implements in spec mode: one worker per ticket off an integration branch, a merger, a two-axis review and one fixer, then test-review as usual.
 Each skill starts from the user's plain words and starts the next one itself; the routing and the chain live in `skills/workflow-contracts/contracts.md` § Chain. Outward actions (push, merge, deploy) need the user's go-ahead as defined in § Consent; one plain request can cover the whole chain, and without it the agent asks once. No tracked file in a repo changes before `/implement` runs on an approved plan or fix. `/handoff` moves in-flight work to a fresh session at any point. The plan skill is named `blueprint` so it doesn't collide with Claude Code's built-in plan mode.
 
 ## Components
@@ -126,7 +127,8 @@ Each skill starts from the user's plain words and starts the next one itself; th
 | `skills/grill-me` | Dependency-ordered technical decision interview in the owning session | Description always; shared decision contract on invoke |
 | `skills/blueprint` | Angles, rubric scoring, proposal format, bug-evidence mode | Description always; body on invoke; `references/` read by the scout for bugs |
 | `skills/action-items` | Action-item format | Description always; body on invoke |
-| `skills/implement` | One-line plans, sync, locked worktree, collision check, env setup, per-item commits, resume | Description always; body on invoke |
+| `skills/implement` | One-line plans, sync, locked worktree, collision check, env setup, per-item commits, resume; spec mode (one worker per ticket, merger, two-axis review, one fixer) in `references/` | Description always; body on invoke |
+| `skills/tdd` | Red → green per vertical slice at the plan's agreed seams; good-test rules and anti-patterns | Description always; body on invoke |
 | `skills/test-review` | Ready-to-deploy YES/NO: tests vs base first, fix proof, per-commit blocker check; `tests` and PR modes | Description always; body on invoke |
 | `skills/deploy` | Lock, review gate, push, staged targets, 3-way sync, record commit, cleanup, rechecks; PR, local, release and rollback modes in `references/modes.md` | Description always; body on invoke; outward steps need § Consent |
 | `skills/monitor` | Recheck against live traffic, alert, keep or disable the schedule, `-r2` follow-ups | Description always; body on invoke |
