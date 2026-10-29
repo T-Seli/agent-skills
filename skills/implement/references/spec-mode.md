@@ -24,7 +24,7 @@ Read by `/implement` when the action items are tickets (`Tickets: <n>` in the pa
 
 ## Merge
 - On each `ready` receipt, check every acceptance criterion has a named test that went red then green (a prefactor ticket: the existing tests covering the moved code stay green). Then the **merger** (task id `<slug>-merger`, started on the first merge and resumed with `start --resume` after; it is the only worker in the integration worktree, so merges run one at a time) runs `git merge --no-ff <type>/<slug>-t<N>` and `Fast tests`, compares with the baseline and returns within the receipt cap. The orchestrator then removes the merged ticket worktree without `--force` and deletes its branch with `git branch -d`. A non-trivial conflict or a new failure: it aborts the merge and reports; the ticket goes back to its worker (`start --resume --task-id <slug>-t<N>`).
-- Merged: tick it, log it (tracked per `${CLAUDE_SKILL_DIR}/../workflow-contracts/issues.md`: `ICLI tick` its issue, push the integration branch; the first push opens the draft PR), recompute the frontier and dispatch newly ready tickets at once. A blocked ticket holds only its dependents.
+- Merged: tick it, log it (tracked per `${CLAUDE_SKILL_DIR}/../workflow-contracts/issues.md`: `ICLI tick` its issue; branch flow: push the integration branch, the first push opening the draft PR), recompute the frontier and dispatch newly ready tickets at once. A blocked ticket holds only its dependents.
 
 ## Review, fix, finish
 1. All tickets merged: review per `references/review-axes.md` on the integration branch.

@@ -13,7 +13,7 @@ class OneHome(unittest.TestCase):
         rules = text(ISSUES)
         for rule in ('§ Map `Issues`', 'ends in a PR', 'sub-issue', 'blocked-by', '## Parent', '## What to build',
                      '## Acceptance criteria', 'ready-for-agent', 'issues-cli', 'claim', '--approved',
-                     'working copy', 'issue-text.md', 'Closes #', 'draft PR', 'gh pr ready', 'never touch', 'Approved:'):
+                     'working copy', 'issue-text.md', 'Trunk flow', 'ICLI close', 'Closes #', 'draft PR', 'gh pr ready', 'never touch', 'Approved:'):
             self.assertIn(rule, rules)
 
     def test_contracts_template_and_global_point_to_it(self):
@@ -35,7 +35,7 @@ class StagesUseIt(unittest.TestCase):
             'skills/implement/SKILL.md': ('issues.md', 'ICLI publish', 'ICLI claim', 'Closes'),
             'skills/implement/references/spec-mode.md': ('issues.md', 'ICLI tick'),
             'skills/test-review/SKILL.md': ('gh pr ready',),
-            'skills/deploy/SKILL.md': ('issues.md', 'closed'),
+            'skills/deploy/SKILL.md': ('issues.md', 'closed', 'ICLI close'),
             'skills/agent-coordination/references/worker-execution.md': ('`Issue: #<n>`', 'never touch'),
         }
         for path, needles in hooks.items():

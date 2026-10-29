@@ -299,6 +299,39 @@ class Tick(unittest.TestCase):
         self.assertEqual(gh.writes(), [])
 
 
+class Close(unittest.TestCase):
+    """Trunk flow has no PR to close issues: after the deploy record, the session closes the task's own issues."""
+    def published(self):
+        d = draft()
+        run(FakeGh(), 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        return d  # spec #100, tickets #101-#103
+
+    def test_closes_every_open_task_issue_with_the_deployed_sha(self):
+        states = {100: 'OPEN', 101: 'CLOSED', 102: 'OPEN', 103: 'OPEN'}
+        gh = FakeGh(issues={n: {'state': st} for n, st in states.items()})
+        code, out, _ = run(gh, 'close', '--repo', REPO, str(self.published()), '--sha', 'abc1234')
+        self.assertEqual(code, 0)
+        closed = [(a[2], a[a.index('--comment') + 1]) for a, _ in gh.writes()]
+        self.assertEqual(closed, [('102', 'Deployed in abc1234.'), ('103', 'Deployed in abc1234.'),
+                                  ('100', 'Deployed in abc1234.')])  # tickets first, the spec last
+        self.assertTrue(all(a[:2] == ['issue', 'close'] for a, _ in gh.writes()))
+
+    def test_refuses_an_untracked_or_foreign_plan_before_any_write(self):
+        for d in (draft(), draft(plan='# Plan\nIssue: other/repo#4\n')):
+            gh = FakeGh()
+            code, _, err = run(gh, 'close', '--repo', REPO, str(d), '--sha', 'abc1234')
+            self.assertNotEqual(code, 0)
+            self.assertTrue(err.strip())
+            self.assertEqual(gh.writes(), [])
+
+    def test_dry_run_prints_the_closes(self):
+        gh = FakeGh(issues={n: {'state': 'OPEN'} for n in (100, 101, 102, 103)})
+        code, out, _ = run(gh, '--dry-run', 'close', '--repo', REPO, str(self.published()), '--sha', 'abc1234')
+        self.assertEqual(code, 0)
+        self.assertEqual(gh.writes(), [])
+        self.assertEqual(out.count('gh issue close'), 4)
+
+
 class Closes(unittest.TestCase):
     def test_lists_the_spec_and_every_ticket(self):
         d = draft()

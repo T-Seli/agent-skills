@@ -22,7 +22,7 @@ class Refused(Exception):
 
 
 def is_write(args):
-    return args[:2] in (['issue', 'create'], ['issue', 'edit'], ['issue', 'comment']) or (args[0] == 'api' and '-X' in args)
+    return args[:2] in (['issue', 'create'], ['issue', 'edit'], ['issue', 'comment'], ['issue', 'close']) or (args[0] == 'api' and '-X' in args)
 
 
 def real_gh(args, stdin=None):
@@ -170,13 +170,30 @@ def tick(gh, repo, n):
     print(f'#{n} acceptance criteria ticked')
 
 
-def closes(folder):
+def task_issues(folder):
+    """The plan's repo and issue, then each published ticket's issue."""
     m = PLAN_ISSUE.search((folder / 'plan.md').read_text())
     if not m:
         raise Refused('plan.md has no Issue: line')
     items = folder / 'action-items.md'
     tickets = parse_tickets(items.read_text()) if items.exists() else []
-    print('\n'.join(f'Closes #{n}' for n in [int(m[2])] + [t['issue'] for t in tickets if t['issue']]))
+    return m[1], int(m[2]), [t['issue'] for t in tickets if t['issue']]
+
+
+def closes(folder):
+    _, parent, tickets = task_issues(folder)
+    print('\n'.join(f'Closes #{n}' for n in [parent] + tickets))
+
+
+def close(gh, repo, folder, sha):
+    """Trunk flow: no PR closes the issues, so after the deploy record close each one still open, the spec last."""
+    tracked, parent, tickets = task_issues(folder)
+    if tracked != repo:
+        raise Refused(f'plan.md is tracked in {tracked}, not {repo}')
+    for n in tickets + [parent]:
+        if view(gh, repo, n, 'state')['state'] == 'OPEN':
+            gh(['issue', 'close', str(n), '-R', repo, '--comment', f'Deployed in {sha}.'])
+            print(f'#{n} closed')
 
 
 def main(argv=None, gh=None):
@@ -194,6 +211,8 @@ def main(argv=None, gh=None):
     t = subs.add_parser('tick', help="tick a ticket's acceptance criteria after its merge")
     t.add_argument('--repo', required=True); t.add_argument('number', type=int)
     subs.add_parser('closes', help="print the PR body's Closes lines").add_argument('draft')
+    x = subs.add_parser('close', help="trunk flow: close the task's open issues after the deploy record")
+    x.add_argument('--repo', required=True); x.add_argument('draft'); x.add_argument('--sha', required=True)
     args = parser.parse_args(argv)
     gh = gh or real_gh
     if args.dry_run:
@@ -205,6 +224,8 @@ def main(argv=None, gh=None):
             claim(gh, args.repo, args.number, args.branch, args.session, args.approved)
         elif args.action == 'tick':
             tick(gh, args.repo, args.number)
+        elif args.action == 'close':
+            close(gh, args.repo, Path(args.draft), args.sha)
         else:
             closes(Path(args.draft))
     except (Refused, subprocess.CalledProcessError) as e:
