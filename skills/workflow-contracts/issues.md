@@ -1,9 +1,9 @@
 # Issues: tracked tasks
 
-The one home for issue tracking. Skills cite it; they never restate it. Implement publishes every PR-bound task in a repo the project CLAUDE.md § Map `Issues` names (`<owner/repo>`, more than one allowed). Any task whose `plan.md` records `Issue: <owner/repo>#<n>` (written by the helper, or from an issue input) is tracked, and the steps below apply to it. Neither: no issue steps, said once in the report. It needs the `gh` CLI signed in. Every call below goes through the release-bound helper, spelled exactly `~/.agents/skills/workflow-contracts/scripts/issues-cli` and unquoted (`ICLI` below), so one permission rule can allow it; `--dry-run` prints each write instead of making it.
+The one home for issue tracking. Skills cite it; they never restate it. Implement publishes every task that lands a code change in a repo the project CLAUDE.md § Map `Issues` names (`<owner/repo>`, more than one allowed). Any task whose `plan.md` records `Issue: <owner/repo>#<n>` (written by the helper, or from an issue input) is tracked, and the steps below apply to it. Neither: no issue steps, said once in the report. It needs the `gh` CLI signed in. Every call below goes through the release-bound helper, spelled exactly `~/.agents/skills/workflow-contracts/scripts/issues-cli` and unquoted (`ICLI` below), so one permission rule can allow it; `--dry-run` prints each write instead of making it.
 
 ## Which work
-- Anything that ends in a PR gets one issue when its plan or one-line plan is approved. A question, investigation or blueprint Answer that changes no code gets none.
+- Anything that lands a code change gets one issue when its plan or one-line plan is approved. A question, investigation or blueprint Answer that changes no code gets none.
 - Branch flow lands a tracked task through one PR whose `Closes` lines close its issues. Trunk flow has no PR: nothing closes them automatically, so `/deploy` closes them by hand after its record (**Close**).
 - A big implementation (contracts.md § Chain) gets a spec issue plus one sub-issue per ticket, with blocked-by links for each `after #k`.
 - A task that starts from an issue (`#<n>` or its URL as the input) uses that issue as its spec: blueprint reads it, and the plan's header records `Issue: <owner/repo>#<n>` so nothing new is created for it.

@@ -52,7 +52,7 @@ Every skill reads this file first, then [behavior.md](behavior.md) for Depth, no
 
 ## Git
 - `git fetch` is fine anywhere, given up after about 8s; after a failed fetch, say so and label remote refs as possibly stale.
-- Issues: in a repo § Map `Issues` names, every task that ends in a PR is tracked per [issues.md](issues.md): published at plan approval, claimed, and closed when it lands: by its PR's `Closes` lines in branch flow, by `/deploy` after its record in trunk flow.
+- Issues: in a repo § Map `Issues` names, every task that lands a code change is tracked per [issues.md](issues.md): published at plan approval, claimed, and closed when it lands: by its PR's `Closes` lines in branch flow, by `/deploy` after its record in trunk flow.
 
 ## Task log (`log.md`) — Central history is configured when `python3 "${CLAUDE_SKILL_DIR:-$HOME/.agents/skills/workflow-contracts}/../task-history/history.py" configured` exits 0 (it reads `task_history_repo` in `~/.config/agent-skills/workers.json`; run it before each log entry, never assume; any exit but 0 or 1 is an error to report, not "not configured"); that setting is the standing authorization for sanitized milestone events. Then use `/task-history` at milestones and handoff; keep this receipt, reconcile failed writes, distinguish performed/reported/verified claims, and review improvement proposals. Exit 1: the log entry says `History: not configured`.
 - Append-only. Heading `## <UTC time> — <stage>: <one line>`; `<stage>` = the skill's name. Never edit an earlier entry.

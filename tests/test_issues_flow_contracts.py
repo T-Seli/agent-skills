@@ -11,7 +11,7 @@ ISSUES = 'skills/workflow-contracts/issues.md'
 class OneHome(unittest.TestCase):
     def test_issues_md_holds_the_rules(self):
         rules = text(ISSUES)
-        for rule in ('§ Map `Issues`', 'ends in a PR', 'sub-issue', 'blocked-by', '## Parent', '## What to build',
+        for rule in ('§ Map `Issues`', 'lands a code change', 'sub-issue', 'blocked-by', '## Parent', '## What to build',
                      '## Acceptance criteria', 'ready-for-agent', 'issues-cli', 'claim', '--approved',
                      'working copy', 'issue-text.md', 'Trunk flow', 'ICLI close', 'Closes #', 'draft PR', 'gh pr ready', 'never touch', 'Approved:'):
             self.assertIn(rule, rules)
