@@ -21,7 +21,7 @@
 - Install: `<command>`
 - Run locally: `<command>`
 - Tests: full `<command>` (~<duration>) · one test `<command>` · list failing ids `<command>`
-- Prompt checks: <how to prove a prompt or agent-config change: a replay of past conversations, an eval command, or fixtures> | none
+- Prompt checks: <how to prove a prompt or agent-config change: a replay of past conversations, an eval command, or fixtures; where each agent's size budget and agnostic check live> | none
 - Fast tests: `<command>` (the per-change check; the full suite runs at start and end) | none
 - Tests live in: `<path>` (tracked by git: yes | no)
 - Lint / typecheck: `<command>`

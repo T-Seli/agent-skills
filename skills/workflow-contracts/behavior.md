@@ -27,6 +27,15 @@ Bind the matrix to its exact artifact revision/digest, repository commit or dirt
 
 A decision brief states the issue, a concrete example, the actual prompt/KB/backend change (or unchanged component), regression risk, and the exact decision/action/target being requested. Cite the matrix/source identity; usable facts stay inline. Do not ask an already resolved decision again.
 
+## Agent prompts
+
+Applies to a change to an agent prompt, knowledge base, tool description or agent config that a project ships.
+- **Budget:** each agent prompt has an approved size budget (§ Run & test `Prompt checks`). State the size before and after; growth needs a reason or an equal cut elsewhere.
+- **Concise:** plain language, each rule once; harden an existing line before adding one; drop conflicting or redundant lines.
+- **Agnostic:** shared prompt text and tool descriptions name no tenant, brand, phone number or agent display name; per-install facts arrive only through variables or config.
+- **One home per tool:** a tool's instructions live once, in its description or one shared block every agent reuses. End users never see internal tool names.
+- **Proven:** a change, shorter ones included, ships only when the project's `Prompt checks` pass rate holds against the base.
+
 ## Independent completion conditions
 
 Use existing gates and obligations to track implementation, deployment, observed behavior acceptance and promised manual/customer follow-through separately, when relevant. Each unmet condition has an owner, next action, source and receipt needed to close it. A deployed or verified code artifact cannot close an unsent promised reply. Preserve reply holds and deferred work through the next day and handoff; technical work can finish while the overall request remains open. Sending still needs the task's existing communication authority.

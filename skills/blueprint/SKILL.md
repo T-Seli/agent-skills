@@ -69,7 +69,7 @@ For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-cont
    ## Facts            proven / inferred / unknown, each with path:line or source
    ## Current behavior matrix   identity, existing capability, approved rows, producer paths, exceptions; per behavior.md; include domain terms, decision IDs/sources and observable acceptance per decisions.md
    ## Recommendation   approach, and why it won (a list gets one subsection per cluster)
-   ## Changes          file or module → what changes
+   ## Changes          file or module → what changes; a prompt: size before → after and the agnostic check (behavior.md § Agent prompts)
    ## Adoption · ## System fit · ## Risks · ## Out of scope
    ## Rejected         one line each: angle — why
    ## Open decisions   question + your default

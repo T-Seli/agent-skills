@@ -14,7 +14,7 @@ Tenant = what varies per install. § Tenancy `none` disables tenant rules.
 - Minimum code: nothing speculative, no impossible-state handling; atomic functions; flag files past ~500 lines. Fail loudly; no silent fallbacks.
 - Match surrounding style; explain only non-obvious choices.
 - Scope: every changed line traces to the request; remove only your own orphans; mention unrelated dead code.
-- Prompts (if the project ships them): shared text holds logic, per-install facts come via variables; harden an existing line before adding one; drop conflicting or redundant lines; never show end users internal tool names.
+- Prompts (if the project ships them): budgeted, concise, tenant- and agent-agnostic, each tool's instructions in one place, proven by simulation; rules in `workflow-contracts/behavior.md` § Agent prompts.
 
 ## Safety
 - After interruption or compaction, reread the latest task id, revision, exclusions and next action before acting or answering; completed grants are history.

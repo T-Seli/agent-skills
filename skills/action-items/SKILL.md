@@ -24,7 +24,7 @@ Turn the source into items the user can approve and tick off, and that `/impleme
    - Sized for one fresh worker context: the plan, the ticket and the files in `Where` are all it needs to read. No L tickets: split them. Prefactoring ("make the change easy") is its own first ticket; its acceptance is the existing tests staying green.
    - `after #k` lists only the tickets that truly block it; number tickets blockers first. `parallel-safe` is dropped: each ticket gets its own worktree.
    - `Done when` becomes acceptance checkboxes, one per behavior, each observable at a seam named in the plan's `## Verify`.
-7. For behavior changes, carry the current approved matrix/source identity per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`; retain existing capabilities, producer paths, exceptions and per-task approval boundaries. Split implementation, deployment, observed behavior and promised manual follow-through into their relevant completion checks. Keep unsent replies, holds and deferrals open with their owner and next action.
+7. For behavior changes, carry the current approved matrix/source identity per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`; retain existing capabilities, producer paths, exceptions and per-task approval boundaries. A prompt item's Done when includes behavior.md § Agent prompts (budget, agnostic, `Prompt checks`). Split implementation, deployment, observed behavior and promised manual follow-through into their relevant completion checks. Keep unsent replies, holds and deferrals open with their owner and next action.
 
 ## Item format
 ```
