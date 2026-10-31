@@ -30,11 +30,15 @@ A decision brief states the issue, a concrete example, the actual prompt/KB/back
 ## Agent prompts
 
 Applies to a change to an agent prompt, knowledge base, tool description or agent config that a project ships.
-- **Budget:** each agent prompt has an approved size budget (§ Run & test `Prompt checks`). State the size before and after; growth needs a reason or an equal cut elsewhere.
+- **Budget:** each agent prompt has an approved target and never grows past its recorded size (ratchet); shrink one agent at a time. § Run & test `Prompt checks` names the budget file and the size and lint checks. State the size before and after.
 - **Concise:** plain language, each rule once; harden an existing line before adding one; drop conflicting or redundant lines.
 - **Agnostic:** shared prompt text and tool descriptions name no tenant, brand, phone number or agent display name; per-install facts arrive only through variables or config.
 - **One home per tool:** a tool's instructions live once, in its description or one shared block every agent reuses. End users never see internal tool names.
 - **Proven:** a change, shorter ones included, ships only when the project's `Prompt checks` pass rate holds against the base.
+
+## Release train
+
+One outstanding release candidate per repo. A candidate still awaiting its go-ahead absorbs newly ready reviewed work instead of queuing another release: merge it in, rerun the test diff, lint and an independent `/test-review` of the combined diff, and refresh the prepared command and its landing-check string. Re-batching needs no user answer; only the final run needs the go-ahead, and that ask names every task in the candidate. A candidate whose go-ahead is already given takes nothing new. Record and docs commits wait for the candidate to land, or ride in it, so the base never moves under a prepared command. After a verified deploy, `/deploy` removes worktrees and branches whose commits the deployed sha contains when they are clean, unlocked and inactive; the rest are kept and listed.
 
 ## Independent completion conditions
 

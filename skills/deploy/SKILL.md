@@ -14,7 +14,7 @@ Get the reviewed sha onto `<base>` and every target, prove it landed, record it,
 3. The conversation.
 4. Discovery: `<base>` (trunk) or the current branch (branch) against `origin/<base>`.
 
-**Go-ahead.** Per contracts.md § Consent. Given, now, earlier in the same request, or as a verified `Approved:` record for this task (contracts.md § Consent): proceed without asking. Not given: print the plan (**Print the plan**) and ask once, "Deploy this?"; a scheduled prompt or handoff only reports `awaiting user: deploy`.
+**Go-ahead.** Per contracts.md § Consent. Given, now, earlier in the same request, or as a verified `Approved:` record for this task (contracts.md § Consent): proceed without asking. Not given: print the plan (**Print the plan**) and ask once, "Deploy this?"; a scheduled prompt or handoff only reports `awaiting user: deploy`. An outstanding candidate follows `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md` § Release train.
 
 **Modes.** PR (args `PR` only: the user asked for a PR), Local (no remote), Release (args `release`) and Rollback (args `rollback`): read only that mode in `${CLAUDE_SKILL_DIR}/references/modes.md` and follow it. § Deploy `Release: batched` or `Targets: none`: run the steps below but skip **Targets**, **Recheck times**, **Deploy**, **Verify**, the target part of **3-way sync**, and **Rechecks**; the task ends at the merge (batched: `/deploy release` ships it later).
 
@@ -55,7 +55,7 @@ For the scope summary, use `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.m
 
 ## 5. Clean up
 1. **This task** (branch flow). If the session is in the task worktree, load `ExitWorktree` via ToolSearch and call `ExitWorktree(action: "keep")`; if that fails, keep the worktree and branch and list them. After a fresh fetch, run `"${CLAUDE_SKILL_DIR:-$HOME/.agents/skills/deploy}/../workflow-contracts/scripts/safeguard-cli" cleanup "$MAIN" <path> --base <base> --branch <branch> --completion-accepted --no-pending-effects --remote-base <fresh-origin-base-sha>` and include `--lock-path "$LOCK" --expected-lock-owner '<exact owner line>'` when a lock exists. Only an eligible result permits `git worktree unlock` of this task's worktree (implement locked it), non-force removal, then `git branch -d`; any refusal keeps both. Never unlock another task's worktree, use `-D`, infer squash equivalence, or remove unique commits.
-2. **Others.** List other worktrees, branches and stale-looking temp paths with their owners and reasons. Never prune or remove them automatically; ignored-only content, reused names, detached state, locks, unknown owners or missing acceptance all mean keep.
+2. **Others** (behavior.md § Release train). Run the same cleanup check on each other worktree and branch whose commits the deployed sha contains, and remove only eligible, unlocked ones. List the rest and stale-looking temp paths with their owners and reasons; ignored-only content, reused names, detached state, locks, unknown owners or missing acceptance all mean keep.
 3. **Release the lock.** Verify its exact owner line is still yours, remove only its owner file, then remove the empty lock directory. A mismatch or nonempty directory is kept and reported.
 
 ## 6. Chain to monitor
