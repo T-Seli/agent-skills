@@ -1,10 +1,11 @@
 """Fail-closed executable checks for review and release workflows."""
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
-from .closeout import cleanup_gate, main_sync_gate
+from .closeout import cleanup_gate, main_sync_gate, sweep
 from .code_state import code_state
 from .release_reconciliation import reconcile_release
 from .release_guard import capture_rollback, verify_release
@@ -13,6 +14,12 @@ from .task_checkpoint import operating_view
 from .task_reconciliation import reconcile_tasks
 from .approval_attempts import append_receipt, summarize
 from .keep_awake import Native, Supervisor, status as awake_status, control as awake_control, reuse as awake_reuse
+
+
+def machine_config():
+    """Optional machine keys in the delegate config; absent file means defaults."""
+    path = Path(os.environ.get('AGENT_SKILLS_CONFIG', '~/.config/agent-skills/workers.json')).expanduser()
+    return json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
 
 
 def main(argv=None):
@@ -79,6 +86,12 @@ def main(argv=None):
     cleanup.add_argument('--lock-path')
     cleanup.add_argument('--expected-lock-owner')
     cleanup.add_argument('--remote-base')
+    sweeper = subs.add_parser('sweep', help='Dry run by default: remove every eligible, unheld worktree with --apply')
+    sweeper.add_argument('main')
+    sweeper.add_argument('--base', required=True)
+    sweeper.add_argument('--apply', action='store_true')
+    sweeper.add_argument('--rebuildable', action='append', default=[], help='Ignored dir the project can recreate')
+    sweeper.add_argument('--active-hours', type=float, default=2, help='Git activity this recent holds a worktree')
     sync = subs.add_parser('main-sync')
     sync.add_argument('main')
     sync.add_argument('--base', required=True)
@@ -141,6 +154,10 @@ def main(argv=None):
             if not result['eligible']:
                 print(json.dumps(result, sort_keys=True))
                 return 1
+        elif args.action == 'sweep':
+            result = sweep(args.main, base=args.base, apply=args.apply, rebuildable=args.rebuildable,
+                           lease_files=machine_config().get('worktree_lease_files', []),
+                           active_seconds=args.active_hours * 3600)
         else:
             result = main_sync_gate(args.main, base=args.base, repository=args.repository,
                                     fetched_sha=args.fetched_sha, lock_path=args.lock_path)

@@ -37,7 +37,7 @@ Brief a fresh session on this repo's state and its tasks: never production data.
      ```
    - Pending drafts: from the snapshot, else list `$MAIN/.claude/drafts/` (not `handoffs/`); note which hold `plan.md`, `action-items.md`, or only `log.md`.
    - Newest handoff: `ls -t "$MAIN/.claude/drafts/handoffs/"*.md 2>/dev/null | head -1`, with its first line. Never list handoffs as pending or stale.
-   - **Stale** (contracts.md), listed for the user to decide, never deleted: a draft folder where `find <folder> -type f -mtime -<window in days>` prints nothing; a task worktree whose branch's last commit (`git log -1 --format=%cr <branch>`) is older than the window; a stale `LOCK` (age from its `owner` line).
+   - **Stale** (contracts.md), listed for the user to decide, never deleted: a draft folder where `find <folder> -type f -mtime -<window in days>` prints nothing; a task worktree whose branch's last commit (`git log -1 --format=%cr <branch>`) is older than the window; a stale `LOCK` (age from its `owner` line). Also report how many worktrees `safeguard-cli sweep "$MAIN" --base <base>` (dry run) would remove; never apply it here.
 4. **Memory.** If a memory index is in context, pick ≤3 entries that touch the tasks in flight or recent commits. They are leads, not facts. None → the Memory line says `none`.
 5. **Map.**
    - § Map present: spot-check with `ls` that the paths it names exist. All present → use it; no sub-agent.

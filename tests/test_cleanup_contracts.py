@@ -1,4 +1,5 @@
 """Skill text for worktree ownership marks, cleanup unlock rules and the machine-wide test cap."""
+import json
 import re
 from pathlib import Path
 import unittest
@@ -27,3 +28,22 @@ class WorktreeOwnership(unittest.TestCase):
     def test_contracts_and_template_name_the_run_id_and_rebuildable_dirs(self):
         self.assertIn('--run-id', next(l for l in text(CONTRACTS).splitlines() if l.startswith('- Temp worktrees')))
         self.assertIn('; rebuildable: <dirs>', text('skills/workflow-contracts/project-CLAUDE-template.md'))
+
+
+class WorktreeSweep(unittest.TestCase):
+    def test_deploy_cleans_other_worktrees_with_the_sweep(self):
+        others = next(l for l in text('skills/deploy/SKILL.md').splitlines() if l.startswith('2. **Others**'))
+        self.assertRegex(others, r'safeguard-cli.* sweep .*--apply')
+
+    def test_prime_context_reports_the_dry_run_count_and_never_applies(self):
+        stale = next(l for l in text('skills/prime-context/SKILL.md').splitlines() if '**Stale**' in l)
+        self.assertRegex(stale, r'sweep .*dry run')
+        self.assertNotIn('--apply', stale)
+
+    def test_contracts_exempts_the_sweep_from_never_deleted_by_a_skill(self):
+        stale = next(l for l in text(CONTRACTS).splitlines() if l.startswith('- **Stale**'))
+        self.assertIn('sweep', stale)
+
+    def test_example_config_lists_worktree_lease_files(self):
+        config = json.loads(text('agent_skills/delegate_config.example.json'))
+        self.assertEqual(config['worktree_lease_files'], [])

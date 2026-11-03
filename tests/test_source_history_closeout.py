@@ -6,7 +6,9 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -425,3 +427,108 @@ class CleanupGateRefinementTests(unittest.TestCase):
         result = self.gate(branch=None, run_id="run7")
         self.assertTrue(result["eligible"])
         self.assertTrue(result["unlock"])
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class SweepTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name).resolve()
+        self.main = self.tmp / "main"
+        self.main.mkdir()
+        run("git", "-C", str(self.main), "init", "-q", "-b", "main")
+        (self.main / "x").write_text("base")
+        run("git", "-C", str(self.main), "add", ".")
+        run("git", "-C", str(self.main), *COMMIT, "base")
+        self.config = self.tmp / "workers.json"
+        self.config.write_text("{}")
+        self.sleepers = []
+        self.addCleanup(lambda: [p.kill() for p in self.sleepers])
+
+    def merged_worktree(self, name, *flags):
+        path = self.tmp / name
+        run("git", "-C", str(self.main), "worktree", "add", "-q", *flags, "-b", f"feat/{name}", str(path))
+        (path / f"{name}.txt").write_text(name)
+        run("git", "-C", str(path), "add", ".")
+        run("git", "-C", str(path), *COMMIT, name)
+        run("git", "-C", str(self.main), "merge", "-q", "--ff-only", f"feat/{name}")
+        return path
+
+    def backdate(self, path):
+        gitdir = Path(run("git", "-C", str(path), "rev-parse", "--absolute-git-dir"))
+        old = time.time() - 10 * 3600
+        for name in ("index", "logs/HEAD"):
+            os.utime(gitdir / name, (old, old))
+
+    def sweep(self, *args):
+        env = dict(os.environ, AGENT_SKILLS_CONFIG=str(self.config), PYTHONDONTWRITEBYTECODE="1")
+        return subprocess.run([sys.executable, "-m", "agent_skills.safeguard_cli", "sweep", str(self.main),
+                               "--base", "main", *args], cwd=ROOT, env=env, capture_output=True, text=True)
+
+    def fixture(self):
+        paths = {}
+        owner = lambda name: ("--lock", "--reason", f"agent feat/{name} 2026-11-03T00:00:00Z")
+        for name in ("done", "held", "leased", "dirty", "recent"):
+            paths[name] = self.merged_worktree(name, *owner(name))
+        paths["legacy"] = self.merged_worktree("legacy", "--lock")
+        (paths["dirty"] / "notes.txt").write_text("mine")
+        base = self.tmp / "_base-abc1234-run9"
+        run("git", "-C", str(self.main), "worktree", "add", "-q", "--detach", "--lock", "--reason",
+            "test-review run9", str(base))
+        paths["base"] = base
+        self.sleepers.append(subprocess.Popen(["sleep", "60"], cwd=paths["held"]))
+        self.lease = self.tmp / "leases.txt"
+        self.lease.write_text(f"{paths['leased']}\n")
+        self.config.write_text(json.dumps({"worktree_lease_files": [str(self.lease)]}))
+        for name, path in paths.items():
+            if name != "recent":
+                self.backdate(path)
+        return paths
+
+    def test_dry_run_lists_only_merged_clean_unheld_candidates_and_removes_nothing(self):
+        paths = self.fixture()
+        result = self.sweep()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(sorted(Path(c["worktree"]).name for c in report["candidates"]),
+                         ["_base-abc1234-run9", "done"])
+        held = {Path(h["worktree"]).name for h in report["held"]}
+        self.assertEqual(held, {"held", "leased", "recent"})
+        self.assertEqual(sorted(Path(k["worktree"]).name for k in report["kept"]), ["dirty", "legacy"])
+        self.assertTrue(all(p.exists() for p in paths.values()))
+
+    def test_apply_removes_only_candidates_and_deletes_branches_only_on_ancestor(self):
+        paths = self.fixture()
+        result = self.sweep("--apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name, gone in (("done", True), ("base", True), ("held", False), ("leased", False),
+                           ("dirty", False), ("recent", False), ("legacy", False)):
+            self.assertEqual(not paths[name].exists(), gone, name)
+        branches = run("git", "-C", str(self.main), "branch", "--format=%(refname:short)").split()
+        self.assertNotIn("feat/done", branches)
+        self.assertIn("feat/dirty", branches)
+
+    def test_unreadable_lease_file_exits_1_and_removes_nothing(self):
+        paths = self.fixture()
+        self.config.write_text(json.dumps({"worktree_lease_files": [str(self.tmp / "missing.txt")]}))
+        result = self.sweep("--apply")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("safeguard failed", result.stderr)
+        self.assertTrue(all(p.exists() for p in paths.values()))
+
+    def test_squash_merged_worktree_is_removed_but_its_branch_is_kept(self):
+        path = self.tmp / "squashed"
+        run("git", "-C", str(self.main), "worktree", "add", "-q", "-b", "feat/squashed", str(path))
+        (path / "s.txt").write_text("s")
+        run("git", "-C", str(path), "add", ".")
+        run("git", "-C", str(path), *COMMIT, "s")
+        run("git", "-C", str(self.main), "merge", "-q", "--squash", "feat/squashed")
+        run("git", "-C", str(self.main), *COMMIT, "squash")
+        self.backdate(path)
+        result = self.sweep("--apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(path.exists())
+        self.assertIn("feat/squashed", run("git", "-C", str(self.main), "branch", "--format=%(refname:short)").split())

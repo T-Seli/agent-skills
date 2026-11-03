@@ -1,7 +1,11 @@
 """Read-only handoff/completion and merged worktree cleanup eligibility."""
+import fcntl
 import filecmp
+import os
 import re
 import subprocess
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from .task_contract import assess_completion, resume_check
@@ -65,15 +69,22 @@ def main_sync_gate(main, *, base, repository, fetched_sha, lock_path):
         return {"ready": False, "reason": str(exc)}
 
 
-def _worktree_lock(main, worktree):
-    """None when unlocked, else git's lock reason ('' when none was given)."""
-    current = None
+def _worktrees(main):
+    """Records from `git worktree list`: `path` plus git's own keys (branch, detached, locked, prunable)."""
+    records, current = [], None
     for field in _git(main, "worktree", "list", "--porcelain", "-z").split("\0"):
         if field.startswith("worktree "):
-            current = Path(field[9:]).resolve()
-        elif current == worktree and (field == "locked" or field.startswith("locked ")):
-            return field[7:]
-    return None
+            current = {"path": Path(field[9:]).resolve()}
+            records.append(current)
+        elif current is not None and field:
+            key, _, value = field.partition(" ")
+            current[key] = value
+    return records
+
+
+def _worktree_lock(main, worktree):
+    """None when unlocked, else git's lock reason ('' when none was given)."""
+    return next(record.get("locked") for record in _worktrees(main) if record["path"] == worktree)
 
 
 def _merge_proof(main, base_commit, commit):
@@ -90,7 +101,7 @@ def _merge_proof(main, base_commit, commit):
 def _check_clean(main, worktree, rebuildable):
     """Tracked and untracked entries block; ignored ones only if rebuildable or already in main."""
     declared = [item.strip("/") for item in rebuildable]
-    for entry in _git(worktree, "status", "--porcelain", "-z", "--ignored").split("\0"):
+    for entry in _git(worktree, "--no-optional-locks", "status", "--porcelain", "-z", "--ignored").split("\0"):
         if not entry:
             continue
         if not entry.startswith("!! "):
@@ -157,3 +168,86 @@ def cleanup_gate(main, worktree, *, base, completion_accepted, no_pending_effect
                 "merge": merge, "unlock": reason is not None}
     except (OSError, subprocess.CalledProcessError, ValueError) as exc:
         return {"eligible": False, "reason": str(exc)}
+
+
+@contextmanager
+def _sweep_lock(main):
+    common = Path(_git(main, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    fd = os.open(common / "sweep.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _process_cwds():
+    listed = subprocess.run(["lsof", "-d", "cwd", "-Fn"], capture_output=True, text=True)
+    if listed.returncode and not listed.stdout:
+        raise RuntimeError(f"lsof failed: {listed.stderr.strip()}")
+    return {Path(line[1:]).resolve() for line in listed.stdout.splitlines() if line.startswith("n")}
+
+
+def _inside(path, root):
+    return path == root or root in path.parents
+
+
+def _held(worktree, cwds, leased, *, active_seconds, now):
+    """Why a live session may be using this worktree, else None."""
+    if any(_inside(cwd, worktree) for cwd in cwds):
+        return "a process has its cwd inside"
+    if any(_inside(path, worktree) for path in leased):
+        return "listed in a lease file"
+    gitdir = Path(_git(worktree, "rev-parse", "--absolute-git-dir"))
+    for name in ("index", "logs/HEAD"):
+        try:
+            age = now - (gitdir / name).stat().st_mtime
+        except FileNotFoundError:
+            continue
+        if age < active_seconds:
+            return f"git activity {int(age)}s ago"
+    return None
+
+
+def sweep(main, *, base, apply=False, rebuildable=(), lease_files=(), active_seconds=7200, now=None):
+    """Run the cleanup gate over every other worktree; with `apply`, remove (never force) the eligible,
+    unheld ones and delete a branch only when its merge proof is `ancestor`."""
+    main = Path(main).resolve(strict=True)
+    now = time.time() if now is None else now
+    leased = [Path(line.strip()).expanduser().resolve() for name in lease_files
+              for line in Path(name).expanduser().read_text(encoding="utf-8").splitlines() if line.strip()]
+    report = {"apply": apply, "candidates": [], "held": [], "kept": [], "removed": []}
+    with _sweep_lock(main):
+        cwds = _process_cwds()
+        for record in _worktrees(main):
+            worktree = record["path"]
+            if worktree == main:
+                continue
+            branch = record.get("branch", "").removeprefix("refs/heads/") or None
+            if not worktree.exists():
+                report["kept"].append({"worktree": str(worktree), "reason": "path missing; git worktree prune"})
+                continue
+            if branch is None and not worktree.name.startswith("_base-"):
+                report["kept"].append({"worktree": str(worktree), "reason": "detached and not a temp base"})
+                continue
+            reason = _held(worktree, cwds, leased, active_seconds=active_seconds, now=now)
+            if reason:
+                report["held"].append({"worktree": str(worktree), "reason": reason})
+                continue
+            parts = worktree.name.split("-", 2)
+            verdict = cleanup_gate(main, worktree, base=base, branch=branch, completion_accepted=True,
+                                   no_pending_effects=True, rebuildable=rebuildable,
+                                   run_id=parts[2] if branch is None and len(parts) == 3 else None)
+            if not verdict["eligible"]:
+                report["kept"].append({"worktree": str(worktree), "reason": verdict["reason"]})
+                continue
+            report["candidates"].append({"worktree": str(worktree), "branch": branch,
+                                         "merge": verdict["merge"], "unlock": verdict["unlock"]})
+            if apply:
+                if verdict["unlock"]:
+                    _git(main, "worktree", "unlock", str(worktree))
+                _git(main, "worktree", "remove", str(worktree))
+                if branch and verdict["merge"] == "ancestor":
+                    _git(main, "branch", "-d", branch)
+                report["removed"].append(str(worktree))
+    return report
