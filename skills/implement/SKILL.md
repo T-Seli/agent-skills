@@ -35,7 +35,7 @@ Consent is scoped user authority per contracts.md § Consent. Use `${CLAUDE_SKIL
 3. **Workspace.**
    - **Branch.** Create the worktree with git so the branch name and base are exact:
      ```
-     git -C "$MAIN" worktree add --lock --no-track -b <type>/<slug> "$MAIN/.claude/worktrees/<slug>" origin/<base>
+     git -C "$MAIN" worktree add --lock --reason "<agent> <branch> <UTC time>" --no-track -b <type>/<slug> "$MAIN/.claude/worktrees/<slug>" origin/<base>
      ```
      Then load `EnterWorktree` via ToolSearch (`select:EnterWorktree,ExitWorktree`) and call `EnterWorktree(path: "$MAIN/.claude/worktrees/<slug>")`. Don't use `EnterWorktree(name)`: its branch name and base depend on user settings. Tool unavailable: work there with absolute paths. Run the worktree setup from CLAUDE.md § Run & test (files to copy or symlink, install, test services). Verify: `git branch --show-current` is `<type>/<slug>` and `git merge-base --is-ancestor origin/<base> HEAD` passes.
    - **Trunk.** No worktree: work in `MAIN` with absolute paths; `git -C "$MAIN" branch --show-current` must be `<base>`, else stop. Take `LOCK`: `mkdir` it and write `owner` = `<agent> <branch> <UTC time>`. It exists with another owner: stop and name the owner, and say if it is stale (never delete it); yours (**Resume**): rewrite the time. Then run the **Clean check** for the first item.

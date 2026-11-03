@@ -28,7 +28,7 @@
 - CI: <how to read a commit's checks> | none
 - Test baseline: <known failures on the base branch, or "clean">
 - Test services: <databases, queues or emulators the tests need, and the start command> | none
-- Worktree setup: <files to copy or symlink from the main checkout, e.g. env files, dependency dirs> then `<install command>`
+- Worktree setup: <files to copy or symlink from the main checkout, e.g. env files, dependency dirs> then `<install command>`; rebuildable: <dirs>
 
 ## Deploy
 <!-- Enough for /deploy to ship, prove, and roll back every target without guessing. -->
