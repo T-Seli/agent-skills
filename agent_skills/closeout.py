@@ -146,7 +146,14 @@ def cleanup_gate(main, worktree, *, base, completion_accepted, no_pending_effect
         base_commit = _git(main, "rev-parse", "--verify", f"refs/heads/{base}^{{commit}}")
         branch_commit = (_git(worktree, "rev-parse", "HEAD") if branch is None else
                          _git(main, "rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}"))
-        merge = _merge_proof(main, base_commit, branch_commit)
+        # A temp base checkout sits at merge-base(origin/<base>, head), which a lagging local base may lack.
+        fetched = subprocess.run(["git", "-C", str(main), "rev-parse", "-q", "--verify",
+                                  f"refs/remotes/origin/{base}^{{commit}}"], capture_output=True, text=True)
+        if branch is None and fetched.returncode == 0 and _git(main, "merge-base", fetched.stdout.strip(),
+                                                               branch_commit) == branch_commit:
+            merge = "ancestor"
+        else:
+            merge = _merge_proof(main, base_commit, branch_commit)
         reason = _worktree_lock(main, worktree)
         if reason is not None and not set(reason.split()) & {name for name in (branch, run_id) if name}:
             raise ValueError("worktree locked by another owner")

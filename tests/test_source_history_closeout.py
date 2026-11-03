@@ -414,6 +414,17 @@ class CleanupGateRefinementTests(unittest.TestCase):
         self.assertTrue(result["eligible"])
         self.assertEqual(result["merge"], "ancestor")
 
+    def test_detached_head_contained_in_fetched_origin_base_is_eligible_when_local_base_lags(self):
+        run("git", "-C", str(self.main), "checkout", "-q", "-b", "upstream")
+        self.commit_in(self.main, "upstream", "merged on the host")
+        ahead = run("git", "-C", str(self.main), "rev-parse", "HEAD")
+        run("git", "-C", str(self.main), "checkout", "-q", "main")
+        run("git", "-C", str(self.main), "update-ref", "refs/remotes/origin/main", ahead)
+        run("git", "-C", str(self.main), "worktree", "add", "-q", "--detach", str(self.worktree), ahead)
+        result = self.gate(branch=None)
+        self.assertTrue(result["eligible"], result)
+        self.assertEqual(result["merge"], "ancestor")
+
     def test_detached_mode_rejects_a_branch_checkout_and_uncontained_head(self):
         self.add_worktree()
         self.assertFalse(self.gate(branch=None)["eligible"])
