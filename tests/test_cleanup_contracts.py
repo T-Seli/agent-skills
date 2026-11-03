@@ -47,3 +47,13 @@ class WorktreeSweep(unittest.TestCase):
     def test_example_config_lists_worktree_lease_files(self):
         config = json.loads(text('agent_skills/delegate_config.example.json'))
         self.assertEqual(config['worktree_lease_files'], [])
+
+
+class TestSlotRoute(unittest.TestCase):
+    def test_contracts_routes_run_and_test_commands_through_the_slot(self):
+        line = next(l for l in text(CONTRACTS).splitlines() if l.startswith('- Sections, read by name'))
+        self.assertIn("safeguard-cli test-slot '<cmd>'", line)
+        self.assertIn('75', line)
+
+    def test_example_config_sets_the_default_slot_count(self):
+        self.assertEqual(json.loads(text('agent_skills/delegate_config.example.json'))['test_slots'], 2)
