@@ -1,4 +1,5 @@
 """Read-only handoff/completion and merged worktree cleanup eligibility."""
+import filecmp
 import re
 import subprocess
 from pathlib import Path
@@ -64,9 +65,54 @@ def main_sync_gate(main, *, base, repository, fetched_sha, lock_path):
         return {"ready": False, "reason": str(exc)}
 
 
-def cleanup_gate(main, worktree, *, base, branch, completion_accepted, no_pending_effects,
-                 lock_path=None, expected_lock_owner=None, remote_base=None):
-    """Never deletes. Exact branch/worktree and merged, clean state must all agree."""
+def _worktree_lock(main, worktree):
+    """None when unlocked, else git's lock reason ('' when none was given)."""
+    current = None
+    for field in _git(main, "worktree", "list", "--porcelain", "-z").split("\0"):
+        if field.startswith("worktree "):
+            current = Path(field[9:]).resolve()
+        elif current == worktree and (field == "locked" or field.startswith("locked ")):
+            return field[7:]
+    return None
+
+
+def _merge_proof(main, base_commit, commit):
+    """'ancestor', or 'no-op' when merging commit into base would change nothing (squash merges)."""
+    if _git(main, "merge-base", base_commit, commit) == commit:
+        return "ancestor"
+    merged = subprocess.run(["git", "-C", str(main), "merge-tree", "--write-tree", base_commit, commit],
+                            capture_output=True, text=True)
+    if merged.returncode == 0 and merged.stdout.split()[0] == _git(main, "rev-parse", f"{base_commit}^{{tree}}"):
+        return "no-op"
+    raise ValueError("branch not merged into local base")
+
+
+def _check_clean(main, worktree, rebuildable):
+    """Tracked and untracked entries block; ignored ones only if rebuildable or already in main."""
+    declared = [item.strip("/") for item in rebuildable]
+    for entry in _git(worktree, "status", "--porcelain", "-z", "--ignored").split("\0"):
+        if not entry:
+            continue
+        if not entry.startswith("!! "):
+            raise ValueError("worktree dirty")
+        path = entry[3:]
+        name = path.rstrip("/")
+        if any(name == item or name.startswith(item + "/") for item in declared):
+            continue
+        item = worktree / name
+        if item.is_symlink() and item.resolve().is_relative_to(main):
+            continue
+        twin = main / name
+        if not path.endswith("/") and twin.is_file() and filecmp.cmp(item, twin, shallow=False):
+            continue
+        raise ValueError(f"ignored content not rebuildable: {path}")
+
+
+def cleanup_gate(main, worktree, *, base, completion_accepted, no_pending_effects, branch=None,
+                 lock_path=None, expected_lock_owner=None, remote_base=None, rebuildable=(), run_id=None):
+    """Never deletes. Exact branch/worktree and merged, clean state must all agree.
+
+    `branch=None` checks a detached worktree (temp base checkouts) at its HEAD commit."""
     if not completion_accepted or not no_pending_effects:
         return {"eligible": False, "reason": "completion-or-effects-pending"}
     try:
@@ -75,18 +121,24 @@ def cleanup_gate(main, worktree, *, base, branch, completion_accepted, no_pendin
             raise ValueError("invalid main/worktree")
         if _git(worktree, "rev-parse", "--show-toplevel") != str(worktree):
             raise ValueError("worktree root mismatch")
-        if _git(worktree, "symbolic-ref", "--short", "HEAD") != branch:
+        if branch is None:
+            if subprocess.run(["git", "-C", str(worktree), "symbolic-ref", "-q", "HEAD"],
+                              capture_output=True).returncode == 0:
+                raise ValueError("worktree is not detached")
+        elif _git(worktree, "symbolic-ref", "--short", "HEAD") != branch:
             raise ValueError("branch mismatch")
         if branch == base or _git(main, "symbolic-ref", "--short", "HEAD") != base:
             raise ValueError("base checkout mismatch")
-        if _git(worktree, "status", "--porcelain", "--untracked-files=all", "--ignored"):
-            raise ValueError("worktree dirty")
+        _check_clean(main, worktree, rebuildable)
         if _git(main, "rev-parse", "--path-format=absolute", "--git-common-dir") != _git(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"):
             raise ValueError("unrelated repositories")
         base_commit = _git(main, "rev-parse", "--verify", f"refs/heads/{base}^{{commit}}")
-        branch_commit = _git(main, "rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}")
-        if _git(main, "merge-base", base_commit, branch_commit) != branch_commit:
-            raise ValueError("branch not merged into local base")
+        branch_commit = (_git(worktree, "rev-parse", "HEAD") if branch is None else
+                         _git(main, "rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}"))
+        merge = _merge_proof(main, base_commit, branch_commit)
+        reason = _worktree_lock(main, worktree)
+        if reason is not None and not set(reason.split()) & {name for name in (branch, run_id) if name}:
+            raise ValueError("worktree locked by another owner")
         if remote_base is not None and base_commit != remote_base:
             raise ValueError("local base does not match freshly fetched remote base")
         if (lock_path is None) != (expected_lock_owner is None):
@@ -101,6 +153,7 @@ def cleanup_gate(main, worktree, *, base, branch, completion_accepted, no_pendin
             if owner.read_text(encoding="utf-8").strip() != expected_lock_owner:
                 raise ValueError("lock owned by another operation")
         return {"eligible": True, "reason": "review-only", "worktree": str(worktree),
-                "branch": branch, "base_commit": base_commit, "branch_commit": branch_commit}
+                "branch": branch, "base_commit": base_commit, "branch_commit": branch_commit,
+                "merge": merge, "unlock": reason is not None}
     except (OSError, subprocess.CalledProcessError, ValueError) as exc:
         return {"eligible": False, "reason": str(exc)}

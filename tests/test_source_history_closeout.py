@@ -3,6 +3,7 @@ import hashlib
 import struct
 import zlib
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -291,11 +292,12 @@ class SourceHistoryCloseoutTests(unittest.TestCase):
             self.assertTrue(cleanup_gate(main, worktree, base="main", branch="feat/test",
                                          completion_accepted=True, no_pending_effects=True)["eligible"])
             exclude = Path(run("git", "-C", str(worktree), "rev-parse", "--git-path", "info/exclude"))
-            exclude.write_text("ignored.bin\n")
-            (worktree / "ignored.bin").write_text("keep")
+            exclude.write_text("deps\n")
+            (worktree / "deps").mkdir()
+            (worktree / "deps/a.js").write_text("keep")
             self.assertFalse(cleanup_gate(main, worktree, base="main", branch="feat/test",
                                           completion_accepted=True, no_pending_effects=True)["eligible"])
-            (worktree / "ignored.bin").unlink()
+            shutil.rmtree(worktree / "deps")
             lock = main / ".git/deploy.lock"
             lock.mkdir()
             (lock / "owner").write_text("agent feat/test 2026-10-09T00:00:00Z\n")
@@ -312,3 +314,114 @@ class SourceHistoryCloseoutTests(unittest.TestCase):
                 no_pending_effects=True, remote_base="0" * 40)["eligible"])
             self.assertFalse(cleanup_gate(main, worktree, base="main", branch="feat/test",
                                           completion_accepted=False, no_pending_effects=True)["eligible"])
+
+
+COMMIT = ("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm")
+
+
+class CleanupGateRefinementTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.main, self.worktree = Path(self._tmp.name).resolve() / "main", Path(self._tmp.name).resolve() / "task"
+        self.main.mkdir()
+        run("git", "-C", str(self.main), "init", "-q", "-b", "main")
+        (self.main / "x").write_text("base")
+        (self.main / ".gitignore").write_text("node_modules\n")
+        run("git", "-C", str(self.main), "add", ".")
+        run("git", "-C", str(self.main), *COMMIT, "base")
+        (self.main / "node_modules").mkdir()
+        (self.main / "node_modules/dep.js").write_text("dep")
+
+    def gate(self, **extra):
+        args = dict(base="main", branch="feat/test", completion_accepted=True, no_pending_effects=True)
+        return cleanup_gate(self.main, self.worktree, **{**args, **extra})
+
+    def add_worktree(self, *flags, branch="feat/test"):
+        run("git", "-C", str(self.main), "worktree", "add", "-q", *flags, *(["-b", branch] if branch else []),
+            str(self.worktree), *([] if branch else ["--detach"]))
+
+    def commit_in(self, root, name, text):
+        (root / name).write_text(text)
+        run("git", "-C", str(root), "add", name)
+        run("git", "-C", str(root), *COMMIT, name)
+
+    def test_ignored_symlink_into_main_is_eligible(self):
+        self.add_worktree()
+        (self.worktree / "node_modules").symlink_to(self.main / "node_modules")
+        self.assertTrue(self.gate()["eligible"])
+
+    def test_ignored_identical_copy_is_eligible_and_edited_copy_is_not(self):
+        (self.main / "local.cfg").write_text("A=1")
+        (self.main / ".git/info/exclude").write_text("local.cfg\n")
+        self.add_worktree()
+        (self.worktree / "local.cfg").write_text("A=1")
+        self.assertTrue(self.gate()["eligible"])
+        (self.worktree / "local.cfg").write_text("A=2")
+        self.assertFalse(self.gate()["eligible"])
+
+    def test_real_ignored_dir_needs_rebuildable_declaration(self):
+        self.add_worktree()
+        (self.worktree / "node_modules").mkdir()
+        (self.worktree / "node_modules/dep.js").write_text("dep")
+        self.assertFalse(self.gate()["eligible"])
+        self.assertTrue(self.gate(rebuildable=["node_modules"])["eligible"])
+        self.assertFalse(self.gate(rebuildable=["other"])["eligible"])
+
+    def test_untracked_file_blocks_even_when_rebuildable_declared(self):
+        self.add_worktree()
+        (self.worktree / "notes.txt").write_text("mine")
+        self.assertFalse(self.gate(rebuildable=["node_modules"])["eligible"])
+
+    def test_squash_merged_branch_is_removable_by_no_op_proof(self):
+        self.add_worktree()
+        self.commit_in(self.worktree, "feature", "new")
+        self.assertFalse(self.gate()["eligible"])
+        run("git", "-C", str(self.main), "merge", "-q", "--squash", "feat/test")
+        run("git", "-C", str(self.main), *COMMIT, "squash")
+        result = self.gate()
+        self.assertTrue(result["eligible"])
+        self.assertEqual(result["merge"], "no-op")
+
+    def test_fast_forward_merge_reports_ancestor(self):
+        self.add_worktree()
+        self.commit_in(self.worktree, "feature", "new")
+        run("git", "-C", str(self.main), "merge", "-q", "--ff-only", "feat/test")
+        self.assertEqual(self.gate()["merge"], "ancestor")
+
+    def test_lock_naming_this_branch_is_eligible_and_asks_for_unlock(self):
+        self.add_worktree("--lock", "--reason", "agent feat/test 2026-11-03T22:30:00Z")
+        result = self.gate()
+        self.assertTrue(result["eligible"])
+        self.assertTrue(result["unlock"])
+
+    def test_foreign_or_empty_lock_reason_is_ineligible(self):
+        self.add_worktree("--lock", "--reason", "agent feat/other 2026-11-03T22:30:00Z")
+        self.assertFalse(self.gate()["eligible"])
+        run("git", "-C", str(self.main), "worktree", "unlock", str(self.worktree))
+        run("git", "-C", str(self.main), "worktree", "lock", str(self.worktree))
+        self.assertFalse(self.gate()["eligible"])
+
+    def test_unlocked_worktree_does_not_ask_for_unlock(self):
+        self.add_worktree()
+        self.assertFalse(self.gate()["unlock"])
+
+    def test_detached_base_worktree_contained_in_base_is_eligible(self):
+        self.add_worktree(branch=None)
+        result = self.gate(branch=None)
+        self.assertTrue(result["eligible"])
+        self.assertEqual(result["merge"], "ancestor")
+
+    def test_detached_mode_rejects_a_branch_checkout_and_uncontained_head(self):
+        self.add_worktree()
+        self.assertFalse(self.gate(branch=None)["eligible"])
+        run("git", "-C", str(self.worktree), "checkout", "-q", "--detach")
+        self.commit_in(self.worktree, "feature", "new")
+        self.assertFalse(self.gate(branch=None)["eligible"])
+
+    def test_detached_lock_names_run_id(self):
+        self.add_worktree("--lock", "--reason", "test-review run7", branch=None)
+        self.assertFalse(self.gate(branch=None)["eligible"])
+        result = self.gate(branch=None, run_id="run7")
+        self.assertTrue(result["eligible"])
+        self.assertTrue(result["unlock"])

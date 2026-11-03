@@ -71,7 +71,9 @@ def main(argv=None):
     cleanup.add_argument('main')
     cleanup.add_argument('worktree')
     cleanup.add_argument('--base', required=True)
-    cleanup.add_argument('--branch', required=True)
+    cleanup.add_argument('--branch', help='Omit for a detached temp checkout')
+    cleanup.add_argument('--run-id', help='Lock reasons naming this id count as this run\'s own')
+    cleanup.add_argument('--rebuildable', action='append', default=[], help='Ignored dir the project can recreate')
     cleanup.add_argument('--completion-accepted', action='store_true')
     cleanup.add_argument('--no-pending-effects', action='store_true')
     cleanup.add_argument('--lock-path')
@@ -134,7 +136,8 @@ def main(argv=None):
                                   no_pending_effects=args.no_pending_effects,
                                   lock_path=args.lock_path,
                                   expected_lock_owner=args.expected_lock_owner,
-                                  remote_base=args.remote_base)
+                                  remote_base=args.remote_base, rebuildable=args.rebuildable,
+                                  run_id=args.run_id)
             if not result['eligible']:
                 print(json.dumps(result, sort_keys=True))
                 return 1
