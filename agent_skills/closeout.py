@@ -214,8 +214,10 @@ def sweep(main, *, base, apply=False, rebuildable=(), lease_files=(), active_sec
     unheld ones and delete a branch only when its merge proof is `ancestor`."""
     main = Path(main).resolve(strict=True)
     now = time.time() if now is None else now
-    leased = [Path(line.strip()).expanduser().resolve() for name in lease_files
-              for line in Path(name).expanduser().read_text(encoding="utf-8").splitlines() if line.strip()]
+    # A lease file is text or JSON (e.g. an app's worktree registry); every absolute path it names is held.
+    leased = [Path(found.strip()).expanduser().resolve() for name in lease_files
+              for found in re.findall(r'(?:^|")(~?/[^"\n]+)', Path(name).expanduser().read_text(encoding="utf-8"),
+                                      re.M)]
     report = {"apply": apply, "candidates": [], "held": [], "kept": [], "removed": []}
     with _sweep_lock(main):
         cwds = _process_cwds()

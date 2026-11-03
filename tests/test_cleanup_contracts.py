@@ -26,7 +26,9 @@ class WorktreeOwnership(unittest.TestCase):
         self.assertIn('--rebuildable', deploy)
 
     def test_contracts_and_template_name_the_run_id_and_rebuildable_dirs(self):
-        self.assertIn('--run-id', next(l for l in text(CONTRACTS).splitlines() if l.startswith('- Temp worktrees')))
+        temp = next(l for l in text(CONTRACTS).splitlines() if l.startswith('- Temp worktrees'))
+        self.assertIn('--run-id', temp)
+        self.assertIn('only `safeguard-cli sweep` removes', temp)
         self.assertIn('; rebuildable: <dirs>', text('skills/workflow-contracts/project-CLAUDE-template.md'))
 
 
@@ -52,7 +54,7 @@ class WorktreeSweep(unittest.TestCase):
 class TestSlotRoute(unittest.TestCase):
     def test_contracts_routes_run_and_test_commands_through_the_slot(self):
         line = next(l for l in text(CONTRACTS).splitlines() if l.startswith('- Sections, read by name'))
-        self.assertIn("safeguard-cli test-slot '<cmd>'", line)
+        self.assertIn("""/workflow-contracts/scripts/safeguard-cli" test-slot '<cmd>'""", line)
         self.assertIn('75', line)
 
     def test_example_config_sets_the_default_slot_count(self):

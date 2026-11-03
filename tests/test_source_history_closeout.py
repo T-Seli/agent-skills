@@ -519,6 +519,15 @@ class SweepTests(unittest.TestCase):
         self.assertIn("safeguard failed", result.stderr)
         self.assertTrue(all(p.exists() for p in paths.values()))
 
+    def test_json_lease_file_holds_every_absolute_path_it_names(self):
+        paths = self.fixture()
+        self.lease.write_text(json.dumps({"worktrees": {"leased": {
+            "path": str(paths["leased"]), "baseRepo": str(self.main), "leasedBy": "session-1"}}}))
+        result = self.sweep()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        held = {Path(h["worktree"]).name for h in json.loads(result.stdout)["held"]}
+        self.assertEqual(held, {"held", "leased", "recent"})
+
     def test_squash_merged_worktree_is_removed_but_its_branch_is_kept(self):
         path = self.tmp / "squashed"
         run("git", "-C", str(self.main), "worktree", "add", "-q", "-b", "feat/squashed", str(path))
