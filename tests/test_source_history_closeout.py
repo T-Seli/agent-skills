@@ -548,6 +548,21 @@ class SweepTests(unittest.TestCase):
         self.assertEqual([Path(c["worktree"]).name for c in report["candidates"]], ["done"])
         self.assertEqual(report["kept"], [{"worktree": str(stuck), "reason": "git timed out after 1s"}])
 
+    def test_worktree_with_a_broken_symlink_is_kept_and_the_sweep_continues(self):
+        (self.main / ".gitignore").write_text(".env\n")
+        run("git", "-C", str(self.main), "add", ".gitignore")
+        run("git", "-C", str(self.main), *COMMIT, "ignore env")
+        done, looped = self.merged_worktree("done"), self.merged_worktree("looped")
+        (self.main / ".env").symlink_to(self.main / ".env")
+        (looped / ".env").symlink_to(self.main / ".env")
+        for path in (done, looped):
+            self.backdate(path)
+        result = self.sweep()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual([Path(c["worktree"]).name for c in report["candidates"]], ["done"])
+        self.assertEqual(report["kept"], [{"worktree": str(looped), "reason": "broken symlink: .env"}])
+
     def test_apply_lets_a_slow_worktree_removal_finish(self):
         done = self.merged_worktree("done")
         self.backdate(done)

@@ -117,8 +117,13 @@ def _check_clean(main, worktree, rebuildable):
         if any(name == item or name.startswith(item + "/") for item in declared):
             continue
         item = worktree / name
-        if item.is_symlink() and item.resolve().is_relative_to(main):
-            continue
+        if item.is_symlink():
+            try:
+                target = item.resolve(strict=True)
+            except (OSError, RuntimeError) as exc:  # missing target, or a loop (RuntimeError before 3.13)
+                raise ValueError(f"broken symlink: {name}") from exc
+            if target.is_relative_to(main):
+                continue
         twin = main / name
         if not path.endswith("/") and twin.is_file() and filecmp.cmp(item, twin, shallow=False):
             continue
