@@ -548,6 +548,19 @@ class SweepTests(unittest.TestCase):
         self.assertEqual([Path(c["worktree"]).name for c in report["candidates"]], ["done"])
         self.assertEqual(report["kept"], [{"worktree": str(stuck), "reason": "git timed out after 1s"}])
 
+    def test_apply_lets_a_slow_worktree_removal_finish(self):
+        done = self.merged_worktree("done")
+        self.backdate(done)
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        fake = bin_dir / "git"
+        fake.write_text(f'#!/bin/sh\ncase "$*" in *"worktree remove"*) sleep 2;; esac\n'
+                        f'exec {shutil.which("git")} "$@"\n')
+        fake.chmod(0o755)
+        result = self.sweep("--apply", PATH=f"{bin_dir}:{os.environ['PATH']}", AGENT_SKILLS_GIT_TIMEOUT="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(done.exists())
+
     def test_json_lease_file_holds_every_absolute_path_it_names(self):
         paths = self.fixture()
         self.lease.write_text(json.dumps({"worktrees": {"leased": {

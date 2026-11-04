@@ -26,9 +26,10 @@ def completion_gate(packet, report, *, verifier_report=None, artifact_root=None,
     return {**evidence, "decision": "accepted"}
 
 
-def _git(root, *args):
+def _git(root, *args, limited=True):
     # A worktree in a cloud-synced folder can block git on offloaded files indefinitely.
-    seconds = float(os.environ.get("AGENT_SKILLS_GIT_TIMEOUT", "30"))
+    # Removals run unlimited: stopping one halfway would leave a partly deleted worktree.
+    seconds = float(os.environ.get("AGENT_SKILLS_GIT_TIMEOUT", "30")) if limited else None
     try:
         return subprocess.run(["git", "-C", str(root), *args], capture_output=True,
                               text=True, check=True, timeout=seconds).stdout.strip()
@@ -264,7 +265,7 @@ def sweep(main, *, base, apply=False, rebuildable=(), lease_files=(), active_sec
             if apply:
                 if verdict["unlock"]:
                     _git(main, "worktree", "unlock", str(worktree))
-                _git(main, "worktree", "remove", str(worktree))
+                _git(main, "worktree", "remove", str(worktree), limited=False)
                 if branch and verdict["merge"] == "ancestor":
                     _git(main, "branch", "-d", branch)
                 report["removed"].append(str(worktree))
