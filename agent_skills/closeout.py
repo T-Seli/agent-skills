@@ -27,8 +27,13 @@ def completion_gate(packet, report, *, verifier_report=None, artifact_root=None,
 
 
 def _git(root, *args):
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True,
-                          text=True, check=True).stdout.strip()
+    # A worktree in a cloud-synced folder can block git on offloaded files indefinitely.
+    seconds = float(os.environ.get("AGENT_SKILLS_GIT_TIMEOUT", "30"))
+    try:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True,
+                              text=True, check=True, timeout=seconds).stdout.strip()
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"git timed out after {seconds:g}s") from exc
 
 
 def _deploy_lock(root):
@@ -239,7 +244,11 @@ def sweep(main, *, base, apply=False, rebuildable=(), lease_files=(), active_sec
             if branch is None and not worktree.name.startswith("_base-"):
                 report["kept"].append({"worktree": str(worktree), "reason": "detached and not a temp base"})
                 continue
-            reason = _held(worktree, cwds, leased, active_seconds=active_seconds, now=now)
+            try:
+                reason = _held(worktree, cwds, leased, active_seconds=active_seconds, now=now)
+            except ValueError as exc:
+                report["kept"].append({"worktree": str(worktree), "reason": str(exc)})
+                continue
             if reason:
                 report["held"].append({"worktree": str(worktree), "reason": reason})
                 continue

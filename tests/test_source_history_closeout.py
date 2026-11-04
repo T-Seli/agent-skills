@@ -474,8 +474,8 @@ class SweepTests(unittest.TestCase):
         for name in ("index", "logs/HEAD"):
             os.utime(gitdir / name, (old, old))
 
-    def sweep(self, *args):
-        env = dict(os.environ, AGENT_SKILLS_CONFIG=str(self.config), PYTHONDONTWRITEBYTECODE="1")
+    def sweep(self, *args, **extra_env):
+        env = dict(os.environ, AGENT_SKILLS_CONFIG=str(self.config), PYTHONDONTWRITEBYTECODE="1", **extra_env)
         return subprocess.run([sys.executable, "-m", "agent_skills.safeguard_cli", "sweep", str(self.main),
                                "--base", "main", *args], cwd=ROOT, env=env, capture_output=True, text=True)
 
@@ -529,6 +529,24 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("safeguard failed", result.stderr)
         self.assertTrue(all(p.exists() for p in paths.values()))
+
+    def test_worktree_whose_git_status_hangs_is_kept_and_the_sweep_continues(self):
+        done, stuck = self.merged_worktree("done"), self.merged_worktree("stuck")
+        for path in (done, stuck):
+            self.backdate(path)
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        fake = bin_dir / "git"
+        fake.write_text(f'#!/bin/sh\ncase "$*" in *"{stuck}"*status*) exec sleep 15;; esac\n'
+                        f'exec {shutil.which("git")} "$@"\n')
+        fake.chmod(0o755)
+        started = time.monotonic()
+        result = self.sweep(PATH=f"{bin_dir}:{os.environ['PATH']}", AGENT_SKILLS_GIT_TIMEOUT="1")
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual([Path(c["worktree"]).name for c in report["candidates"]], ["done"])
+        self.assertEqual(report["kept"], [{"worktree": str(stuck), "reason": "git timed out after 1s"}])
 
     def test_json_lease_file_holds_every_absolute_path_it_names(self):
         paths = self.fixture()
