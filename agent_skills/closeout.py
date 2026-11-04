@@ -116,18 +116,26 @@ def _check_clean(main, worktree, rebuildable):
         name = path.rstrip("/")
         if any(name == item or name.startswith(item + "/") for item in declared):
             continue
-        item = worktree / name
-        if item.is_symlink():
-            try:
-                target = item.resolve(strict=True)
-            except (OSError, RuntimeError) as exc:  # missing target, or a loop (RuntimeError before 3.13)
-                raise ValueError(f"broken symlink: {name}") from exc
-            if target.is_relative_to(main):
-                continue
-        twin = main / name
-        if not path.endswith("/") and twin.is_file() and filecmp.cmp(item, twin, shallow=False):
-            continue
-        raise ValueError(f"ignored content not rebuildable: {path}")
+        if not _copy_of_main(main, worktree, Path(name)):
+            raise ValueError(f"ignored content not rebuildable: {path}")
+
+
+def _copy_of_main(main, worktree, rel):
+    """A symlink into main, or a file or folder whose every file is byte-identical in main."""
+    item = worktree / rel
+    if item.is_symlink():
+        try:
+            target = item.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:  # missing target, or a loop (RuntimeError before 3.13)
+            raise ValueError(f"broken symlink: {rel}") from exc
+        if target.is_relative_to(main):
+            return True
+    elif item.is_dir():  # os.walk descends real folders; symlinked ones are checked as entries
+        return all(_copy_of_main(main, worktree, Path(root, entry).relative_to(worktree))
+                   for root, dirs, files in os.walk(item)
+                   for entry in files + [d for d in dirs if Path(root, d).is_symlink()])
+    twin = main / rel
+    return twin.is_file() and filecmp.cmp(item, twin, shallow=False)
 
 
 def cleanup_gate(main, worktree, *, base, completion_accepted, no_pending_effects, branch=None,

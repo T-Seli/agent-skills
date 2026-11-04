@@ -362,10 +362,25 @@ class CleanupGateRefinementTests(unittest.TestCase):
         (self.worktree / "local.cfg").write_text("A=2")
         self.assertFalse(self.gate()["eligible"])
 
+    def test_ignored_dir_copied_from_main_is_eligible_until_it_holds_unique_or_edited_files(self):
+        (self.main / ".git/info/exclude").write_text(".claude\n")
+        (self.main / ".claude/drafts/a").mkdir(parents=True)
+        (self.main / ".claude/drafts/a/plan.md").write_text("plan")
+        (self.main / ".claude/notes.md").write_text("notes")
+        self.add_worktree()
+        shutil.copytree(self.main / ".claude", self.worktree / ".claude", symlinks=True)
+        (self.worktree / ".claude/drafts/link").symlink_to(self.main / ".claude/notes.md")
+        self.assertTrue(self.gate()["eligible"])
+        (self.worktree / ".claude/drafts/a/plan.md").write_text("edited")
+        self.assertEqual(self.gate()["reason"], "ignored content not rebuildable: .claude/")
+        (self.worktree / ".claude/drafts/a/plan.md").write_text("plan")
+        (self.worktree / ".claude/drafts/a/new.md").write_text("only here")
+        self.assertEqual(self.gate()["reason"], "ignored content not rebuildable: .claude/")
+
     def test_real_ignored_dir_needs_rebuildable_declaration(self):
         self.add_worktree()
         (self.worktree / "node_modules").mkdir()
-        (self.worktree / "node_modules/dep.js").write_text("dep")
+        (self.worktree / "node_modules/dep.js").write_text("local build")
         self.assertFalse(self.gate()["eligible"])
         self.assertTrue(self.gate(rebuildable=["node_modules"])["eligible"])
         self.assertFalse(self.gate(rebuildable=["other"])["eligible"])
