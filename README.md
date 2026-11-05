@@ -95,7 +95,7 @@ adapter, then propose specific
 skill changes with regression fixtures and human review. Pin accepted changes
 as commits and retain the prior commit for rollback. No automatic promotion.
 
-A workflow system for Claude Code and Codex, shared by every project on a machine. Reusable skills cover a change from briefing to production monitoring, backed by one global `CLAUDE.md`, one shared contracts file, one output style, one read-only sub-agent and one session-start hook. The framework is the shared code; each project's own `CLAUDE.md` is its config. A project plugs in by filling the standard sections (listed in `skills/workflow-contracts/contracts.md`; fields in `skills/workflow-contracts/project-CLAUDE-template.md`). **If onboarding a project needs a skill edit, the skill is wrong.**
+A workflow system for Claude Code and Codex, shared by every project on a machine. Reusable skills cover a change from briefing to production monitoring, backed by one global `CLAUDE.md`, one shared contracts file, one output style, one read-only sub-agent, a session-start hook and a test-gate hook. The framework is the shared code; each project's own `CLAUDE.md` is its config. A project plugs in by filling the standard sections (listed in `skills/workflow-contracts/contracts.md`; fields in `skills/workflow-contracts/project-CLAUDE-template.md`). **If onboarding a project needs a skill edit, the skill is wrong.**
 
 ## Pipeline
 ```
@@ -115,6 +115,7 @@ Each skill starts from the user's plain words and starts the next one itself; th
 | `agents/scout.md` | How a read-only explorer searches and reports | Description always; body when delegated |
 | `tests/check.sh` | Budgets, banned names, invocation, contracts path, template fields | Before every commit |
 | `hooks/session-start.sh` | Git snapshot: fetch, `<base>` vs origin, dirty count, worktrees, pending drafts | On startup, resume, clear, compact |
+| `hooks/test-gate.sh` | Denies a bare test-suite command and names the `safeguard-cli test-slot` command to run instead, unless the project's `Test slot` is `runner` | Before each Bash call |
 | `codex/AGENTS.md` | Codex header: precedence, skill list, chain and consent pointers | Built into `~/.codex/AGENTS.md` with global `CLAUDE.md`, the output style body and `codex/compatibility.md` |
 | `codex/compatibility.md` | Tool, sub-agent, worktree, scheduler and hook translations for Codex | Always in Codex (via the built `AGENTS.md`) |
 | `codex/agents/scout.toml` | The scout for Codex, brief inline, sandboxed read-only | Description always; body when delegated |
