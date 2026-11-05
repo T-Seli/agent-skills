@@ -13,7 +13,7 @@
     }
   },
   "max_depth": 2,
-  "max_live": 4,
+  "max_live": 3,
   "aws": false,
   "databases": false,
   "task_history_repo": null,
