@@ -169,3 +169,21 @@ class TestSlotTests(unittest.TestCase):
         sleeper = int(pidfile.read_text())
         self.addCleanup(lambda: subprocess.run(["kill", "-9", str(sleeper)], stderr=subprocess.DEVNULL))
         self.assertTrue(self.wait_gone(sleeper), "a background process outlived the finished run")
+
+    def test_a_weighted_run_takes_that_many_slots(self):
+        self.configure({"test_slots": 2})
+        self.holding_weighted = self.start("exec sleep 60", "--weight", "2")
+        deadline = time.time() + 10
+        while (not (self.tmp / "slots").exists() or self.held() < 2) and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(self.held(), 2)
+        self.assertEqual(self.start("true", "--wait-seconds", "1").wait(timeout=15), 75)
+
+    def test_weight_above_the_slot_count_is_an_error(self):
+        proc = self.start("true", "--weight", "2")
+        self.assertEqual(proc.wait(timeout=15), 1)
+        self.assertIn("weight", proc.stderr.read())
+
+    def test_a_nested_run_inside_a_held_slot_passes_straight_through(self):
+        inner = f"{sys.executable} -m agent_skills.safeguard_cli test-slot --wait-seconds 1 'exit 4'"
+        self.assertEqual(self.start(inner).wait(timeout=15), 4)

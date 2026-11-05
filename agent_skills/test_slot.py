@@ -15,6 +15,7 @@ DEFAULT_SLOTS = 4
 DEFAULT_MAX_SWAP_GB = 8  # swap in use above this holds new runs back
 DEFAULT_MIN_FREE_GB = 6  # free memory below this holds new runs back
 MEMORY_RECHECK_SECONDS = 5
+HELD = 'AGENT_SKILLS_TEST_SLOT_HELD'  # set inside a run, so a nested test-slot does not wait on its own slot
 
 
 def slot_dir():
@@ -113,7 +114,7 @@ def _supervise(command, poll):
     """Run `command` in its own process group; end the group when it finishes, on a signal, or when our caller dies."""
     caller = os.getppid()
     previous = {signum: signal.signal(signum, _raise_stopped) for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
-    child = subprocess.Popen(['/bin/sh', '-c', command], process_group=0)
+    child = subprocess.Popen(['/bin/sh', '-c', command], process_group=0, env={**os.environ, HELD: '1'})
     try:
         while True:
             try:
@@ -130,9 +131,27 @@ def _supervise(command, poll):
             signal.signal(signum, handler)
 
 
-def run_in_slot(command, *, slots, wait_seconds, max_swap_gb, min_free_gb, memory=read_memory, poll=0.2):
-    """Run `command` holding a slot until the run and everything it started has ended.
-    Waits while all slots are busy or memory is short; BUSY after wait_seconds."""
+def _take(directory, slots, weight):
+    """`weight` slot fds, or None with nothing held."""
+    fds = []
+    for index in range(slots):
+        fd = _try_lock(directory, index)
+        if fd is not None:
+            fds.append(fd)
+            if len(fds) == weight:
+                return fds
+    for fd in fds:
+        os.close(fd)
+    return None
+
+
+def run_in_slot(command, *, slots, wait_seconds, max_swap_gb, min_free_gb, weight=1, memory=read_memory, poll=0.2):
+    """Run `command` holding `weight` slots until the run and everything it started has ended.
+    Waits while slots are busy or memory is short; BUSY after wait_seconds. Inside a run it passes straight through."""
+    if os.environ.get(HELD):
+        os.execvp('/bin/sh', ['sh', '-c', command])
+    if not 1 <= weight <= slots:
+        raise ValueError(f'weight must be between 1 and the slot count {slots}, got {weight}')
     directory = slot_dir()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     deadline = time.monotonic() + wait_seconds
@@ -150,16 +169,17 @@ def run_in_slot(command, *, slots, wait_seconds, max_swap_gb, min_free_gb, memor
                 return BUSY
             time.sleep(poll)
             continue
-        for index in range(slots):
-            fd = _try_lock(directory, index)
-            if fd is not None:
-                owner = {'pid': os.getpid(), 'cwd': os.getcwd(), 'cmd': command,
-                         'utc': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
+        fds = _take(directory, slots, weight)
+        if fds is not None:
+            owner = json.dumps({'pid': os.getpid(), 'cwd': os.getcwd(), 'cmd': command, 'weight': weight,
+                                'utc': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}).encode()
+            for fd in fds:
                 os.ftruncate(fd, 0)
-                os.write(fd, json.dumps(owner).encode())
-                try:
-                    return _supervise(command, poll)
-                finally:
+                os.write(fd, owner)
+            try:
+                return _supervise(command, poll)
+            finally:
+                for fd in fds:
                     os.close(fd)
         if not waiting:
             print('test-slot: all slots busy, waiting; holders:\n' + '\n'.join(_holders(directory, slots)),

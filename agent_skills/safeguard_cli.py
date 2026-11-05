@@ -95,6 +95,7 @@ def main(argv=None):
     sweeper.add_argument('--active-hours', type=float, default=2, help='Git activity this recent holds a worktree')
     slot = subs.add_parser('test-slot', help='Run a shell command holding one of the machine-wide test slots; exit 75 when busy')
     slot.add_argument('--wait-seconds', type=float, default=540, help='Under the 10-minute agent tool limit')
+    slot.add_argument('--weight', type=int, default=1, help='Slots this command uses, e.g. 2 when it runs two suites at once')
     slot.add_argument('command', help='Shell command, e.g. the project test command')
     sync = subs.add_parser('main-sync')
     sync.add_argument('main')
@@ -164,7 +165,7 @@ def main(argv=None):
             max_swap_gb, min_free_gb = configured_memory_limits(config)
             print(f'test-slot: {slots} slots ({source})', file=sys.stderr)
             return run_in_slot(args.command, slots=slots, wait_seconds=args.wait_seconds,
-                               max_swap_gb=max_swap_gb, min_free_gb=min_free_gb)
+                               max_swap_gb=max_swap_gb, min_free_gb=min_free_gb, weight=args.weight)
         elif args.action == 'sweep':
             result = sweep(args.main, base=args.base, apply=args.apply, rebuildable=args.rebuildable,
                            lease_files=machine_config().get('worktree_lease_files', []),
