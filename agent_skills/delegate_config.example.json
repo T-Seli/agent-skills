@@ -18,7 +18,7 @@
   "databases": false,
   "task_history_repo": null,
   "worktree_lease_files": [],
-  "test_slots": 2,
+  "test_slots": 4,
   "pr_sweep": {
     "repos": [{"repo": "owner/name", "checkout": "~/Developer/name"}],
     "authorization": "",
