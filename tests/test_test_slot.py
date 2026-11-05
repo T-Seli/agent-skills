@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import signal
@@ -9,6 +11,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from agent_skills.test_slot import run_in_slot  # noqa: E402
 
 
 class TestSlotTests(unittest.TestCase):
@@ -21,6 +25,7 @@ class TestSlotTests(unittest.TestCase):
         self.configure({"test_slots": 1})
 
     def configure(self, config):
+        config = {"test_max_swap_gb": 1000, "test_min_free_gb": 0, **config}  # hermetic: ignore this machine's memory
         (self.tmp / "workers.json").write_text(json.dumps(config))
 
     def start(self, command, *args):
@@ -31,11 +36,15 @@ class TestSlotTests(unittest.TestCase):
         self.procs.append(proc)
         return proc
 
+    def held(self):
+        return sum(1 for path in (self.tmp / "slots").glob("slot-*.lock") if path.read_text())
+
     def holding(self, command="exec sleep 60"):
+        before = self.held() if (self.tmp / "slots").exists() else 0
         proc = self.start(command)
         deadline = time.time() + 10
         while time.time() < deadline:
-            if any(path.read_text() for path in (self.tmp / "slots").glob("slot-*.lock")):
+            if (self.tmp / "slots").exists() and self.held() > before:
                 return proc
             time.sleep(0.05)
         self.fail("holder never took a slot: " + (proc.stderr.read() if proc.poll() is not None else ""))
@@ -67,13 +76,42 @@ class TestSlotTests(unittest.TestCase):
         self.assertIn(str(first.pid), err)
         self.assertIn("exec sleep 60", err)
 
-    def test_default_is_two_slots_and_stderr_names_the_source(self):
+    def test_default_is_four_slots_and_stderr_names_the_source(self):
         self.configure({})
-        self.holding()
-        self.holding()
-        third = self.start("true", "--wait-seconds", "1")
-        self.assertEqual(third.wait(timeout=15), 75)
-        self.assertIn("2 slots (default)", third.stderr.read())
+        for _ in range(4):
+            self.holding()
+        fifth = self.start("true", "--wait-seconds", "1")
+        self.assertEqual(fifth.wait(timeout=15), 75)
+        self.assertIn("4 slots (default)", fifth.stderr.read())
+
+    def in_process(self, reading, **limits):
+        os.environ["AGENT_SKILLS_TEST_SLOTS"] = str(self.tmp / "slots")
+        self.addCleanup(os.environ.pop, "AGENT_SKILLS_TEST_SLOTS")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            status = run_in_slot("true", slots=1, wait_seconds=0.5, poll=0.05, memory=lambda: reading,
+                                 max_swap_gb=limits.get("swap", 8), min_free_gb=limits.get("free", 6))
+        return status, err.getvalue()
+
+    def test_high_swap_holds_the_run_back_then_exits_75_naming_swap(self):
+        status, err = self.in_process((12.0, 30.0))
+        self.assertEqual(status, 75)
+        self.assertIn("swap 12.0 GB used (limit 8 GB)", err)
+
+    def test_low_free_memory_holds_the_run_back(self):
+        status, err = self.in_process((0.0, 2.5))
+        self.assertEqual(status, 75)
+        self.assertIn("free memory 2.5 GB (needs 6 GB)", err)
+
+    def test_runs_when_memory_is_within_limits(self):
+        self.assertEqual(self.in_process((2.0, 20.0))[0], 0)
+
+    def test_memory_limits_are_validated(self):
+        for bad in ({"test_max_swap_gb": -1}, {"test_min_free_gb": "6"}):
+            self.configure(bad)
+            proc = self.start("true")
+            self.assertEqual(proc.wait(timeout=15), 1, bad)
+            self.assertIn(next(iter(bad)), proc.stderr.read())
 
     def test_invalid_slot_count_is_an_error_not_a_default(self):
         for bad in (0, "two", True):

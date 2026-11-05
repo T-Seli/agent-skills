@@ -2,6 +2,7 @@
 import fcntl
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -10,7 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 BUSY = 75  # exit status: no slot freed in time; not a test failure
-DEFAULT_SLOTS = 2
+DEFAULT_SLOTS = 4
+DEFAULT_MAX_SWAP_GB = 8  # swap in use above this holds new runs back
+DEFAULT_MIN_FREE_GB = 6  # free memory below this holds new runs back
+MEMORY_RECHECK_SECONDS = 5
 
 
 def slot_dir():
@@ -24,6 +28,39 @@ def configured_slots(config):
     if type(value) is not int or value < 1:
         raise ValueError(f'test_slots must be an integer >= 1, got {value!r}')
     return value, 'config'
+
+
+def configured_memory_limits(config):
+    limits = []
+    for key, default in (('test_max_swap_gb', DEFAULT_MAX_SWAP_GB), ('test_min_free_gb', DEFAULT_MIN_FREE_GB)):
+        value = config.get(key, default)
+        if type(value) not in (int, float) or value < 0:
+            raise ValueError(f'{key} must be a number >= 0, got {value!r}')
+        limits.append(value)
+    return tuple(limits)
+
+
+def _command(*args):
+    return subprocess.run(args, capture_output=True, text=True, check=True).stdout
+
+
+def read_memory():
+    """(swap used GB, free memory GB) from macOS; fails loudly when the output can't be read."""
+    swap = re.search(r'used = ([0-9.]+)M', _command('sysctl', '-n', 'vm.swapusage'))
+    free = re.search(r'free percentage: ([0-9]+)%', _command('memory_pressure', '-Q'))
+    if not swap or not free:
+        raise RuntimeError('cannot read swap or free memory (sysctl vm.swapusage, memory_pressure -Q)')
+    total = int(_command('sysctl', '-n', 'hw.memsize'))
+    return float(swap.group(1)) / 1024, int(free.group(1)) / 100 * total / 2**30
+
+
+def _memory_problem(reading, max_swap_gb, min_free_gb):
+    swap, free = reading
+    if swap > max_swap_gb:
+        return f'swap {swap:.1f} GB used (limit {max_swap_gb:g} GB)'
+    if free < min_free_gb:
+        return f'free memory {free:.1f} GB (needs {min_free_gb:g} GB)'
+    return None
 
 
 def _try_lock(directory, index):
@@ -75,8 +112,7 @@ def _end_group(child, grace=2.0):
 def _supervise(command, poll):
     """Run `command` in its own process group; end the group when it finishes, on a signal, or when our caller dies."""
     caller = os.getppid()
-    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(signum, _raise_stopped)
+    previous = {signum: signal.signal(signum, _raise_stopped) for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
     child = subprocess.Popen(['/bin/sh', '-c', command], process_group=0)
     try:
         while True:
@@ -90,15 +126,30 @@ def _supervise(command, poll):
         return stopped.status
     finally:
         _end_group(child)
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
-def run_in_slot(command, *, slots, wait_seconds, poll=0.2):
-    """Run `command` holding a slot until the run and everything it started has ended; BUSY after wait_seconds."""
+def run_in_slot(command, *, slots, wait_seconds, max_swap_gb, min_free_gb, memory=read_memory, poll=0.2):
+    """Run `command` holding a slot until the run and everything it started has ended.
+    Waits while all slots are busy or memory is short; BUSY after wait_seconds."""
     directory = slot_dir()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     deadline = time.monotonic() + wait_seconds
     waiting = False
+    problem, checked = None, None
     while True:
+        if checked is None or time.monotonic() - checked >= MEMORY_RECHECK_SECONDS:
+            problem, checked = _memory_problem(memory(), max_swap_gb, min_free_gb), time.monotonic()
+            if problem and not waiting:
+                print(f'test-slot: waiting for memory: {problem}', file=sys.stderr)
+                waiting = True
+        if problem:
+            if time.monotonic() >= deadline:
+                print(f'test-slot: memory still short after {wait_seconds:g}s: {problem}', file=sys.stderr)
+                return BUSY
+            time.sleep(poll)
+            continue
         for index in range(slots):
             fd = _try_lock(directory, index)
             if fd is not None:

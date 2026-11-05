@@ -13,7 +13,7 @@ from .release_maintenance import maintain_release
 from .task_checkpoint import operating_view
 from .task_reconciliation import reconcile_tasks
 from .approval_attempts import append_receipt, summarize
-from .test_slot import configured_slots, run_in_slot
+from .test_slot import configured_memory_limits, configured_slots, run_in_slot
 from .keep_awake import Native, Supervisor, status as awake_status, control as awake_control, reuse as awake_reuse
 
 
@@ -94,7 +94,7 @@ def main(argv=None):
     sweeper.add_argument('--rebuildable', action='append', default=[], help='Ignored dir the project can recreate')
     sweeper.add_argument('--active-hours', type=float, default=2, help='Git activity this recent holds a worktree')
     slot = subs.add_parser('test-slot', help='Run a shell command holding one of the machine-wide test slots; exit 75 when busy')
-    slot.add_argument('--wait-seconds', type=float, default=1800)
+    slot.add_argument('--wait-seconds', type=float, default=540, help='Under the 10-minute agent tool limit')
     slot.add_argument('command', help='Shell command, e.g. the project test command')
     sync = subs.add_parser('main-sync')
     sync.add_argument('main')
@@ -159,9 +159,12 @@ def main(argv=None):
                 print(json.dumps(result, sort_keys=True))
                 return 1
         elif args.action == 'test-slot':
-            slots, source = configured_slots(machine_config())
+            config = machine_config()
+            slots, source = configured_slots(config)
+            max_swap_gb, min_free_gb = configured_memory_limits(config)
             print(f'test-slot: {slots} slots ({source})', file=sys.stderr)
-            return run_in_slot(args.command, slots=slots, wait_seconds=args.wait_seconds)
+            return run_in_slot(args.command, slots=slots, wait_seconds=args.wait_seconds,
+                               max_swap_gb=max_swap_gb, min_free_gb=min_free_gb)
         elif args.action == 'sweep':
             result = sweep(args.main, base=args.base, apply=args.apply, rebuildable=args.rebuildable,
                            lease_files=machine_config().get('worktree_lease_files', []),
