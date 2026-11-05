@@ -1,7 +1,9 @@
-"""Machine-wide cap on concurrent test suites: N flock slot files, held by the exec'd command."""
+"""Machine-wide cap on concurrent test suites: N flock slot files held by a supervisor that ends its run."""
 import fcntl
 import json
 import os
+import signal
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -39,8 +41,59 @@ def _holders(directory, slots):
             if (directory / f'slot-{i}.lock').exists()]
 
 
+class _Stopped(Exception):
+    def __init__(self, signum):
+        self.status = 128 + signum
+
+
+def _raise_stopped(signum, _frame):
+    raise _Stopped(signum)
+
+
+def _signal_group(child, sig):
+    """False once the run's group is gone; macOS reports EPERM when only zombies remain."""
+    child.poll()  # reap the leader
+    try:
+        os.killpg(child.pid, sig)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _end_group(child, grace=2.0):
+    """Terminate everything left in the run's process group, then kill what ignores it."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if not _signal_group(child, sig):
+            return
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            if not _signal_group(child, 0):
+                return
+            time.sleep(0.05)
+
+
+def _supervise(command, poll):
+    """Run `command` in its own process group; end the group when it finishes, on a signal, or when our caller dies."""
+    caller = os.getppid()
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _raise_stopped)
+    child = subprocess.Popen(['/bin/sh', '-c', command], process_group=0)
+    try:
+        while True:
+            try:
+                status = child.wait(timeout=poll)
+                return status if status >= 0 else 128 - status
+            except subprocess.TimeoutExpired:
+                if os.getppid() != caller:  # the session that started us is gone
+                    return 128 + signal.SIGHUP
+    except _Stopped as stopped:
+        return stopped.status
+    finally:
+        _end_group(child)
+
+
 def run_in_slot(command, *, slots, wait_seconds, poll=0.2):
-    """Exec `command` holding a slot (the slot frees when the process dies); BUSY after wait_seconds."""
+    """Run `command` holding a slot until the run and everything it started has ended; BUSY after wait_seconds."""
     directory = slot_dir()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     deadline = time.monotonic() + wait_seconds
@@ -53,8 +106,10 @@ def run_in_slot(command, *, slots, wait_seconds, poll=0.2):
                          'utc': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
                 os.ftruncate(fd, 0)
                 os.write(fd, json.dumps(owner).encode())
-                os.set_inheritable(fd, True)
-                os.execvp('/bin/sh', ['sh', '-c', command])
+                try:
+                    return _supervise(command, poll)
+                finally:
+                    os.close(fd)
         if not waiting:
             print('test-slot: all slots busy, waiting; holders:\n' + '\n'.join(_holders(directory, slots)),
                   file=sys.stderr)

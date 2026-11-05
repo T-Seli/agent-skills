@@ -84,3 +84,50 @@ class TestSlotTests(unittest.TestCase):
 
     def test_command_exit_status_passes_through(self):
         self.assertEqual(self.start("exit 3").wait(timeout=15), 3)
+
+    def wait_gone(self, pid, seconds=3):
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_run_ends_and_slot_frees_when_its_caller_dies(self):
+        pidfile = self.tmp / "sleep.pid"
+        env = dict(os.environ, AGENT_SKILLS_CONFIG=str(self.tmp / "workers.json"),
+                   AGENT_SKILLS_TEST_SLOTS=str(self.tmp / "slots"), PYTHONDONTWRITEBYTECODE="1")
+        inner = f"sleep 300 & echo $! > {pidfile}; wait"
+        caller = subprocess.Popen(["/bin/sh", "-c", f"{sys.executable} -m agent_skills.safeguard_cli test-slot '{inner}'; true"],
+                                  cwd=ROOT, env=env, stderr=subprocess.DEVNULL)
+        self.procs.append(caller)
+        deadline = time.time() + 10
+        while not (pidfile.exists() and pidfile.read_text().strip()) and time.time() < deadline:
+            time.sleep(0.05)
+        sleeper = int(pidfile.read_text())
+        self.addCleanup(lambda: subprocess.run(["kill", "-9", str(sleeper)], stderr=subprocess.DEVNULL))
+        os.kill(caller.pid, signal.SIGKILL)
+        caller.wait()
+        self.assertTrue(self.wait_gone(sleeper), "the run outlived its caller")
+        self.assertEqual(self.start("true", "--wait-seconds", "3").wait(timeout=15), 0)
+
+    def test_terminating_test_slot_ends_the_whole_run(self):
+        pidfile = self.tmp / "sleep.pid"
+        holder = self.holding(f"sleep 300 & echo $! > {pidfile}; wait")
+        deadline = time.time() + 10
+        while not (pidfile.exists() and pidfile.read_text().strip()) and time.time() < deadline:
+            time.sleep(0.05)
+        sleeper = int(pidfile.read_text())
+        self.addCleanup(lambda: subprocess.run(["kill", "-9", str(sleeper)], stderr=subprocess.DEVNULL))
+        holder.terminate()
+        self.assertEqual(holder.wait(timeout=10), 128 + signal.SIGTERM)
+        self.assertTrue(self.wait_gone(sleeper), "SIGTERM left the run's background process alive")
+
+    def test_background_leftovers_end_when_the_command_finishes(self):
+        pidfile = self.tmp / "sleep.pid"
+        self.assertEqual(self.start(f"sleep 300 & echo $! > {pidfile}").wait(timeout=15), 0)
+        sleeper = int(pidfile.read_text())
+        self.addCleanup(lambda: subprocess.run(["kill", "-9", str(sleeper)], stderr=subprocess.DEVNULL))
+        self.assertTrue(self.wait_gone(sleeper), "a background process outlived the finished run")
