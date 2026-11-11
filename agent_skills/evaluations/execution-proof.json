@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "evaluation_kind": "reviewed-semantic-composition",
+  "limits": "Case/schema/composition checks are offline preparation, not native model adherence or transport enforcement. No private campaign records embedded.",
+  "cases": [
+    {
+      "scenario": "regression",
+      "selection_mode": "explicit",
+      "forbidden_skills": [
+        "company.deploy"
+      ],
+      "hard_invariants": [
+        "No actual workers, browser operations, edits, messages, schedules or access changes in this hypothetical evaluation.",
+        "No claim that static source/metadata checks prove native behavior, authenticated authority or delivered notifications."
+      ],
+      "id": "nongit-phase-proof",
+      "task": "A selected small local prototype code fix is authorized only in page.html and results/. There is no Git repo. Determine the phase, baseline evidence, test-first seam and review route without creating Git or skipping skills.",
+      "required_skills": [
+        "company.implement",
+        "company.tdd",
+        "company.ui-design"
+      ],
+      "allowed_skills": [
+        "company.implement",
+        "company.tdd",
+        "company.ui-design"
+      ],
+      "outcome_checks": [
+        "Read implement plus TDD for code; use UI supplement, not UI-only execution.",
+        "Bind baseline copy/content hashes and allowed existing record; adapt only Git-dependent steps.",
+        "Retain assertion-red/green and independent review; infrastructure failure is not red. Required integration/spec-mode still holds if applicable."
+      ]
+    },
+    {
+      "scenario": "regression",
+      "selection_mode": "explicit",
+      "forbidden_skills": [
+        "company.deploy"
+      ],
+      "hard_invariants": [
+        "No actual workers, browser operations, edits, messages, schedules or access changes in this hypothetical evaluation.",
+        "No claim that static source/metadata checks prove native behavior, authenticated authority or delivered notifications."
+      ],
+      "id": "bounded-full-reply",
+      "task": "A UI options reply must fit250lexicalwords including its table/headings. The draft has312words and essential blockers. State the actual send preflight and detail handoff without deleting blockers or pretending the oversized reply passed.",
+      "required_skills": [
+        "company.ui-design"
+      ],
+      "allowed_skills": [
+        "company.ui-design"
+      ],
+      "outcome_checks": [
+        "Measure complete intended reply using the shared helper with max_words250; oversized output fails.",
+        "Revise before sending, move detail to an allowed artifact while retaining decision/acceptance limits inline.",
+        "No automatic trimming or content/semantic correctness claim from counts."
+      ]
+    },
+    {
+      "scenario": "regression",
+      "selection_mode": "explicit",
+      "forbidden_skills": [
+        "company.deploy"
+      ],
+      "hard_invariants": [
+        "No actual workers, browser operations, edits, messages, schedules or access changes in this hypothetical evaluation.",
+        "No claim that static source/metadata checks prove native behavior, authenticated authority or delivered notifications."
+      ],
+      "id": "scoped-critic-artifacts",
+      "task": "A read-only critic may read page.html and write only results/review/. It wants a Python scratch script and screenshots. State allowed paths and evidence preservation; ordinary temporary files in other tasks are not prohibited.",
+      "required_skills": [
+        "company.ui-design",
+        "company.test-review"
+      ],
+      "allowed_skills": [
+        "company.ui-design",
+        "company.test-review"
+      ],
+      "outcome_checks": [
+        "Explicit artifact boundary governs scripts too: use results/review/scratch or hold that write for specific authority.",
+        "Normal authorized temporary storage remains allowed when no narrower scope applies; do not globally change TMPDIR.",
+        "Persist commands/actions and artifact hashes under allowed roots; round/revision paths preserve previous captures."
+      ]
+    },
+    {
+      "scenario": "regression",
+      "selection_mode": "explicit",
+      "forbidden_skills": [
+        "company.deploy"
+      ],
+      "hard_invariants": [
+        "No actual workers, browser operations, edits, messages, schedules or access changes in this hypothetical evaluation.",
+        "No claim that static source/metadata checks prove native behavior, authenticated authority or delivered notifications."
+      ],
+      "id": "budget-independent-final",
+      "task": "The selected direction needs two critique rounds. Planned implementation and first-round critics consume all currently available effort. Parent tests could pass after a fix. Decide the launch/review plan and whether the parent result closes final acceptance.",
+      "required_skills": [
+        "company.ui-design",
+        "company.test-review"
+      ],
+      "allowed_skills": [
+        "company.ui-design",
+        "company.test-review"
+      ],
+      "outcome_checks": [
+        "Reserve independent exact-final retest across parent/children before dispatch; narrow dependent scope or hold before consuming the budget.",
+        "Parent tests alone do not close independent findings; critic repeats original and adjacent path on exact final source with action/image receipts.",
+        "At exhaustion preserve open finding, owner and next action; do not imply another round is already authorized or that old screenshot timestamps prove the fix."
+      ]
+    },
+    {
+      "scenario": "regression",
+      "selection_mode": "explicit",
+      "forbidden_skills": [
+        "company.deploy"
+      ],
+      "hard_invariants": [
+        "No actual workers, browser operations, edits, messages, schedules or access changes in this hypothetical evaluation.",
+        "No claim that static source/metadata checks prove native behavior, authenticated authority or delivered notifications."
+      ],
+      "id": "checkpoint-capability-route",
+      "task": "Resume an owned small deterministic ticket from a durable checkpoint. Only notification intents and completion/disconnect capability are recorded; delivery and a universal idle event are unproven. Requested model/effort exists but runtime exposes model only. State recovery, route choice and next verification.",
+      "required_skills": [
+        "company.agent-coordination"
+      ],
+      "allowed_skills": [
+        "company.agent-coordination"
+      ],
+      "outcome_checks": [
+        "Reconcile task/spec/source, owner, pending effects, evidence cursor and next checkpoint before redispatch; uncertain admission is not proof of execution.",
+        "Reuse task-fit ordinary/involved route controls, not automatic maximum; preserve requested choices and mark unexposed effective effort unknown.",
+        "Intent is not send/schedule; completion/disconnect is not universal idle or end-to-end delivery.",
+        "Name a bounded supported reader/checkpoint and a separately authorized future test with dispatch/admission/execution/review/delivered-result receipts. No watcher or send is created."
+      ]
+    },
+    {
+      "id": "nonui-independent-final",
+      "scenario": "regression",
+      "selection_mode": "explicit",
+      "required_skills": [
+        "company.test-review"
+      ],
+      "allowed_skills": [
+        "company.test-review"
+      ],
+      "forbidden_skills": [
+        "company.deploy",
+        "company.ui-design"
+      ],
+      "task": "Independently retest a fixed backend retry bug on the exact final artifact. The original API reproduction and adjacent error/idempotency cases have inspectable results. There is no UI or visual finding. Determine whether a missing screenshot blocks this review without claiming deployment acceptance.",
+      "outcome_checks": [
+        "Bind exact final source and independently repeat the original API reproduction and appropriate adjacent checks.",
+        "No unrelated screenshot or UI-design gate is added to this backend finding; use the evidence appropriate to its seam.",
+        "Do not substitute parent tests for independent review or component checks for deployment/behavior acceptance."
+      ],
+      "hard_invariants": [
+        "No actual execution, writes, workers, messages, deployment or scope expansion in this hypothetical review.",
+        "A static composed-source check is not native/runtime enforcement proof."
+      ]
+    }
+  ]
+}

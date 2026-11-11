@@ -8,8 +8,9 @@ argument-hint: "[bug, feature, question, or list]"
 
 Answer a question, or turn a problem into one recommended, verifiable plan. **Read-only:** the only file written is Plan mode's `plan.md`. First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`: names, draft folders, pending, the chain, consent, report caps and the defaults named below are per it.
 
-For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`: reconcile the latest user decision and carry the current matrix/source identity, existing capabilities, producer paths, exceptions and decision-brief fields.
+For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`: reconcile the latest user decision and carry the current matrix/source identity, existing capabilities, producer paths, exceptions and decision-brief fields. Apply [current research](../workflow-contracts/references/research.md) for every substantive blueprint in either mode: record the research decision, dynamically retrieve decision-relevant current primary evidence or give a proportional skip reason, and bind its packet to the Answer/spec; explicit research never silently skips.
 
+For UI/frontend or visualization choices, also load [ui-design](../ui-design/SKILL.md): compare distinct directions against the existing product, carry the selected design/research packet into the plan, and preserve unresolved user choices. Offline: compose `company.blueprint company.ui-design`; a Markdown link alone does not load its references.
 ## Contract
 - No repo edits, no git mutations, no state-changing calls (database writes, restarts, deploys, mutating APIs). Reads, read-only queries and logs are fine. Scratch files go in the session scratchpad, else a `mktemp -d` dir removed at the end.
 - Something urgent turns up → lead the reply with it and wait. Naming a fix is in scope; applying it is not. Blueprint stays read-only whatever the reply; what runs next, and on which words, is per contracts.md § Chain and § Consent.
@@ -66,7 +67,7 @@ For a behavior change in either mode, read `${CLAUDE_SKILL_DIR}/../workflow-cont
    # <title>
    Type: <type> · Slug: <slug> · Class: <class> · Base: <branch, only if not the project's> · Updated: <UTC>
    ## Question
-   ## Facts            proven / inferred / unknown, each with path:line or source
+   ## Facts            proven / inferred / unknown, each with path:line or source; current research decision/packet and version fit
    ## Current behavior matrix   identity, existing capability, approved rows, producer paths, exceptions; per behavior.md; include domain terms, decision IDs/sources and observable acceptance per decisions.md
    ## Recommendation   approach, and why it won (a list gets one subsection per cluster)
    ## Changes          file or module → what changes; a prompt: size before → after and the agnostic check (behavior.md § Agent prompts)

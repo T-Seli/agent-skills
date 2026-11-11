@@ -211,13 +211,32 @@ class CheckpointTests(unittest.TestCase):
                 next_check_at_utc='2026-10-14T18:21:00Z', expires_at_utc=EXP,
                 observed_at_utc='2026-10-14T18:12:00Z', receipt_ref='schedule:admitted')
 
+    def test_legacy_watch_result_replay_keeps_original_record_and_unknown_coverage(self):
+        r = self.checked()
+        r['coordination']['watch_baselines']['watch']['check'].pop('coverage')
+        before = copy.deepcopy(r)
+        try:
+            updated = tasks.record_watch_result(r, watch_id='watch', baseline_digest='baseline',
+                observed_at_utc=T1, wake_receipt='wake:one', readback_receipt='result:one',
+                traffic_count=0, functional_results=[])
+        except ValueError:
+            updated = None
+        self.assertEqual(updated, before)
+        self.assertEqual(tasks.operating_view(r, now=T1)['monitors'][0]['source_coverage']['state'], 'unknown')
+
     def test_positive_and_failed_functional_results_are_separate_from_execution(self):
         for outcomes, expected in [([True], 'passed'), ([False], 'failed')]:
             args = dict(watch_id='watch', baseline_digest='baseline', observed_at_utc=T1,
-                wake_receipt='wake', readback_receipt='read', traffic_count=1, functional_results=outcomes)
+                wake_receipt='wake', readback_receipt='read', traffic_count=1, functional_results=outcomes,
+                coverage={'requested': {'start': T0, 'end': T1}, 'observed': {'start': T0, 'end': T1},
+                          'source_observed_at_utc': T1, 'source_identity': 'fixture:head',
+                          'runtime_identity': 'reader:version', 'state': 'verified', 'cap_seconds': None,
+                          'truncated': False, 'max_source_age_seconds': 60, 'receipt_ref': 'source:read'})
             r = tasks.record_watch_result(self.watch(), **args)
             self.assertEqual(tasks.operating_view(r, now=T1)['monitors'][0]['functional_acceptance'], expected)
             self.assertNotEqual(r['status'], 'verified-done')
+            self.assertEqual(tasks.operating_view(r, now=LATE)['monitors'][0]['source_coverage']['state'], 'unknown')
+            self.assertEqual(r['coordination']['watch_baselines']['watch']['check']['coverage']['source_observed_at_utc'], T1)
         with self.assertRaises(ValueError):
             tasks.record_watch_result(self.watch(), **{**args, 'functional_results': ['pass']})
 

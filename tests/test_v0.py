@@ -27,12 +27,14 @@ class V0Tests(unittest.TestCase):
         loaded = catalog.load(selected["skill_id"], role="worker")
         self.assertEqual([x["path"] for x in loaded["sources"]],
                          ["skills/test-review/SKILL.md", "skills/workflow-contracts/contracts.md",
-                          "skills/workflow-contracts/behavior.md", "skills/workflow-contracts/decisions.md"])
+                          "skills/workflow-contracts/behavior.md", "skills/workflow-contracts/decisions.md",
+                          "skills/workflow-contracts/references/research.md",
+                          "skills/workflow-contracts/references/execution-proof.md"])
         self.assertTrue(catalog.fresh(loaded))
         self.assertIn("core:skills/test-review/SKILL.md", loaded["package_hashes"])
         self.assertTrue(all("content" not in x for x in catalog.index()))
         composed = catalog.compose(["company.blueprint", "company.test-review"], role="worker")
-        self.assertEqual(len(composed["sources"]), 5)  # two bodies, three shared contracts
+        self.assertEqual(len(composed["sources"]), 7)  # two bodies, three contracts, two shared references
         with self.assertRaises(ValueError):
             catalog.compose(["company.handoff"] * 4, role="worker")
         self.assertEqual(catalog.select("preview change", role="worker")["decision"], "no-match")
@@ -115,16 +117,11 @@ class V0Tests(unittest.TestCase):
     def test_stale_hash_and_path_escape_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for path in ("agent_skills/catalog.json", "skills/test-review/SKILL.md",
-                         "skills/grill-me/SKILL.md", "skills/workflow-contracts/decisions.md",
-                         "skills/workflow-contracts/contracts.md", "skills/workflow-contracts/behavior.md", "skills/skill-steward/SKILL.md",
-                         "skills/agent-coordination/SKILL.md", "skills/agent-coordination/references/tasks.md",
-                         "skills/agent-coordination/references/routing.md",
-                         "skills/agent-coordination/references/state.md",
-                         "skills/approval-handoff/SKILL.md", "skills/system-audit/SKILL.md",
-                         "skills/system-audit/references/reviewers.md",
-                         "skills/blueprint/SKILL.md", "skills/handoff/SKILL.md",
-                         "skills/task-history/SKILL.md", "skills/tdd/SKILL.md"):
+            source = json.loads((ROOT / "agent_skills/catalog.json").read_text())
+            paths = {"agent_skills/catalog.json"}
+            for entry in source["skills"]:
+                paths.update([entry["body"], *entry["requires"]])
+            for path in sorted(paths):
                 (root / path).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / path, root / path)
             catalog = Catalog(root)

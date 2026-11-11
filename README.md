@@ -1,5 +1,13 @@
 # Shared agent skills
 
+Start a primary session with the on-demand [engineering coordinator guide](ENGINEERING-COORDINATOR.md).
+
+Optional [scoped skill agents](skills/workflow-contracts/references/scoped-agents.md)
+provide local exploration, review and implementation profiles for Claude and
+Codex. They load the existing shared skills on demand. Claude uses explicit tool
+allowlists; Codex uses supported capability flags and inherits parent MCP servers
+and permissions. Existing `scout` connector access is retained.
+
 This repository is being generalized from its Claude Code/Codex workflow
 origin. The authored core remains at `skills/` and `global/`; adapter maps are
 under `packages/claude`, `packages/codex`, and `packages/dot`. The Dot adapter is
@@ -8,6 +16,11 @@ Existing installed links keep their current targets throughout this migration.
 The [architecture overview](architecture.html) shows the human, dot, workers,
 subagents and shared guidance in one diagram.
 This repository starts from a reviewed, history-free source snapshot; Git tracks subsequent versions.
+
+For UI/frontend and local prototypes, use [ui-design](skills/ui-design/SKILL.md) with
+blueprint, implement or test-review. It compares distinct directions, preserves the
+product design system and carries research/visual acceptance through the work;
+it uses existing visualization capabilities and adds no renderer.
 
 ## Daily v0 use
 The local selector is an offline aid; it does not start an agent or send a message.
@@ -118,7 +131,7 @@ Each skill starts from the user's plain words and starts the next one itself; th
 | `hooks/test-gate.sh` | Denies a bare test-suite command and names the `safeguard-cli test-slot` command to run instead, unless the project's `Test slot` is `runner` | Before each Bash call |
 | `codex/AGENTS.md` | Codex header: precedence, skill list, chain and consent pointers | Built into `~/.codex/AGENTS.md` with global `CLAUDE.md`, the output style body and `codex/compatibility.md` |
 | `codex/compatibility.md` | Tool, sub-agent, worktree, scheduler and hook translations for Codex | Always in Codex (via the built `AGENTS.md`) |
-| `codex/agents/scout.toml` | The scout for Codex, brief inline, sandboxed read-only | Description always; body when delegated |
+| `codex/agents/scout.toml` | The scout for Codex, brief inline, read-only workflow under parent permissions | Description always; body when delegated |
 | `codex/hooks/` | Codex session-start snapshot | On session start, once trusted with `/hooks` |
 | `CLAUDE.md` | This repo's own project facts (it is a project like any other) | When working in this repo |
 | `install.sh` | Links everything into Claude Code and Codex and builds `~/.codex/AGENTS.md`; idempotent | Run on install and after each deploy |
@@ -128,6 +141,7 @@ Each skill starts from the user's plain words and starts the next one itself; th
 | `skills/prime-context` | Repo briefing, stale-work list, newest handoff | Description always; body on invoke |
 | `skills/grill-me` | Dependency-ordered technical decision interview in the owning session | Description always; shared decision contract on invoke |
 | `skills/blueprint` | Angles, rubric scoring, proposal format, bug-evidence mode | Description always; body on invoke; `references/` read by the scout for bugs |
+| `skills/ui-design` | UI/frontend/local-prototype design options, selected design packet and iterative critique; supplement to blueprint, implement or test-review | Description always; body on invoke; design, visualization and iteration references on demand |
 | `skills/action-items` | Action-item format | Description always; body on invoke |
 | `skills/implement` | One-line plans, sync, locked worktree, collision check, env setup, per-item commits, resume; spec mode (one worker per ticket, merger, two-axis review, one fixer) in `references/` | Description always; body on invoke |
 | `skills/tdd` | Red → green per vertical slice at the plan's agreed seams; good-test rules and anti-patterns | Description always; body on invoke |
@@ -149,6 +163,23 @@ Run `./install.sh` from your clone (`--dry-run` first to see the links). `--targ
 
 `scripts/critical-local-work.sh <task-id> <seconds> -- <command>` wraps one explicitly chosen critical local command with macOS `caffeinate -i`. The assertion ends when the command exits and expires after at most four hours. It never changes persistent power or security settings. The caller must choose the actual critical command and task ID; session startup does not activate it automatically. A local assertion cannot keep cloud work running or recover a sleeping Mac.
 
+For an isolated filesystem rehearsal, use `--destination-root=/absolute/task-owned/path`;
+it writes a separate adapter tree without repurposing HOME or modifying the active
+installation. Codex agent TOML files are regular copies for standalone discovery.
+A colliding explicit `[agents.name]` registration holds the installer before any
+adapter changes; review the conditional, in-memory `codex_role_migration` plan
+instead of deleting or rewriting user configuration automatically.
+
+Build a new snapshot with `skills/workflow-contracts/scripts/release-package
+--source <clean-checkout> --destination <new-absolute-path> --commit <full-sha>
+--repository <owner/repo>`. The destination must be outside the checkout. It uses
+only the exact tracked Git tree, preserves executable bits, adds the pin and
+verifies strict contents; it never overwrites or activates a snapshot. Use
+release-bound bytecode-free entrypoints such as `skills/task-history/scripts/history-cli`.
+Library callers need `python3 -B` or a per-process cache outside the release.
+Writable snapshots are not filesystem-enforced immutable objects: verify after
+owned smoke tests and report extras rather than deleting live user data.
+
 Migration: keep the existing `skills/` and `global/` paths until every installed link has been reviewed. Test each adapter with `--dry-run` on the intended machine, then install only after reviewing backups and settings in an idle window. Roll back by returning to the previously installed source and rerunning the matching installer target; restore any backed-up real files before restarting tools. The published source starts from a reviewed clean snapshot. Earlier local Git history remains private. Review access and source changes before wider sharing.
 
 Then merge settings by hand: `settings.snippet.json` into `~/.claude/settings.json` (append where arrays already exist), and the Codex hooks into `~/.codex/hooks.json`, trusting them with `/hooks`. Restart both tools. Check: `/output-style` marks Orchestrator, `/hooks` lists the hooks, `/context` lists `~/.claude/CLAUDE.md`, `/agents` lists `scout`.
@@ -158,6 +189,8 @@ Then merge settings by hand: `settings.snippet.json` into `~/.claude/settings.js
 2. Fill each field with facts; move existing project notes into the matching section; move long runbook detail into the docs the sections point to. A field that doesn't apply gets `none`; never delete a section. `Targets: none` ends the pipeline at `/deploy` (a merge).
 3. Replace `AGENTS.md` with the pointer at the bottom of the template.
 4. Run `/prime-context`. Any `Add to CLAUDE.md § …` line in a report names a fact still missing.
+
+Role guidance: start with the [role map](skills/agent-coordination/references/roles.md), then load the current coordinator, execution or independent-review guidance at its stated reread triggers. These are source contracts, not native enforcement or new permissions.
 
 ## Add a skill
 - Frontmatter: `name`, a `description` ≤300 chars (what + trigger phrases, no overlap with another skill), `argument-hint`. No `disable-model-invocation`: every skill starts from plain words. Outward steps (push, deploy, messages) run only with the user's go-ahead per contracts.md § Consent.

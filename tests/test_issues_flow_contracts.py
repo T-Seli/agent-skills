@@ -13,7 +13,7 @@ class OneHome(unittest.TestCase):
         rules = text(ISSUES)
         for rule in ('§ Map `Issues`', 'lands a code change', 'sub-issue', 'blocked-by', '## Parent', '## What to build',
                      '## Acceptance criteria', 'ready-for-agent', 'issues-cli', 'claim', '--approved',
-                     'working copy', 'issue-text.md', 'Trunk flow', 'ICLI close', 'Closes #', 'draft PR', 'gh pr ready', 'never touch', 'Approved:'):
+                     'working copy', 'issue-text.md', 'Trunk flow', 'ICLI close', 'Closes <owner/repo>#', 'draft PR', 'gh pr ready', 'never touch', 'Approved:'):
             self.assertIn(rule, rules)
 
     def test_contracts_template_and_global_point_to_it(self):

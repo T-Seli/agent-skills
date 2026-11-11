@@ -1,3 +1,4 @@
+# Synthetic fixtures: identities and timestamps below are fabricated; no live source references.
 import importlib.util
 import json
 import sys
@@ -18,8 +19,8 @@ def load(name):
 
 t, h, n, c = load('tasks'), load('hub'), load('nav'), load('correlation')
 HUMAN, BOT = 'human-account', 'assistant-bot'
-ROOT, SUMMARY = '1790819911.865269', '1790820000.000100'
-SID = '01a0d9a6-e8fa-7bf2-8965-182e4b2ae184'
+ROOT, SUMMARY = '1000819911.865269', '1000820000.000100'
+SID = '00000000-0000-4000-8000-000000000002'
 HOSTS = {'code.example.invalid'}
 CHAT = {'channel': 'chat', 'text': 'yes'}
 PR_JSON = '{"number": 89, "url": "https://code.example.invalid/org/repo/pull/89"}'
@@ -27,7 +28,7 @@ PR_JSON = '{"number": 89, "url": "https://code.example.invalid/org/repo/pull/89"
 
 def blocked(action='publish as a draft PR', target='fix branch, no deployment'):
     r = t.new_task('wi-1', 'wi', worker_kind='codex', owner='human', repo='repo')
-    r.update(status='blocked', last_change_ts='1790819000', pending_decision={'need': '?', 'action': action, 'target': target})
+    r.update(status='blocked', last_change_ts='1000819000', pending_decision={'need': '?', 'action': action, 'target': target})
     r['worker']['session_id'] = SID
     return r
 
@@ -40,7 +41,7 @@ def thread(**kw):
             'shown_pending': {'need': '?', 'action': 'publish as a draft PR', 'target': 'fix branch, no deployment'}, **kw}
 
 
-def reply(text, ts='1790820100.000200', user=HUMAN, thread_ts=ROOT, channel='D1', **kw):
+def reply(text, ts='1000820100.000200', user=HUMAN, thread_ts=ROOT, channel='D1', **kw):
     return {'ts': ts, 'user': user, 'text': text, 'thread_ts': thread_ts, 'channel': channel, **kw}
 
 
@@ -114,7 +115,7 @@ class LinkTests(unittest.TestCase):
                 h.summary(blocked(), title='Fix', result='Ready', owner='Codex', label='Codex', session=bad)
 
 
-ROOT_LINK = '{"ok": true, "permalink": "https://chat.example.invalid/archives/D1/p1790819911865269"}'
+ROOT_LINK = '{"ok": true, "permalink": "https://chat.example.invalid/archives/D1/p1000819911865269"}'
 
 
 def item(**kw):
@@ -180,15 +181,15 @@ class DestinationTests(unittest.TestCase):
 
     def test_a_connector_permalink_to_the_exact_root_opens_the_thread(self):
         lines = item(thread=n.thread(ROOT, channel='D1', inside=True, permalink=self.permalink()))
-        self.assertEqual(lines[5], 'Open chat thread: <https://chat.example.invalid/archives/D1/p1790819911865269|Open chat thread>')
-        reply = self.permalink('{"permalink": "https://chat.example.invalid/archives/D1/p1790820000000100?thread_ts=1790819911.865269&cid=D1"}')
+        self.assertEqual(lines[5], 'Open chat thread: <https://chat.example.invalid/archives/D1/p1000819911865269|Open chat thread>')
+        reply = self.permalink('{"permalink": "https://chat.example.invalid/archives/D1/p1000820000000100?thread_ts=1000819911.865269&cid=D1"}')
         self.assertIn('|Open chat thread>', item(thread=n.thread(ROOT, channel='D1', inside=False, permalink=reply))[5])
 
     def test_a_permalink_for_another_root_or_from_another_source_never_stands_in(self):
-        other = self.permalink('{"permalink": "https://chat.example.invalid/archives/D1/p1790802545583229"}')
-        wrong_thread = self.permalink('{"permalink": "https://chat.example.invalid/archives/D1/p1?thread_ts=1790802545.583229"}')
-        from_code_host = self.permalink('{"permalink": "https://chat.example.invalid/archives/D1/p1790819911865269"}', source='code-host')
-        guessed = {'url': 'https://chat.example.invalid/archives/D1/p1790819911865269', 'verified_by': 'connector'}
+        other = self.permalink('{"permalink": "https://chat.example.invalid/archives/D1/p1000802545583229"}')
+        wrong_thread = self.permalink('{"permalink": "https://chat.example.invalid/archives/D1/p1?thread_ts=1000802545.583229"}')
+        from_code_host = self.permalink('{"permalink": "https://chat.example.invalid/archives/D1/p1000819911865269"}', source='code-host')
+        guessed = {'url': 'https://chat.example.invalid/archives/D1/p1000819911865269', 'verified_by': 'connector'}
         for lnk in [other, wrong_thread, from_code_host, guessed]:
             self.assertEqual(item(thread=n.thread(ROOT, channel='D1', inside=True, permalink=lnk))[5], 'Open chat thread: reply in this thread', lnk)
             self.assertEqual(item(thread=n.thread(ROOT, channel='D1', inside=False, permalink=lnk))[5],
@@ -205,7 +206,7 @@ class DestinationTests(unittest.TestCase):
         self.assertEqual(lines[5], 'Open chat thread: no verified link (root recorded in details)')
 
     def test_the_root_is_exact_and_recorded_in_details(self):
-        for bad in ['1790819911', '1790819911.86526', 'p1790819911865269', 1790819911.865269]:
+        for bad in ['1000819911', '1000819911.86526', 'p1000819911865269', 1000819911.865269]:
             with self.assertRaises(ValueError):
                 n.thread(bad, channel='D1', inside=True)
         th = n.thread(ROOT, channel='D1', inside=True)
@@ -223,29 +224,29 @@ class DestinationTests(unittest.TestCase):
     def test_the_index_never_says_reply_here(self):
         s = h.summary(blocked(), title='Fix', result='Ready', owner='Codex', label='Codex', thread=n.thread(ROOT, channel='D1', inside=True))
         line = h.render_index([s])
-        self.assertTrue(line.endswith('Open chat thread: in chat, the thread started 2026-10-01 01:58 UTC (no link here)'), line)
+        self.assertTrue(line.endswith('Open chat thread: in chat, the thread started 2001-09-18 13:31 UTC (no link here)'), line)
         self.assertNotIn('details', line)
         self.assertIn('Open chat thread: reply in this thread', h.render(s))
 
     def test_the_same_ts_in_another_channel_fails_closed(self):
         ok = self.permalink()
         self.assertIn('|Open chat thread>', item(thread=n.thread(ROOT, channel='D1', inside=True, permalink=ok))[5])
-        for raw in ['{"permalink": "https://chat.example.invalid/archives/COTHER/p1790819911865269"}',
-                    '{"permalink": "https://chat.example.invalid/p1790819911865269"}',
-                    '{"permalink": "https://chat.example.invalid/archives/COTHER/p1790820000000100?thread_ts=1790819911.865269&cid=COTHER"}',
-                    '{"permalink": "https://chat.example.invalid/archives/D1/p1790820000000100?thread_ts=1790819911.865269&cid=COTHER"}',
-                    '{"permalink": "https://chat.example.invalid/archives/D1/x/p1790819911865269"}',
-                    '{"permalink": "https://chat.example.invalid/evil/archives/D1/p1790819911865269"}']:
+        for raw in ['{"permalink": "https://chat.example.invalid/archives/COTHER/p1000819911865269"}',
+                    '{"permalink": "https://chat.example.invalid/p1000819911865269"}',
+                    '{"permalink": "https://chat.example.invalid/archives/COTHER/p1000820000000100?thread_ts=1000819911.865269&cid=COTHER"}',
+                    '{"permalink": "https://chat.example.invalid/archives/D1/p1000820000000100?thread_ts=1000819911.865269&cid=COTHER"}',
+                    '{"permalink": "https://chat.example.invalid/archives/D1/x/p1000819911865269"}',
+                    '{"permalink": "https://chat.example.invalid/evil/archives/D1/p1000819911865269"}']:
             lnk = self.permalink(raw)
             self.assertEqual(item(thread=n.thread(ROOT, channel='D1', inside=True, permalink=lnk))[5],
                              'Open chat thread: reply in this thread', raw)
         # the same link is fine for the thread it actually names
-        other = self.permalink('{"permalink": "https://chat.example.invalid/archives/COTHER/p1790819911865269"}')
+        other = self.permalink('{"permalink": "https://chat.example.invalid/archives/COTHER/p1000819911865269"}')
         self.assertIn('|Open chat thread>', item(thread=n.thread(ROOT, channel='COTHER', inside=True, permalink=other))[5])
 
     def test_forged_or_preformatted_thread_entries_are_refused(self):
         good = n.thread(ROOT, channel='D1', inside=True, permalink=self.permalink())
-        for bad in [dict(good, chat='x\nNext: ok'), dict(good, root_ts='x\nOwner: evil'), dict(good, root_ts=1790819911.865269),
+        for bad in [dict(good, chat='x\nNext: ok'), dict(good, root_ts='x\nOwner: evil'), dict(good, root_ts=1000819911.865269),
                     dict(good, channel='d1|x>'), dict(good, inside='yes'), dict(good, extra='Open chat thread: <https://evil.invalid|x>'),
                     {'line': 'Open chat thread: <https://evil.invalid|Open chat thread>'}, 'Open chat thread: <https://evil.invalid|x>']:
             with self.assertRaises(ValueError, msg=bad):
@@ -254,7 +255,7 @@ class DestinationTests(unittest.TestCase):
         for bad in [{'root_ts': 1}, 'x']:
             with self.assertRaises(ValueError):
                 n.thread_line(bad)
-        forged_link = dict(good, permalink={'url': 'https://chat.example.invalid/archives/D1/p1790819911865269', 'host': 'chat.example.invalid',
+        forged_link = dict(good, permalink={'url': 'https://chat.example.invalid/archives/D1/p1000819911865269', 'host': 'chat.example.invalid',
                                             'receipt': {'source': 'connector', 'field': 'permalink', 'sha256': '0' * 64, 'binding': 'x'}})
         self.assertEqual(n.thread_line(forged_link, {'chat.example.invalid'}), 'Open chat thread: reply in this thread')
 
@@ -262,7 +263,7 @@ class DestinationTests(unittest.TestCase):
         th = n.thread(ROOT, channel='D1', inside=True, chat='Team Chat')
         s = h.summary(blocked(), title='Fix', result='Ready', owner='Codex', label='Codex', thread=th)
         line = h.render_index([s])
-        self.assertIn('Open Team Chat thread: in Team Chat, the thread started 2026-10-01 01:58 UTC (no link here)', line)
+        self.assertIn('Open Team Chat thread: in Team Chat, the thread started 2001-09-18 13:31 UTC (no link here)', line)
         self.assertNotIn('<', line.split('Open Team Chat thread')[1])
         linked = h.summary(blocked(), title='Fix', result='Ready', owner='Codex', label='Codex', allowed_hosts={'chat.example.invalid'},
                            thread=n.thread(ROOT, channel='D1', inside=True, permalink=self.permalink()))
@@ -318,7 +319,7 @@ class ChannelBindingTests(unittest.TestCase):
         ea, _ = self.event(reply('yes', channel='D1'), a)
         eb, _ = self.event(reply('yes', channel='C2'), b)
         self.assertNotEqual(ea['id'], eb['id'])
-        self.assertEqual(ea['id'], f'thread:{WS}:D1:{ROOT}:1790820100.000200')
+        self.assertEqual(ea['id'], f'thread:{WS}:D1:{ROOT}:1000820100.000200')
 
     def test_identical_roots_in_two_workspaces_stay_separate(self):
         home, away = thread(), thread(workspace='T2')
@@ -346,65 +347,65 @@ class ChannelBindingTests(unittest.TestCase):
     def test_replays_and_out_of_order_replies_dedupe_per_channel(self):
         a, b = thread(destination='D1'), thread(destination='C2')
         r = blocked()
-        early, _ = self.event(reply('more context', ts='1790820100.000200', channel='D1'), a)
-        late, _ = self.event(reply('yes', ts='1790820150.000200', channel='D1'), a)
-        other, _ = self.event(reply('yes', ts='1790820100.000200', channel='C2'), b)
+        early, _ = self.event(reply('more context', ts='1000820100.000200', channel='D1'), a)
+        late, _ = self.event(reply('yes', ts='1000820150.000200', channel='D1'), a)
+        other, _ = self.event(reply('yes', ts='1000820100.000200', channel='C2'), b)
         outcomes = []
         for e in [late, early, late, other, early]:
             r, o = t.apply(r, e)
             outcomes.append(o)
         # the later yes stands; the earlier reply arriving late is stale, a replay is a duplicate
         self.assertEqual(outcomes, ['noted', 'stale', 'duplicate', 'stale', 'stale'])
-        self.assertEqual((r['proposal']['approve'], r['proposal']['ts']), (True, '1790820150.000200'))
+        self.assertEqual((r['proposal']['approve'], r['proposal']['ts']), (True, '1000820150.000200'))
         self.assertEqual(r['approvals'], [])
         self.assertEqual(r['status'], 'blocked')
 
     def test_bot_replies_ignore_other_channels(self):
-        pages = [[{'ts': '1790803103.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'answer', 'channel': 'C2'},
-                  {'ts': '1790803104.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'right one', 'channel': 'D1'}]]
-        hits = c.match_replies(pages, BOT, '1790803000.0', None, root_ts=ROOT, channel='D1', workspace=WS)
+        pages = [[{'ts': '1000803103.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'answer', 'channel': 'C2'},
+                  {'ts': '1000803104.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'right one', 'channel': 'D1'}]]
+        hits = c.match_replies(pages, BOT, '1000803000.0', None, root_ts=ROOT, channel='D1', workspace=WS)
         self.assertEqual([m['text'] for m in hits], ['right one'])
         with self.assertRaises(TypeError):  # no unscoped matching on the root alone
-            c.match_replies(pages, BOT, '1790803000.0', None, root_ts=ROOT, channel='D1')  # no workspace
-        bare = [[{'ts': '1790803104.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'no channel'}]]
-        self.assertEqual(c.match_replies(bare, BOT, '1790803000.0', None, root_ts=ROOT, channel='D1', workspace=WS), [])
+            c.match_replies(pages, BOT, '1000803000.0', None, root_ts=ROOT, channel='D1')  # no workspace
+        bare = [[{'ts': '1000803104.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'no channel'}]]
+        self.assertEqual(c.match_replies(bare, BOT, '1000803000.0', None, root_ts=ROOT, channel='D1', workspace=WS), [])
         for ch in (None, ''):
-            self.assertEqual(c.match_replies(pages, BOT, '1790803000.0', None, root_ts=ROOT, channel=ch, workspace=WS), [])
+            self.assertEqual(c.match_replies(pages, BOT, '1000803000.0', None, root_ts=ROOT, channel=ch, workspace=WS), [])
 
     def test_bot_replies_bind_the_workspace_of_the_read(self):
-        pages = [[{'ts': '1790803104.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'away', 'channel': 'D1', 'team': 'T2'},
-                  {'ts': '1790803105.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'home', 'channel': 'D1', 'team': WS},
-                  {'ts': '1790803106.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'read here', 'channel': 'D1'}]]
+        pages = [[{'ts': '1000803104.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'away', 'channel': 'D1', 'team': 'T2'},
+                  {'ts': '1000803105.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'home', 'channel': 'D1', 'team': WS},
+                  {'ts': '1000803106.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'read here', 'channel': 'D1'}]]
         # identical channel and root in another workspace never match; a message without team was read in WS
-        self.assertEqual([m['text'] for m in c.match_replies(pages, BOT, '1790803000.0', None, root_ts=ROOT, channel='D1', workspace=WS)],
+        self.assertEqual([m['text'] for m in c.match_replies(pages, BOT, '1000803000.0', None, root_ts=ROOT, channel='D1', workspace=WS)],
                          ['home', 'read here'])
-        self.assertEqual([m['text'] for m in c.match_replies(pages, BOT, '1790803000.0', None, root_ts=ROOT, channel='D1', workspace='T2')],
+        self.assertEqual([m['text'] for m in c.match_replies(pages, BOT, '1000803000.0', None, root_ts=ROOT, channel='D1', workspace='T2')],
                          ['away', 'read here'])
         for ws in (None, ''):
-            self.assertEqual(c.match_replies(pages, BOT, '1790803000.0', None, root_ts=ROOT, channel='D1', workspace=ws), [])
+            self.assertEqual(c.match_replies(pages, BOT, '1000803000.0', None, root_ts=ROOT, channel='D1', workspace=ws), [])
         # the workspace never comes from message text
-        texty = [[{'ts': '1790803107.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'team: T1', 'channel': 'D1', 'team': 'T2'}]]
-        self.assertEqual(c.match_replies(texty, BOT, '1790803000.0', None, root_ts=ROOT, channel='D1', workspace=WS), [])
+        texty = [[{'ts': '1000803107.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'team: T1', 'channel': 'D1', 'team': 'T2'}]]
+        self.assertEqual(c.match_replies(texty, BOT, '1000803000.0', None, root_ts=ROOT, channel='D1', workspace=WS), [])
 
     def test_bot_reply_timestamps_must_be_strings(self):
-        for sent, root in [(1790803000.0, ROOT), ('1790803000.0', float(ROOT)), ('1790803000.0', ''), ('', ROOT)]:
+        for sent, root in [(1000803000.0, ROOT), ('1000803000.0', float(ROOT)), ('1000803000.0', ''), ('', ROOT)]:
             with self.assertRaises(ValueError):
                 c.match_replies([[]], BOT, sent, None, root_ts=root, channel='D1', workspace=WS)
 
     def test_non_string_message_ts_fails_closed_in_every_path(self):
-        pages = [[{'ts': 1790803104.6, 'user': BOT, 'thread_ts': ROOT, 'text': 'float', 'channel': 'D1'},
-                  {'ts': '1790803105.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'string', 'channel': 'D1'}]]
-        self.assertEqual([m['text'] for m in c.match_replies(pages, BOT, '1790803000.0', None, root_ts=ROOT, channel='D1', workspace=WS)],
+        pages = [[{'ts': 1000803104.6, 'user': BOT, 'thread_ts': ROOT, 'text': 'float', 'channel': 'D1'},
+                  {'ts': '1000803105.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'string', 'channel': 'D1'}]]
+        self.assertEqual([m['text'] for m in c.match_replies(pages, BOT, '1000803000.0', None, root_ts=ROOT, channel='D1', workspace=WS)],
                          ['string'])
-        msg = reply('yes', ts=1790820100.0002)
+        msg = reply('yes', ts=1000820100.0002)
         self.assertEqual(c.reply_event(msg, thread(), blocked(), human_user_id=HUMAN, sent_ts={SUMMARY}, workspace=WS),
                          (None, 'other-thread'))
 
     def test_same_ts_bot_replies_in_two_channels_do_not_collapse(self):
-        pages = [[{'ts': '1790803104.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'here', 'channel': 'D1'},
-                  {'ts': '1790803104.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'there', 'channel': 'C2'}]]
-        self.assertEqual([m['text'] for m in c.match_replies(pages, BOT, '1790803000.0', None, root_ts=ROOT, channel='D1', workspace=WS)], ['here'])
-        self.assertEqual([m['text'] for m in c.match_replies(pages, BOT, '1790803000.0', None, root_ts=ROOT, channel='C2', workspace=WS)], ['there'])
+        pages = [[{'ts': '1000803104.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'here', 'channel': 'D1'},
+                  {'ts': '1000803104.6', 'user': BOT, 'thread_ts': ROOT, 'text': 'there', 'channel': 'C2'}]]
+        self.assertEqual([m['text'] for m in c.match_replies(pages, BOT, '1000803000.0', None, root_ts=ROOT, channel='D1', workspace=WS)], ['here'])
+        self.assertEqual([m['text'] for m in c.match_replies(pages, BOT, '1000803000.0', None, root_ts=ROOT, channel='C2', workspace=WS)], ['there'])
 
 
 class ThreadReplyTests(unittest.TestCase):
@@ -423,14 +424,14 @@ class ThreadReplyTests(unittest.TestCase):
 
     def test_the_users_chat_turn_then_records_the_exact_approval(self):
         r, _ = t.apply(blocked(), self.event(reply('yes'))[0])
-        e = {'id': 'chat-1', 'task': 'wi-1', 'ts': '1790820200', 'source': 'user', 'kind': 'decided',
+        e = {'id': 'chat-1', 'task': 'wi-1', 'ts': '1000820200', 'source': 'user', 'kind': 'decided',
              'data': dict(CHAT, approve=True, action='publish as a draft PR', target='fix branch, no deployment')}
         r, o = t.apply(r, e)
         self.assertEqual((o, r['status'], r['proposal']), ('applied', 'awaiting-worker', None))
         self.assertTrue(t.approved(r, 'publish as a draft PR', 'fix branch, no deployment'))
 
     def test_direct_thread_injection_never_decides(self):
-        base = {'task': 'wi-1', 'ts': '1790820200', 'kind': 'decided'}
+        base = {'task': 'wi-1', 'ts': '1000820200', 'kind': 'decided'}
         for i, (source, data) in enumerate([
                 ('user', {'channel': 'thread-human', 'text': 'yes', 'approve': True, 'action': 'publish as a draft PR', 'target': 'fix branch, no deployment'}),
                 ('user', {'channel': 'thread', 'text': 'no'}),
@@ -459,8 +460,8 @@ class ThreadReplyTests(unittest.TestCase):
             self.assertEqual(self.event(reply(text))[1], 'context', text)
 
     def test_exact_thread_correlation_and_freshness(self):
-        self.assertEqual(self.event(reply('yes', thread_ts='1790800000.000001')), (None, 'other-thread'))
-        self.assertEqual(self.event(reply('yes', ts='1790819950.000000')), (None, 'before-summary'))
+        self.assertEqual(self.event(reply('yes', thread_ts='1000800000.000001')), (None, 'other-thread'))
+        self.assertEqual(self.event(reply('yes', ts='1000819950.000000')), (None, 'before-summary'))
         self.assertEqual(self.event(reply('yes'), task=blocked(target='fix branch and deploy')), (None, 'summary-out-of-date'))
         q = blocked()
         q['pending_decision'] = {'need': 'Which schema?', 'action': None, 'target': None}
@@ -469,16 +470,16 @@ class ThreadReplyTests(unittest.TestCase):
         done = blocked()
         done.update(status='running', pending_decision=None)
         self.assertEqual(self.event(reply('yes'), task=done), (None, 'nothing-pending'))
-        a, b = thread(root_ts=ROOT), thread(root_ts='1790802545.583229')
+        a, b = thread(root_ts=ROOT), thread(root_ts='1000802545.583229')
         self.assertIs(c.thread_for_reply(reply('yes'), [b, a], workspace=WS), a)
         self.assertIsNone(c.thread_for_reply(reply('yes', thread_ts=None), [a, b], workspace=WS))
         with self.assertRaises(ValueError):
             c.thread_for_reply(reply('yes'), [a, dict(a)], workspace=WS)
 
     def test_a_proposal_from_before_the_current_ask_is_stale(self):
-        old = self.event(reply('yes', ts='1790820100.000200'))[0]
+        old = self.event(reply('yes', ts='1000820100.000200'))[0]
         r = blocked()
-        r['last_change_ts'] = '1790820150'  # declined and re-asked after that reply
+        r['last_change_ts'] = '1000820150'  # declined and re-asked after that reply
         r, o = t.apply(r, old)
         self.assertEqual((o, r.get('proposal')), ('stale', None))
         self.assertNotIn('proposes approving', h.next_step(r, where='the session chat'))
@@ -486,14 +487,14 @@ class ThreadReplyTests(unittest.TestCase):
     def test_a_new_decision_clears_an_old_proposal(self):
         r, _ = t.apply(blocked(), self.event(reply('yes'))[0])
         r['status'] = 'running'
-        r, o = t.apply(r, {'id': 'b2', 'task': 'wi-1', 'ts': '1790820300', 'source': 'worker', 'kind': 'blocked',
+        r, o = t.apply(r, {'id': 'b2', 'task': 'wi-1', 'ts': '1000820300', 'source': 'worker', 'kind': 'blocked',
                            'data': {'need': '?', 'action': 'publish as a draft PR', 'target': 'fix branch, no deployment'}})
         self.assertEqual((o, r['proposal']), ('applied', None))
 
     def test_sent_ts_must_be_strings_and_match_numerically(self):
         with self.assertRaises(ValueError):
-            self.event(reply('yes'), sent={1790820100.0002})
-        self.assertEqual(self.event(reply('yes', ts='1790820100.0002'), sent={'1790820100.000200'}), (None, 'not-typed-by-user'))
+            self.event(reply('yes'), sent={1000820100.0002})
+        self.assertEqual(self.event(reply('yes', ts='1000820100.0002'), sent={'1000820100.000200'}), (None, 'not-typed-by-user'))
 
     def test_replays_of_the_same_reply_are_duplicates(self):
         e, _ = self.event(reply('yes'))

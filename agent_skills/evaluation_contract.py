@@ -5,6 +5,24 @@ SHA = re.compile(r"[0-9a-f]{64}\Z")
 SCENARIOS = {"development", "regression", "release"}
 
 
+def measure_report(text, *, max_words=None, max_lines=None):
+    """Measure the full reply; never trim, run a model or certify its content.
+
+    Lexical words are Unicode letter/digit sequences with internal apostrophes
+    or hyphens, not language-aware tokenization. Limits are caller-specified.
+    """
+    if not isinstance(text, str):
+        raise ValueError("report text required")
+    for limit in (max_words, max_lines):
+        if limit is not None and (type(limit) is not int or limit < 0):
+            raise ValueError("nonnegative integer report limit required")
+    words = len(re.findall(r"[^\W_]+(?:['’\-][^\W_]+)*", text, re.UNICODE))
+    lines = len(text.splitlines())
+    return {"words": words, "lines": lines,
+            "within_caps": ((max_words is None or words <= max_words) and
+                            (max_lines is None or lines <= max_lines))}
+
+
 def validate_case(case):
     required = {"id", "scenario", "task", "selection_mode", "required_skills",
                 "allowed_skills", "forbidden_skills", "outcome_checks", "hard_invariants"}

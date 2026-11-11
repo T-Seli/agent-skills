@@ -41,7 +41,9 @@
         "skills/agent-coordination/references/tasks.md",
         "skills/agent-coordination/references/state.md",
         "skills/workflow-contracts/behavior.md",
-        "skills/workflow-contracts/decisions.md"
+        "skills/workflow-contracts/decisions.md",
+        "skills/workflow-contracts/references/execution-proof.md",
+        "skills/agent-coordination/references/roles.md"
       ]
     },
     {
@@ -102,7 +104,9 @@
       "requires": [
         "skills/workflow-contracts/contracts.md",
         "skills/workflow-contracts/behavior.md",
-        "skills/workflow-contracts/decisions.md"
+        "skills/workflow-contracts/decisions.md",
+        "skills/workflow-contracts/references/research.md",
+        "skills/workflow-contracts/references/execution-proof.md"
       ]
     },
     {
@@ -121,7 +125,9 @@
       "requires": [
         "skills/workflow-contracts/contracts.md",
         "skills/workflow-contracts/behavior.md",
-        "skills/workflow-contracts/decisions.md"
+        "skills/workflow-contracts/decisions.md",
+        "skills/workflow-contracts/references/research.md",
+        "skills/workflow-contracts/references/execution-proof.md"
       ]
     },
     {
@@ -198,7 +204,54 @@
       "body": "skills/tdd/SKILL.md",
       "requires": [
         "skills/workflow-contracts/contracts.md",
-        "skills/workflow-contracts/behavior.md"
+        "skills/workflow-contracts/behavior.md",
+        "skills/workflow-contracts/references/execution-proof.md"
+      ]
+    },
+    {
+      "id": "company.ui-design",
+      "layer": "company",
+      "summary": "Compare UI directions and carry a product-fit design packet through frontend work.",
+      "phrases": [
+        "ui design",
+        "frontend design",
+        "visualization design",
+        "local ui prototype"
+      ],
+      "roles": [
+        "dot",
+        "worker"
+      ],
+      "body": "skills/ui-design/SKILL.md",
+      "requires": [
+        "skills/workflow-contracts/contracts.md",
+        "skills/workflow-contracts/behavior.md",
+        "skills/workflow-contracts/decisions.md",
+        "skills/workflow-contracts/references/research.md",
+        "skills/ui-design/references/design.md",
+        "skills/ui-design/references/visualization.md",
+        "skills/ui-design/references/iteration.md",
+        "skills/workflow-contracts/references/execution-proof.md"
+      ]
+    },
+    {
+      "id": "company.implement",
+      "layer": "company",
+      "summary": "Implement an authorized engineering plan with scoped tests and evidence.",
+      "phrases": [
+        "implement approved plan",
+        "build authorized fix"
+      ],
+      "roles": [
+        "worker"
+      ],
+      "body": "skills/implement/SKILL.md",
+      "requires": [
+        "skills/workflow-contracts/contracts.md",
+        "skills/workflow-contracts/behavior.md",
+        "skills/workflow-contracts/decisions.md",
+        "skills/workflow-contracts/references/research.md",
+        "skills/workflow-contracts/references/execution-proof.md"
       ]
     }
   ]

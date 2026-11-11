@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Explicit staged PR sweep v2 configuration",
+  "type": "object",
+  "required": ["schema_version", "mode", "repos", "authorization", "reviewer_id", "review_policy", "publisher_host"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "mode": {"enum": ["shadow", "publish"]},
+    "repos": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["repo", "checkout"], "properties": {"repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}, "checkout": {"type": "string", "minLength": 1}}}},
+    "authorization": {"type": "string", "minLength": 1},
+    "reviewer_id": {"type": "integer", "minimum": 1},
+    "review_policy": {"type": "string", "minLength": 1},
+    "publisher_host": {"type": "string", "minLength": 1},
+    "publication_authorization": {"type": "string"},
+    "max_per_run": {"type": "integer", "minimum": 1}
+  },
+  "allOf": [{"if": {"properties": {"mode": {"const": "publish"}}}, "then": {"required": ["publication_authorization"], "properties": {"publication_authorization": {"type": "string", "minLength": 1}}}}]
+}

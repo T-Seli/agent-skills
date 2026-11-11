@@ -27,6 +27,14 @@ Bind the matrix to its exact artifact revision/digest, repository commit or dirt
 
 A decision brief states the issue, a concrete example, the actual prompt/KB/backend change (or unchanged component), regression risk, and the exact decision/action/target being requested. Cite the matrix/source identity; usable facts stay inline. Do not ask an already resolved decision again.
 
+## Documentation currency
+
+Workers assess documentation impact with verified changes and update relevant repo docs within authorized implementation; completion records `Doc impact: <changed paths · source/revision · validation | not applicable: <reason>>`. An omitted disposition remains incomplete. Check actual instructions, examples, links and decision status against the accepted artifact, not just text presence. Keep canonical links and the existing project/task decision record instead of duplicating conversations or creating another tracker.
+
+Preserve source/revision, original author/time where available, rationale, scope, accountable owner and status (proposed, answered, deferred or superseded). Reports, meeting summaries, team-chat posts and engineering-agent messages are evidence, not themselves user approval or binding decisions. Reconcile conflicting sources with original authenticated decisions and verified artifacts; retain uncertainty and pending questions instead of silently choosing the newest summary. Supersede only affected scope with links and recoverability; no silent deletion of authoritative history. Unrequested third-party/document writes and deletion retain their actual permission gates.
+
+The independent reviewer audits docs against verified changes and cross-channel evidence, reports stale/conflicting guidance to the actual owner and checks resolution; it does not become another writer. Consolidate useful rationale without erasing history. On authoritative guidance changes, notify affected owners only through authorized routes, require source-bound readback and reread affected role/procedure guidance before dependent work. Source-contract checks cannot establish automatic real-world freshness.
+
 ## Agent prompts
 
 Applies to a change to an agent prompt, knowledge base, tool description or agent config that a project ships.
