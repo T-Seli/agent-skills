@@ -1,6 +1,6 @@
 # Independent reviewer packets
 
-Use four reviewers at most. Each receives the same declared window, scope, canonical task list, primary evidence and coverage limits, plus only its assigned angle. Prior findings are withheld until synthesis to avoid anchoring. All work is read-only.
+First read [the independent role](../../agent-coordination/references/independent-reviewer.md); preserve its authority and reread contract. Use four reviewers at most. Each receives the same declared window, scope, canonical task list, primary evidence and coverage limits, plus only its assigned angle. Prior findings are withheld until synthesis to avoid anchoring. All work is read-only.
 
 ## A — intake and contracts
 

@@ -8,16 +8,31 @@ set -eu
 R=$(cd "$(dirname "$0")" && pwd)
 DRY=0
 TARGET=all
+INSTALL_HOME=$HOME
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY=1 ;;
     --target=all|--target=claude|--target=codex) TARGET=${arg#--target=} ;;
-    *) echo "usage: $0 [--dry-run] [--target=all|claude|codex]" >&2; exit 2 ;;
+    --destination-root=*) INSTALL_HOME=${arg#--destination-root=} ;;
+    *) echo "usage: $0 [--dry-run] [--target=all|claude|codex] [--destination-root=/absolute/path]" >&2; exit 2 ;;
   esac
 done
-BACKUP="$HOME/.claude/backup-$(date +%Y%m%d-%H%M%S)-$$"
-INSTALL_LOCK="$HOME/.agent-skills-install.lock"
-INSTALL_TXN="$HOME/.agent-skills-install-txn-$$"
+case "$INSTALL_HOME" in /*) ;; *) echo "destination root must be absolute" >&2; exit 2 ;; esac
+# Standalone Codex files must have one declaration route. Stop before any
+# adapter changes rather than silently deleting a user's legacy registration.
+if { [ "$TARGET" = all ] || [ "$TARGET" = codex ]; } && [ -f "$INSTALL_HOME/.codex/config.toml" ]; then
+  python3 -I -B -c '
+import pathlib,sys,tomllib
+root=pathlib.Path(sys.argv[1]); config=pathlib.Path(sys.argv[2])
+names={tomllib.loads(p.read_text())["name"] for p in (root/"codex/agents").glob("*.toml")}
+collisions=sorted(names & tomllib.loads(config.read_text()).get("agents",{}).keys())
+if collisions:
+    sys.exit("HOLD: explicit Codex role registrations collide with standalone files: "+", ".join(collisions)+". Review the conditional role migration before installation.")
+' "$R" "$INSTALL_HOME/.codex/config.toml"
+fi
+BACKUP="$INSTALL_HOME/.claude/backup-$(date +%Y%m%d-%H%M%S)-$$"
+INSTALL_LOCK="$INSTALL_HOME/.agent-skills-install.lock"
+INSTALL_TXN="$INSTALL_HOME/.agent-skills-install-txn-$$"
 INSTALL_STAGE=preflight
 LOCK_HELD=0
 TXN_ACTIVE=0
@@ -132,7 +147,7 @@ rollback_transaction() {
 }
 
 preserve_failed_transaction() {
-  failed="$HOME/.agent-skills-install-failure-$(date +%Y%m%d-%H%M%S)-$$"
+  failed="$INSTALL_HOME/.agent-skills-install-failure-$(date +%Y%m%d-%H%M%S)-$$"
   if mv "$INSTALL_TXN" "$failed"; then
     echo "failure receipt: $failed" >&2
     TXN_ACTIVE=0
@@ -203,6 +218,25 @@ link() {
   run ln -sfn "$1" "$2"
 }
 
+# Copy native agent TOML as a regular file. Codex's sensitive role-file loader
+# must not depend on a symlink alias or a second legacy registration path.
+copy_role() {
+  s=$1; t=$2
+  ensure_dir "$(dirname "$t")"
+  [ "$DRY" = 0 ] || { echo "copy regular role $s -> $t"; return; }
+  if [ -f "$t" ] && [ ! -L "$t" ] && cmp -s "$s" "$t"; then
+    echo "keep $t (role already current)"
+    return
+  fi
+  bt=$(mktemp "$(dirname "$t")/.agent-skills-role.XXXXXX")
+  CURRENT_TEMP=$bt
+  cp "$s" "$bt"
+  chmod 644 "$bt"
+  snapshot_target "$t"
+  mv "$bt" "$t"
+  CURRENT_TEMP=
+}
+
 # build <target> <source>...: compose beside <target>, then atomically replace it.
 # Every changed target and digest sidecar is retained in the same transaction.
 build() {
@@ -246,13 +280,13 @@ build() {
 # Claude Code
 if [ "$TARGET" = all ] || [ "$TARGET" = claude ]; then
 INSTALL_STAGE=claude
-for d in "$R"/skills/*/; do link "${d%/}" "$HOME/.claude/skills/$(basename "$d")"; done
-for f in "$R"/agents/*.md; do link "$f" "$HOME/.claude/agents/$(basename "$f")"; done
-for f in "$R"/output-styles/*.md; do link "$f" "$HOME/.claude/output-styles/$(basename "$f")"; done
-for f in "$R"/hooks/*.sh; do [ -x "$f" ] || { echo "hook source is not executable: $f" >&2; exit 1; }; link "$f" "$HOME/.claude/hooks/$(basename "$f")"; done
-link "$R/global/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+for d in "$R"/skills/*/; do link "${d%/}" "$INSTALL_HOME/.claude/skills/$(basename "$d")"; done
+for f in "$R"/agents/*.md; do link "$f" "$INSTALL_HOME/.claude/agents/$(basename "$f")"; done
+for f in "$R"/output-styles/*.md; do link "$f" "$INSTALL_HOME/.claude/output-styles/$(basename "$f")"; done
+for f in "$R"/hooks/*.sh; do [ -x "$f" ] || { echo "hook source is not executable: $f" >&2; exit 1; }; link "$f" "$INSTALL_HOME/.claude/hooks/$(basename "$f")"; done
+link "$R/global/CLAUDE.md" "$INSTALL_HOME/.claude/CLAUDE.md"
 # delegate.py refuses to start workers without its private config; seed it once, never overwrite.
-cfg="$HOME/.config/agent-skills/workers.json"
+cfg="$INSTALL_HOME/.config/agent-skills/workers.json"
 if [ ! -e "$cfg" ]; then
   ensure_dir "$(dirname "$cfg")"
   run cp "$R/agent_skills/delegate_config.example.json" "$cfg"
@@ -264,17 +298,17 @@ fi
 # Codex
 if [ "$TARGET" = all ] || [ "$TARGET" = codex ]; then
 INSTALL_STAGE=codex
-for d in "$R"/skills/*/; do link "${d%/}" "$HOME/.agents/skills/$(basename "$d")"; done
-for f in "$R"/codex/agents/*.toml; do link "$f" "$HOME/.codex/agents/$(basename "$f")"; done
-build "$HOME/.codex/AGENTS.md" "$R/codex/AGENTS.md" "$R/global/CLAUDE.md" \
+for d in "$R"/skills/*/; do link "${d%/}" "$INSTALL_HOME/.agents/skills/$(basename "$d")"; done
+for f in "$R"/codex/agents/*.toml; do copy_role "$f" "$INSTALL_HOME/.codex/agents/$(basename "$f")"; done
+build "$INSTALL_HOME/.codex/AGENTS.md" "$R/codex/AGENTS.md" "$R/global/CLAUDE.md" \
   "$R/output-styles/orchestrator.md" "$R/codex/compatibility.md"
 INSTALL_STAGE=codex-complete
 fi
 
 # Links left from an older layout that now point at nothing.
-for l in "$HOME"/.claude/workflow "$HOME"/.claude/skills/* "$HOME"/.agents/skills/*; do
+for l in "$INSTALL_HOME"/.claude/workflow "$INSTALL_HOME"/.claude/skills/* "$INSTALL_HOME"/.agents/skills/*; do
   case "$l:$TARGET" in
-    "$HOME"/.claude/*:codex|"$HOME"/.agents/*:claude) continue ;;
+    "$INSTALL_HOME"/.claude/*:codex|"$INSTALL_HOME"/.agents/*:claude) continue ;;
   esac
   if [ -L "$l" ] && [ ! -e "$l" ]; then
     case "$(readlink "$l")" in "$R"/*) snapshot_target "$l" ;; esac

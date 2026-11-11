@@ -1,3 +1,4 @@
+# Synthetic fixtures: identities and timestamps below are fabricated; no live source references.
 import json
 from pathlib import Path
 import unittest
@@ -198,6 +199,13 @@ class SystemAuditTests(unittest.TestCase):
         self.assertEqual((zero['watch_state'], zero['functional_acceptance']),
                          ('armed', 'inconclusive-zero-traffic'))
 
+    def test_wake_readback_without_actual_source_coverage_cannot_pass(self):
+        result = monitoring_verdict(
+            wake_receipt='wake:source-missing', readback_receipt='read:task-only',
+            expires_at_utc='2026-10-09T04:00:00Z', observed_at_utc='2026-10-09T03:00:00Z',
+            traffic_count=3, functional_results=[True])
+        self.assertEqual(result['functional_acceptance'], 'unverified')
+
     def test_coverage_and_acceptance_claims_require_receipts(self):
         with self.assertRaises(ValueError):
             synthesize([], source_manifest=[{'source': 'task-record', 'state': 'observed',
@@ -291,7 +299,7 @@ class SystemAuditTests(unittest.TestCase):
             failure_class='unavailable-tool', authorization_state='verified-covered',
             operation_scope='Forward the preserved alert-tuning report to this child only.',
             approved_scope='Forward the preserved alert-tuning report to this child only.',
-            approval_ref='user-item:01a119bc-44cf-727c-a876-c681e10eefd0',
+            approval_ref='user-item:00000000-0000-4000-8000-000000000003',
             source_receipt='child:task-messaging-tool-missing',
             occurred_at='2026-10-08T01:05:00Z',
             next_supported_action='Restore the supported task-messaging capability or report the capability gap.',
@@ -308,7 +316,7 @@ class SystemAuditTests(unittest.TestCase):
             failure_class='stale-session-id', authorization_state='verified-covered',
             operation_scope='Forward the preserved alert-tuning report to this child only.',
             approved_scope='Forward the preserved alert-tuning report to this child only.',
-            approval_ref='user-item:01a119bc-44cf-727c-a876-c681e10eefd0',
+            approval_ref='user-item:00000000-0000-4000-8000-000000000003',
             source_receipt='cloud-thread:CloudThreadNotFoundError',
             occurred_at='2026-10-08T01:06:00Z',
             next_supported_action='Refresh the supported session identity before any bounded retry.')
@@ -318,7 +326,7 @@ class SystemAuditTests(unittest.TestCase):
             failure_class='stale-session-placement', authorization_state='verified-covered',
             operation_scope='Read the original alert-tuning task context for this handoff only.',
             approved_scope='Read the original alert-tuning task context for this handoff only.',
-            approval_ref='user-item:01a119bc-44cf-727c-a876-c681e10eefd0',
+            approval_ref='user-item:00000000-0000-4000-8000-000000000003',
             source_receipt='cloud-thread:unsupported-placement-format-v1',
             occurred_at='2026-10-08T00:59:00Z',
             next_supported_action='Use a supported placement reader or report the placement capability gap.')

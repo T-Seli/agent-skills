@@ -1,3 +1,4 @@
+# Synthetic fixtures: identities and timestamps below are fabricated; no live source references.
 import unittest
 
 from agent_skills.approval_handoff import (authorization_check, retry_after_denial,
@@ -9,8 +10,8 @@ from agent_skills.approval_handoff import (authorization_check, retry_after_deni
 
 def approval():
     return transcript_evidence(verified_human=True, source="messaging", platform="connected-chat",
-                               channel_id="D0C5GPRESBG",
-                               thread_id="1790900381.889079", message_id="1790930156.088969",
+                               channel_id="D0000000000",
+                               thread_id="1000900381.889079", message_id="1000930156.088969",
                                user_id="example-user", exact_message="Approve deploy of revision 2 to staging only",
                                action="deploy", target="staging", scope="revision 2",
                                constraints=["staging only"], task_id="task-7", revision=2)
@@ -56,7 +57,7 @@ class ApprovalHandoffTests(unittest.TestCase):
         packet = worker_handoff(evidence)
         self.assertEqual(packet["transcript_evidence"]["exact_message"],
                          "Approve deploy of revision 2 to staging only")
-        self.assertEqual(packet["transcript_evidence"]["message_id"], "1790930156.088969")
+        self.assertEqual(packet["transcript_evidence"]["message_id"], "1000930156.088969")
         self.assertEqual(packet["transcript_evidence"]["platform"], "connected-chat")
         self.assertEqual(self.check(evidence, action_time_approval_required=True),
                          "platform-action-time-review-required")
@@ -78,6 +79,33 @@ class ApprovalHandoffTests(unittest.TestCase):
         self.assertEqual(self.check(evidence, revision=3), "stale-task")
         self.assertEqual(self.check(evidence, material_change=True),
                          "material-change-requires-review")
+
+    def test_altered_or_unsealed_evidence_fails_closed(self):
+        for field, value in (("approved_target", "production"),
+                             ("exact_message", "Approve everything"),
+                             ("material_constraints", []), ("message_id", "changed")):
+            with self.subTest(field=field):
+                evidence = approval()
+                evidence[field] = value
+                self.assertEqual(self.check(evidence, **({"target": value} if field == "approved_target" else {})),
+                                 "missing-or-changed-integrity-evidence")
+                with self.assertRaises(ValueError):
+                    worker_handoff(evidence)
+        evidence = approval()
+        evidence.pop("evidence_sha256", None)
+        self.assertEqual(self.check(evidence), "missing-or-changed-integrity-evidence")
+        with self.assertRaises(ValueError):
+            worker_handoff(evidence)
+
+    def test_integrity_is_consistency_not_authentication(self):
+        evidence = approval()
+        self.assertIn("evidence_sha256", evidence)
+        self.assertEqual(len(evidence["evidence_sha256"]), 64)
+        evidence["unexpected"] = object()
+        self.assertEqual(self.check(evidence), "missing-or-changed-integrity-evidence")
+        evidence = approval()
+        evidence["original_user_verified"] = False
+        self.assertEqual(self.check(evidence), "missing-authenticated-evidence")
 
     def test_denied_retry_is_bounded_to_one_evidence_attempt(self):
         self.assertEqual(retry_after_denial(denial_reason="missing-authorization",

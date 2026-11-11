@@ -22,7 +22,13 @@
   "pr_sweep": {
     "repos": [{"repo": "owner/name", "checkout": "~/Developer/name"}],
     "authorization": "",
-    "max_per_run": 3
+    "max_per_run": 3,
+    "schema_version": 2,
+    "mode": "shadow",
+    "reviewer_id": null,
+    "review_policy": "derive from exact reviewed skill sources",
+    "publisher_host": "derive from the intended publisher host",
+    "publication_authorization": ""
   },
   "release": {
     "grant_hours": 12,

@@ -1,6 +1,6 @@
 # Sanitized orchestration regression examples
 
-These examples summarize user-visible mismatches reported to the orchestrator on 2026-10-05. Source reference: restricted thread `01a0fd76-51a9-72b5-be36-1d2b78e68011`. They contain no raw conversation or customer payload. The issue is reported; a root cause is not established. Each prevention check remains **unverified** until a new task exercises it.
+These examples summarize user-visible mismatches reported to the orchestrator on 2026-10-05. Source: privately retained provenance reference in the authorized task evidence; private identifiers are intentionally omitted here. They contain no raw conversation or customer payload. The issue is reported; a root cause is not established. Each prevention check remains **unverified** until a new task exercises it.
 
 | Reported issue | Impact or rework | Scoped correction | Prevention check |
 | --- | --- | --- | --- |

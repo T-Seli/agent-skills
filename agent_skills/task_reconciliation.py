@@ -1,4 +1,5 @@
 """Bounded, caller-supplied evidence assessment. Never dispatches or grants authority."""
+from copy import deepcopy
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 import re
@@ -30,6 +31,74 @@ def keep_awake_assessment(receipt, *, now, owner, task_id=None):
     return {'state': 'receipt-only', 'owner': receipt['owner'],
             'reuse_existing_owner': receipt['owner'] != owner,
             'live_probe_performed': False, 'cleanup_authorized': False}
+
+
+def handoff_binding(record):
+    """Exact current result/contract identity; no authority or authorship assertion."""
+    a = (record.get('coordination') or {}).get('active_deliverable') or {}
+    return {**{k: a.get(k) for k in ('id', 'revision', 'contract_digest', 'source_ref', 'result_receipt_ref')},
+            'task_id': record['task_id']}
+
+
+def coordinator_projection(record, *, now):
+    """Pure next-action attention, distinct from user notifications and dispatch."""
+    c = record.get('coordination') or {}
+    a = c.get('active_deliverable') or {}
+    binding = handoff_binding(record)
+    readback = a.get('parent_readback') or {}
+    consumed = bool(a.get('result_receipt_ref')) and (
+        readback.get('result_receipt_ref') == a['result_receipt_ref'] and
+        readback.get('decision_source_ref') == a.get('source_ref') and
+        readback.get('binding', binding) == binding)
+    hold = ('human-owned-or-unknown-owner' if (record.get('worker') or {}).get('owner') != 'assistant' else
+            'paused' if c.get('execution_state') in ('paused', 'pause-requested') else
+            'uncertain-dispatch' if any(o.get('state') == 'uncertain' for o in record.get('outbox', [])) else
+            'blocked' if record.get('status') == 'blocked' else None)
+    issues = []
+    if a.get('result_receipt_ref') and not consumed:
+        issues.append('unconsumed-result')
+    done = record.get('status') == 'verified-done'
+    if not done and not a.get('next_action'):
+        issues.append('missing-next-action')
+    followup = a.get('coordinator_followup') or {}
+    if not isinstance(followup, dict):
+        raise ValueError('followup must be an object')
+    current = bool(followup) and followup.get('binding') == binding
+    if current and (followup.get('kind') not in ('assignment', 'hold') or any(
+            not isinstance(followup.get(k), str) or not followup[k].strip()
+            for k in ('next_action', 'source_ref', 'receipt_ref', 'next_check_at_utc'))):
+        raise ValueError('incomplete or unsupported current followup')
+    if not done and current and _time(now) > _time(followup['next_check_at_utc']):
+        issues.append('followup-checkpoint-overdue')
+    completed = c.get('execution_state') == 'finished' or record.get('status') in ('answered', 'ready-for-review')
+    if not done and completed and consumed and not hold and not current:
+        issues.append('missing-followup-disposition')
+    view = operating_view(record, now=now)
+    for item in view['retained_obligations']:
+        if item['checkpoint_missing']:
+            issues.append('missing-checkpoint:' + item['id'])
+        elif item['overdue']:
+            issues.append('overdue:' + item['id'])
+    return deepcopy({'binding': binding, 'issues': issues, 'owner': c.get('canonical_owner'),
+            'session_id': (record.get('worker') or {}).get('session_id'),
+            'artifact': a.get('reported_result') or record.get('evidence'),
+            'acceptance': c.get('acceptance_state'),
+            'next_action': None if done else followup['next_action'] if current else a.get('next_action'),
+            'next_owner': None if done else a.get('owner'),
+            'checkpoint': a.get('checkpoint'), 'last_consumed_result': readback if consumed else None,
+            'worker_acknowledgment': a.get('readback_ref'), 'outcome': a.get('result_receipt_ref'),
+            'followup': followup if current else None, 'hold': hold,
+            'followup_state': ('completed' if done else 'acknowledged' if followup.get('acknowledgment_ref') else
+                               'assigned-awaiting-acknowledgment' if followup.get('kind') == 'assignment' else 'held') if current else 'not-dispositioned',
+            'dispatch_authorized': False, 'native_adoption': 'unverified'})
+
+
+def coordinator_attention(records, *, now):
+    """One current task projection, never one obligation per historical run."""
+    ids = [r['task_id'] for r in records]
+    if len(ids) != len(set(ids)):
+        raise ValueError('duplicate task identity')
+    return [coordinator_projection(r, now=now) for r in records]
 
 
 def reconcile_tasks(snapshot, *, now):
@@ -82,18 +151,8 @@ def reconcile_tasks(snapshot, *, now):
             issues.append('paused')
         if any(o.get('state') == 'uncertain' for o in record.get('outbox', [])):
             issues.append('uncertain-dispatch')
-        readback = active.get('parent_readback') or {}
-        if active.get('result_receipt_ref') and (
-                readback.get('result_receipt_ref') != active['result_receipt_ref'] or
-                readback.get('decision_source_ref') != active.get('source_ref')):
-            issues.append('unconsumed-result')
-        if record.get('status') != 'verified-done' and not active.get('next_action'):
-            issues.append('missing-next-action')
-        for item in operating_view(record, now=now)['retained_obligations']:
-            if item['checkpoint_missing']:
-                issues.append('missing-checkpoint:' + item['id'])
-            elif item['overdue']:
-                issues.append('overdue:' + item['id'])
+        handoff = coordinator_projection(record, now=now)
+        issues.extend(handoff['issues'])
         protection = None
         if obs and obs.get('critical_execution'):
             protection = keep_awake_assessment(obs.get('keep_awake'), now=now, owner=c.get('canonical_owner'), task_id=tid)
@@ -102,7 +161,7 @@ def reconcile_tasks(snapshot, *, now):
         rows.append({'task_id': tid, 'issues': issues, 'keep_awake': protection,
                      'approval_recorded': bool(record.get('approvals')),
                      'next_action': 'review-current-owner-evidence' if issues else 'retain-current-owner',
-                     'dispatch_authorized': False})
+                     'dispatch_authorized': False, 'coordinator': handoff})
     missing = sorted(set(expected) - set(ids))
     unexpected = sorted(set(ids) - set(expected))
     return {'coverage_complete': not missing and not unexpected,

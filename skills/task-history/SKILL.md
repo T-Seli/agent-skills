@@ -9,6 +9,10 @@ For exact-scope retrieval, `knowledge.py --repo <checkout> --task <id> --repo-re
 
 The private `agent-task-history` repository holds the cross-session record. This central writer is separate from `agent_skills/history.py`, which remains a compact local timeline; do not write the same event through both without an explicit reference. The project `TASK/log.md` remains the local receipt and retains its existing parsed tokens and record commits. Never copy a raw project log wholesale into central history.
 
+Use `scripts/history-cli history|markdown|capture <args>` for CLI work; Python
+`-I -B` keeps bytecode out of the release. Library callers use `python3 -B` or
+a per-process cache outside the snapshot; this is not filesystem enforcement.
+
 ## New task and handoff workflow
 
 When central history is configured (contracts.md § Task log; decided by `history.py configured`: exit 0 prints the checkout, else `History: not configured`), the designated record owner creates one stable task ID at the first substantive work checkpoint. Inspect the checkout and `INDEX.md` first so a resumed task does not get a second journal. Append a `start` event with exact scope, excluded scope, approval reference, execution owner, known repository and code identity, and open checks. At material decisions, failed approaches, code/test/review/deploy checkpoints, and final handoff, append one sanitized event for the meaningful change. This is an explicit producer step, not a background session capture. Workers and subagents deliver evidence packets to the record owner; they do not independently append to the same task.

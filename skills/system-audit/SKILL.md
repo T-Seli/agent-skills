@@ -6,7 +6,9 @@ argument-hint: '<time window, scope and prior audit reference>'
 
 # System audit
 
-First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`, [references/reviewers.md](references/reviewers.md) and `${CLAUDE_SKILL_DIR}/../task-history/SKILL.md` for the owner-bound proposal contract. This is an independent read-only audit, not an implementation, approval, performance score or authority transfer. The human owns priorities and consequential decisions; the orchestrator owns reconciliation and synthesis; workers own task-local investigation.
+First read `${CLAUDE_SKILL_DIR}/../agent-coordination/references/independent-reviewer.md`, `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`, [references/reviewers.md](references/reviewers.md) and `${CLAUDE_SKILL_DIR}/../task-history/SKILL.md` for the owner-bound proposal contract. This is an independent read-only audit, not an implementation, approval, performance score or authority transfer. The human owns priorities and consequential decisions; the orchestrator owns reconciliation and synthesis; workers own task-local investigation.
+
+Apply [review evidence](../workflow-contracts/references/review-evidence.md): actual source coverage, accountable/execution owner separation, acceptance loops, optimization counterevidence and observed consumer adoption. Reuse existing findings rather than status-only replacement work.
 
 ## Inputs
 

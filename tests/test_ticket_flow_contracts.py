@@ -73,7 +73,10 @@ class SpecMode(unittest.TestCase):
 class Roles(unittest.TestCase):
     def test_each_role_starts_only_the_next_and_workers_never_message_up(self):
         roles = text('skills/agent-coordination/SKILL.md').split('## Roles for big implementations', 1)[1].split('\n## ', 1)[0]
-        for rule in ('**Orchestrator assistant:**', 'never grills, plans, dispatches workers or approves',
+        for rule in ('**Orchestrator assistant (cross-task executive):**',
+                     'does not own technical preparation/specs or dispatch ticket workers',
+                     'consolidates ready user-facing questions from the owning worker per decisions.md',
+                     'preserves original answers on the chosen surface',
                      '**Starter:**', 'at most one live orchestration session', 'successor starts only from', 'paste-ready kickoff brief',
                      '**Orchestration session**', 'Claude or Codex', '`/implement` spec mode',
                      'never message the assistant or the user'):

@@ -1,3 +1,4 @@
+# Synthetic fixtures: identities and timestamps below are fabricated; no live source references.
 import copy
 import importlib.util
 import sys
@@ -16,7 +17,7 @@ def load(name):
 
 
 t, h, n = load('tasks'), load('hub'), load('nav')
-BASE = 1790000000
+BASE = 1000000000
 HOSTS = {'example.invalid'}
 LINK = n.link_from_response('{"url": "https://example.invalid/review"}', 'url', source='code-host', allowed_hosts=HOSTS)
 
@@ -24,7 +25,7 @@ LINK = n.link_from_response('{"url": "https://example.invalid/review"}', 'url', 
 def record(status=None, pending=None, evidence=None):
     r = t.new_task('wi-1', 'wi', worker_kind='codex', owner='assistant', repo='repo')
     r.update(status=status, pending_decision=pending, evidence=evidence)
-    r['worker']['session_id'] = '019a0f54-27f3-74a1-9d82-0217a4277f0e'
+    r['worker']['session_id'] = '00000000-0000-4000-8000-000000000001'
     return r
 
 
@@ -87,10 +88,10 @@ class RenderTests(unittest.TestCase):
         self.assertNotRegex(main, h.TECHNICAL)
         details = h.render_details(r)
         self.assertIn('abc1234', details)
-        self.assertIn('019a0f54', details)
+        self.assertIn('00000000', details)
 
     def test_technical_ids_in_human_fields_fail_loudly(self):
-        for field, value in [('result', 'pushed abc1234f'), ('title', 'Task 019a0f54-27f3-74a1'), ('owner', 'ts 1790819238.259599')]:
+        for field, value in [('result', 'pushed abc1234f'), ('title', 'Task 00000000-0000-4000'), ('owner', 'ts 1000819238.259599')]:
             with self.assertRaises(ValueError):
                 summ(record('running'), **{field: value})
         self.assertEqual(summ(record('running'), result='two\nlines')['result'], 'two lines')
@@ -101,12 +102,12 @@ class UpdateTests(unittest.TestCase):
         desktop = h.coordination_route(intent='approval', work_item='wi-1')
         self.assertEqual((desktop['surface'], desktop['destination']),
                          ('desktop-main', 'desktop main conversation'))
-        th = n.thread('1790819911.865269', channel='D1', inside=True, chat='Team Chat')
+        th = n.thread('1000819911.865269', channel='D1', inside=True, chat='Team Chat')
         focused = h.coordination_route(intent='milestone', work_item='wi-1', destination='D1',
                                        destination_kind='dm', thread=th,
                                        retired_destinations=('C-RETIRED',))
         self.assertEqual((focused['surface'], focused['root_ts']),
-                         ('work-item-dm-thread', '1790819911.865269'))
+                         ('work-item-dm-thread', '1000819911.865269'))
         retired = h.coordination_route(intent='status', work_item='wi-2',
                                        destination='C-RETIRED', destination_kind='channel',
                                        thread=None, retired_destinations=('C-RETIRED',))

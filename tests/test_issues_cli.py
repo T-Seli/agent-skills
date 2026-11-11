@@ -111,6 +111,39 @@ def spec_body():
     return str(f)
 
 
+SHA = 'a' * 40
+
+def work_record(n):
+    return {'issue_url':f'https://github.com/{REPO}/issues/{n}',
+            'source_issue_url':f'https://github.com/{REPO}/issues/1',
+            'owner':'existing fixture owner',
+            'executor':{'host':'Codex','session_ref':'fixture-native-task:worker-1'},
+            'artifacts':[{'repo':REPO,'branch':'feat/widgets','commit':SHA,
+                          'pr_url':f'https://github.com/{REPO}/pull/12','pr_state':'merged'}],
+            'decisions':['original-fixture-user-turn'], 'verification':['fixture:test-receipt'],
+            'states':{'implementation':'verified','deployment':'unverified','acceptance':'open'},
+            'next_action':{'owner':'existing fixture owner','action':'verify deployment and acceptance'}}
+
+
+def evidence(issues, deployment=False):
+    data = {'version': 1, 'repo': REPO, 'authority_ref': 'original-user-turn:1', 'issues': {}}
+    for n, current in issues.items():
+        body = current.get('body', '')
+        data['issues'][str(n)] = {
+            'body_sha256': issues_cli.body_digest(body), 'work_record': work_record(n),
+            'criteria': [{'number': c['number'], 'text': c['text'], 'status': 'verified',
+                          'evidence_ref': f'tests:criterion-{c["number"]}'} for c in issues_cli.criteria(body)],
+            'closure': {'status': 'verified', 'evidence_ref': f'closure:{n}'}}
+    if deployment:
+        for entry in data['issues'].values():
+            entry['work_record']['states'].update(implementation='verified', deployment='verified', acceptance='verified')
+        data['deployment'] = {'sha': SHA, 'status': 'verified', 'target': 'fixture-only',
+                              'receipt_ref': 'deploy:receipt', 'observed_at': '2026-11-06T00:00:00Z'}
+    p = Path(tempfile.mkdtemp()) / 'evidence.json'
+    p.write_text(json.dumps(data))
+    return str(p)
+
+
 class Publish(unittest.TestCase):
     def test_spec_then_tickets_as_sub_issues_with_blocked_by(self):
         d, gh = draft(), FakeGh()
@@ -257,6 +290,12 @@ class Claim(unittest.TestCase):
         self.assertEqual(writes, [])
 
 
+    def test_successor_same_branch_gets_current_session_pointer(self):
+        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session old-session']))
+        self.assertEqual(code, 0)
+        self.assertEqual(len(writes), 1)
+        self.assertIn('session s1', writes[0][1])
+
     def test_session_defaults_to_the_desktop_session_id(self):
         gh = FakeGh(issues={7: issue()})
         env = {'CLAUDE_CODE_HOST_SESSION_ID': 'local_abc', 'CLAUDE_CODE_SESSION_ID': 'cli-123'}
@@ -285,7 +324,7 @@ class Tick(unittest.TestCase):
 
     def test_ticks_only_acceptance_criteria(self):
         gh = FakeGh(issues={8: issue(body=self.BODY)})
-        code, _, _ = run(gh, 'tick', '--repo', REPO, '8')
+        code, _, _ = run(gh, 'tick', '--repo', REPO, '8', '--evidence-file', evidence(gh.issues))
         self.assertEqual(code, 0)
         (args, body), = gh.writes()
         self.assertEqual(args, ['issue', 'edit', '8', '-R', REPO, '--body-file', '-'])
@@ -295,7 +334,7 @@ class Tick(unittest.TestCase):
 
     def test_nothing_to_tick_writes_nothing(self):
         gh = FakeGh(issues={8: issue(body='## Acceptance criteria\n\n- [x] one\n')})
-        self.assertEqual(run(gh, 'tick', '--repo', REPO, '8')[0], 0)
+        self.assertEqual(run(gh, 'tick', '--repo', REPO, '8', '--evidence-file', evidence(gh.issues))[0], 0)
         self.assertEqual(gh.writes(), [])
 
 
@@ -308,12 +347,12 @@ class Close(unittest.TestCase):
 
     def test_closes_every_open_task_issue_with_the_deployed_sha(self):
         states = {100: 'OPEN', 101: 'CLOSED', 102: 'OPEN', 103: 'OPEN'}
-        gh = FakeGh(issues={n: {'state': st} for n, st in states.items()})
-        code, out, _ = run(gh, 'close', '--repo', REPO, str(self.published()), '--sha', 'abc1234')
+        gh = FakeGh(issues={n: {'state': st, 'body': '## Acceptance criteria\n- [x] done\n'} for n, st in states.items()})
+        code, out, _ = run(gh, 'close', '--repo', REPO, str(self.published()), '--sha', SHA, '--evidence-file', evidence(gh.issues, deployment=True))
         self.assertEqual(code, 0)
         closed = [(a[2], a[a.index('--comment') + 1]) for a, _ in gh.writes()]
-        self.assertEqual(closed, [('102', 'Deployed in abc1234.'), ('103', 'Deployed in abc1234.'),
-                                  ('100', 'Deployed in abc1234.')])  # tickets first, the spec last
+        self.assertEqual(closed, [('102', f'Deployed in {SHA}. Evidence: deploy:receipt; closure: closure:102.'), ('103', f'Deployed in {SHA}. Evidence: deploy:receipt; closure: closure:103.'),
+                                  ('100', f'Deployed in {SHA}. Evidence: deploy:receipt; closure: closure:100.')])  # tickets first, the spec last
         self.assertTrue(all(a[:2] == ['issue', 'close'] for a, _ in gh.writes()))
 
     def test_refuses_an_untracked_or_foreign_plan_before_any_write(self):
@@ -325,11 +364,71 @@ class Close(unittest.TestCase):
             self.assertEqual(gh.writes(), [])
 
     def test_dry_run_prints_the_closes(self):
-        gh = FakeGh(issues={n: {'state': 'OPEN'} for n in (100, 101, 102, 103)})
-        code, out, _ = run(gh, '--dry-run', 'close', '--repo', REPO, str(self.published()), '--sha', 'abc1234')
+        gh = FakeGh(issues={n: {'state': 'OPEN', 'body': '## Acceptance criteria\n- [x] done\n'} for n in (100, 101, 102, 103)})
+        code, out, _ = run(gh, '--dry-run', 'close', '--repo', REPO, str(self.published()), '--sha', SHA, '--evidence-file', evidence(gh.issues, deployment=True))
         self.assertEqual(code, 0)
         self.assertEqual(gh.writes(), [])
         self.assertEqual(out.count('gh issue close'), 4)
+
+
+class EvidenceGuards(unittest.TestCase):
+    def test_legacy_bulk_tick_and_close_refuse_without_writes(self):
+        gh = FakeGh(issues={8: issue(body=Tick.BODY)})
+        self.assertEqual(run(gh, 'tick', '--repo', REPO, '8')[0], 1)
+        d = draft(plan=f'# Plan\nIssue: {REPO}#8\n', items=None)
+        self.assertEqual(run(gh, 'close', '--repo', REPO, str(d), '--sha', SHA)[0], 1)
+        self.assertEqual(gh.writes(), [])
+
+    def test_partial_tick_preserves_unproved_criteria(self):
+        gh = FakeGh(issues={8: issue(body=Tick.BODY)})
+        p = Path(evidence(gh.issues)); data = json.loads(p.read_text())
+        data['issues']['8']['criteria'] = data['issues']['8']['criteria'][:1]
+        p.write_text(json.dumps(data))
+        self.assertEqual(run(gh, 'tick', '--repo', REPO, '8', '--evidence-file', str(p))[0], 0)
+        self.assertIn('- [x] one', gh.writes()[0][1])
+        self.assertIn('- [ ] three', gh.writes()[0][1])
+
+    def test_stale_unproved_duplicate_and_wrong_repository_tick_refuse(self):
+        for mutate in [lambda d: d.update(repo='other/repo'),
+                       lambda d: d['issues']['8'].update(body_sha256='stale'),
+                       lambda d: d['issues']['8']['criteria'][0].update(status='reported'),
+                       lambda d: d['issues']['8']['criteria'][0].update(text='different'),
+                       lambda d: d['issues']['8']['criteria'].append(d['issues']['8']['criteria'][0])]:
+            gh = FakeGh(issues={8: issue(body=Tick.BODY)})
+            p = Path(evidence(gh.issues)); data = json.loads(p.read_text()); mutate(data)
+            p.write_text(json.dumps(data))
+            self.assertEqual(run(gh, 'tick', '--repo', REPO, '8', '--evidence-file', str(p))[0], 1)
+            self.assertEqual(gh.writes(), [])
+
+    def test_concurrent_body_edit_prevents_tick(self):
+        gh = FakeGh(issues={8: issue(body=Tick.BODY)})
+        path = evidence(gh.issues); reads = 0
+        def racing(args, stdin=None):
+            nonlocal reads
+            if args[:2] == ['issue', 'view']:
+                reads += 1
+                if reads == 2:
+                    gh.issues[8]['body'] += 'human update'
+            return gh(args, stdin)
+        self.assertEqual(run(racing, 'tick', '--repo', REPO, '8', '--evidence-file', path)[0], 1)
+        self.assertEqual(gh.writes(), [])
+
+    def test_mixed_closure_batch_preflights_every_issue_before_writes(self):
+        d = Close().published()
+        for bad in ('missing proof', 'open criterion', 'unproved closure', 'wrong deployment', 'short sha', 'unmet trace gate'):
+            gh = FakeGh(issues={n: {'state': 'OPEN', 'body': '## Acceptance criteria\n- [x] done\n'} for n in (100, 101, 102, 103)})
+            p = Path(evidence(gh.issues, deployment=True)); data = json.loads(p.read_text())
+            if bad == 'missing proof': data['issues']['100']['criteria'] = []
+            if bad == 'open criterion':
+                gh.issues[100]['body'] = '## Acceptance criteria\n- [ ] done\n'
+                data['issues']['100']['body_sha256'] = issues_cli.body_digest(gh.issues[100]['body'])
+            if bad == 'unproved closure': data['issues']['100']['closure']['status'] = 'reported'
+            if bad == 'wrong deployment': data['deployment']['sha'] = 'b' * 40
+            if bad == 'unmet trace gate': data['issues']['100']['work_record']['states']['acceptance'] = 'open'
+            p.write_text(json.dumps(data))
+            code, _, _ = run(gh, 'close', '--repo', REPO, str(d), '--sha', 'abc1234' if bad == 'short sha' else SHA, '--evidence-file', str(p))
+            self.assertEqual(code, 1, bad)
+            self.assertEqual(gh.writes(), [], bad)
 
 
 class Closes(unittest.TestCase):
@@ -338,7 +437,40 @@ class Closes(unittest.TestCase):
         run(FakeGh(), 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
         code, out, _ = run(FakeGh(), 'closes', str(d))
         self.assertEqual(code, 0)
-        self.assertEqual(out.split('\n')[:4], ['Closes #100', 'Closes #101', 'Closes #102', 'Closes #103'])
+        self.assertEqual(out.split('\n')[:4], ['Closes o/r#100', 'Closes o/r#101', 'Closes o/r#102', 'Closes o/r#103'])
+
+
+    def test_qualified_references_keep_their_target_in_same_or_other_repository_prs(self):
+        for source_repo in ('o/r', 'other/team-project'):
+            d = draft(plan=f'# Plan\nIssue: {source_repo}#288\n',
+                      items='Tickets: 2\n- [ ] **1. First** · issue #282\n- [ ] **2. Second** · issue #283\n')
+            gh = FakeGh()
+            code, out, _ = run(gh, 'closes', str(d))
+            self.assertEqual(code, 0)
+            self.assertEqual(out.splitlines(), [f'Closes {source_repo}#288',
+                                              f'Closes {source_repo}#282',
+                                              f'Closes {source_repo}#283'])
+            # The paste-ready text carries its target; no destination repository
+            # or checkout is needed to resolve any of its closing references.
+            for destination in (source_repo, 'different/pr-repo'):
+                pr_body = f'Implementation in {destination}\n\n{out}'
+                self.assertIn(f'Closes {source_repo}#288', pr_body)
+                self.assertNotIn('Closes #', pr_body)
+            self.assertEqual(gh.calls, [])
+
+    def test_missing_invalid_or_ambiguous_repository_metadata_refuses_without_output(self):
+        for metadata in ('', 'Issue: missing-owner#7', 'Issue: /repo#7',
+                         'Issue: owner/repo/extra#7', 'Issue: https://github.com/o/r#7',
+                         'Issue: ../repo#7', 'Issue: owner/..#7', 'Issue: owner_/repo#7',
+                         'Issue: owner/repo#0', 'Issue: o/r#7\nIssue: other/repo#8'):
+            with self.subTest(metadata=metadata):
+                d = draft(plan=f'# Plan\n{metadata}\n', items=None)
+                gh = FakeGh()
+                code, out, err = run(gh, 'closes', str(d))
+                self.assertEqual(code, 1)
+                self.assertEqual(out, '')
+                self.assertTrue(err)
+                self.assertEqual(gh.calls, [])
 
 
 if __name__ == '__main__':

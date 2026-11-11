@@ -147,7 +147,7 @@ def record_watch_checkpoint(record, *, watch_id, baseline_digest, next_check_at_
 
 
 def record_watch_result(record, *, watch_id, baseline_digest, observed_at_utc,
-                        wake_receipt, readback_receipt, traffic_count, functional_results):
+                        wake_receipt, readback_receipt, traffic_count, functional_results, coverage=None):
     watch_id = _text(watch_id)
     r = deepcopy(record)
     baseline = r['coordination'].get('watch_baselines', {}).get(watch_id)
@@ -158,12 +158,12 @@ def record_watch_result(record, *, watch_id, baseline_digest, observed_at_utc,
         raise ValueError("watch result precedes checkpoint")
     check = dict(observed_at_utc=observed_at_utc, wake_receipt=wake_receipt,
                  readback_receipt=readback_receipt, traffic_count=traffic_count,
-                 functional_results=deepcopy(functional_results))
+                 functional_results=deepcopy(functional_results), coverage=deepcopy(coverage))
     normalized = monitoring_verdict(**check, expires_at_utc=checkpoint['expires_at_utc'])
     wake_receipt, readback_receipt = normalized['wake_receipt'], normalized['readback_receipt']
     check.update(wake_receipt=wake_receipt, readback_receipt=readback_receipt)
     old = baseline.get('check')
-    if old == check:
+    if old is not None and {**old, 'coverage': old.get('coverage')} == check:
         return r
     past = baseline.get('check_history', []) + ([old] if old else [])
     for prior in r['coordination'].get('watch_history', []):
@@ -278,7 +278,8 @@ def operating_view(record, *, now=None):
         verdict = monitoring_verdict(wake_receipt=None if missed or future else check.get('wake_receipt'),
             readback_receipt=None if missed or future else check.get('readback_receipt'),
             expires_at_utc=cp['expires_at_utc'], observed_at_utc=now,
-            traffic_count=check.get('traffic_count', 0), functional_results=check.get('functional_results', []))
+            traffic_count=check.get('traffic_count', 0), functional_results=check.get('functional_results', []),
+            coverage=check.get('coverage'))
         completed_checks = [x for x in baseline.get('check_history', []) + ([check] if check else [])
                             if x.get('wake_receipt') and x.get('readback_receipt')
                             and _time(x['observed_at_utc']) <= clock]

@@ -25,6 +25,7 @@ Turn the source into items the user can approve and tick off, and that `/impleme
    - `after #k` lists only the tickets that truly block it; number tickets blockers first. `parallel-safe` is dropped: each ticket gets its own worktree.
    - `Done when` becomes acceptance checkboxes, one per behavior, each observable at a seam named in the plan's `## Verify`.
 7. For behavior changes, carry the current approved matrix/source identity per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`; retain existing capabilities, producer paths, exceptions and per-task approval boundaries. A prompt item's Done when includes behavior.md § Agent prompts (budget, agnostic, `Prompt checks`). Split implementation, deployment, observed behavior and promised manual follow-through into their relevant completion checks. Keep unsent replies, holds and deferrals open with their owner and next action.
+8. For an existing or explicitly designated GitHub queue, follow `${CLAUDE_SKILL_DIR}/../workflow-contracts/issues.md`: reuse issue IDs, preserve the accountable owner and closure gate, and carry logical issue blockers plus external PR/release contracts. A label, shared file or merged PR alone cannot establish the runnable frontier. This skill still prepares the local checklist only; it never updates GitHub.
 
 ## Item format
 ```

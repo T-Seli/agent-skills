@@ -89,9 +89,10 @@ def alive(pid, marker):
     return marker in shown.stdout if shown.returncode == 0 else None
 
 
-def runs():
+def runs(*, include_incomplete=False):
     """Every run directory, oldest first: runs/<task_id>/<dispatch_id>/."""
-    return sorted((p.parent for p in runs_root().glob("*/*/supervisor.json")), key=lambda run: run.name)
+    paths = (p for p in runs_root().glob("*/*") if p.is_dir()) if include_incomplete else (p.parent for p in runs_root().glob("*/*/supervisor.json"))
+    return sorted(paths, key=lambda run: run.name)
 
 
 def run_state(run):
@@ -789,19 +790,55 @@ def settle_lost(run):
 
 
 def status(args):
-    for run in runs():
-        if args.task_id and run.parent.name != args.task_id:
+    """Read-only per-run evidence plus one current coordinator projection per task.
+
+    Coverage errors survive as JSON rows and a nonzero exit; callers must retain
+    the inventory/exit before aggregating (a downstream pipe can mask any exit).
+    """
+    errors, seen = [], set()
+    try:
+        inventory = runs(include_incomplete=True)
+    except (OSError, ValueError) as exc:
+        print(json.dumps({'kind': 'coverage-error', 'error': str(exc)}))
+        print(json.dumps({'kind': 'coverage', 'complete': False, 'errors': [str(exc)]}), file=sys.stderr)
+        return 2
+    for run in inventory:
+        task_id = run.parent.name
+        if args.task_id and task_id != args.task_id:
             continue
-        params = json.loads((run / "params.json").read_text())
-        if params.get('contract_binding'):
-            tasks.update(tasks.state_dir(), run.parent.name, task_checkpoint.stage_checkpoint_intents, now=stamp(now()))
-        receipt = json.loads((run / "receipt.json").read_text()) if (run / "receipt.json").exists() else {}
-        print(json.dumps({"task_id": run.parent.name, "dispatch_id": run.name, "state": run_state(run),
-                          "started_at": json.loads((run / "supervisor.json").read_text())["started_at"],
-                          "cwd": params["cwd"],
-                          "depth": params["depth"], "cost_usd": receipt.get("cost_usd"),
-                          'keep_awake_current': current_protection(run),
-                          "summary": (receipt.get("report") or {}).get("summary")}))
+        row = {'task_id': task_id, 'dispatch_id': run.name}
+        try:
+            params = json.loads((run / 'params.json').read_text())
+            supervisor = json.loads((run / 'supervisor.json').read_text())
+            receipt = json.loads((run / 'receipt.json').read_text()) if (run / 'receipt.json').exists() else {}
+            row.update(state=run_state(run), started_at=supervisor['started_at'], cwd=params['cwd'],
+                       depth=params['depth'], cost_usd=receipt.get('cost_usd'),
+                       receipt_state='recorded' if receipt else 'not-produced',
+                       keep_awake_current=current_protection(run), summary=(receipt.get('report') or {}).get('summary'))
+            if params.get('critical') and not (run / 'protection.json').is_file():
+                raise ValueError('critical protection receipt missing')
+            if params.get('contract_binding') and task_id not in seen:
+                seen.add(task_id)
+                record = tasks.load(tasks.state_dir(), task_id)
+                if record['task_id'] != task_id:
+                    raise ValueError('task identity differs from run directory')
+                row['coordinator'] = tasks.coordinator_attention([record], now=stamp(now()))[0]
+            elif params.get('contract_binding'):
+                row['coordinator_ref'] = task_id  # current task obligation already emitted, not per historical run
+            print(json.dumps(row))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
+            error = {**row, 'kind': 'coverage-error', 'error': type(exc).__name__ + ': ' + str(exc)}
+            errors.append(error)
+            print(json.dumps(error))
+    print(json.dumps({'kind': 'coverage', 'complete': not errors, 'errors': errors}), file=sys.stderr)
+    return 2 if errors else 0
+
+
+def stage_checkpoints(args):
+    """Explicit mutation; status never stages notification intents or claims delivery."""
+    record = tasks.update(tasks.state_dir(), args.task_id, task_checkpoint.stage_checkpoint_intents, now=stamp(now()))
+    print(json.dumps({'task_id': args.task_id, 'checkpoint_intents': record.get('coordination', {}).get('checkpoint_intents', [])}))
+    return 0
 
 
 def readback(args):
@@ -894,6 +931,8 @@ def main(argv=None):
     w.add_argument("--timeout", type=int, default=540)
     st = sub.add_parser("status")
     st.add_argument("task_id", nargs="?")
+    cp = sub.add_parser('stage-checkpoints', help='explicitly stage checkpoint intents; does not send them')
+    cp.add_argument('task_id')
     rd = sub.add_parser('readback')
     rd.add_argument('task_id')
     rd.add_argument('--dispatch')
@@ -916,9 +955,9 @@ def main(argv=None):
             parser.error('all three --critical-* inputs go together and must be nonempty')
     if args.cmd == "_supervise":
         return supervise(args.run)
-    return {"start": start, "wait": wait, "status": status, "readback": readback,
+    return {"start": start, "wait": wait, "status": status, "stage-checkpoints": stage_checkpoints, "readback": readback,
             "reconcile": reconcile, "report": report}[args.cmd](args)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

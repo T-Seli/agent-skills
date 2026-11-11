@@ -6,6 +6,8 @@ argument-hint: "[ticket ref or behavior]"
 
 # TDD (red → green, one slice at a time)
 
+Git is not a prerequisite for test-first code work; bind non-Git baseline/source evidence and allowed artifact paths per [portable execution proof](../workflow-contracts/references/execution-proof.md). An infrastructure/import failure is still not behavior-red proof.
+
 First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`. The rules below make the loop produce tests worth keeping; apply them on every cycle, not after.
 
 ## Inputs (first that exists; say which in one line)
@@ -28,7 +30,7 @@ A **seam** is the public interface a test drives: you observe behavior there wit
 - **Horizontal:** all tests first, then all code. Tests written ahead verify imagined behavior and lock in structure before the code teaches you anything.
 
 ## Loop
-1. **Red.** One test for the next acceptance criterion or behavior. Run it with the one-test or one-file command from § Run & test (none: the smallest command it lists). It must fail on an assertion, for the reason you expect; an import, compile or collection error is not red. Keep the failure line.
+1. **Red.** One test for the next acceptance criterion or behavior. Run it with the one-test or one-file command from § Run & test (none: the smallest command it lists). It must fail on an assertion, for the reason you expect; an import, compile or collection error is not red. Keep the failure line. Deliberately breaking completed code proves mutation sensitivity, not that this test preceded the implementation; label it separately. Missing red evidence remains unverified rather than being reconstructed as a worker receipt.
 2. **Green.** Only enough code to pass it: no branches, parameters or features for later tests.
 3. Rerun the file: the new test and the earlier ones pass.
 4. Next criterion → **Red**. For a bug, the reproducing test is the first red.

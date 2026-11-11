@@ -19,8 +19,10 @@ scheduling are defined once in contracts.md (§ Layers, § Chain, § Consent,
 - `scout` = the `scout` custom agent; if it cannot be selected, a default
   subagent given the scout brief and told to stay read-only.
 - Blueprint's `Plan` agents = read-only default subagents.
-- The scout is sandboxed read-only: it cannot run tests or create worktrees.
-  `$test-review` runs the tests in its own session.
+- The scout follows a read-only workflow; its permissions come from the parent.
+  `$test-review` runs tests in its own session. Set any enforced sandbox there.
+- Optional local profiles and their tool/skill limits are described in
+  `skills/workflow-contracts/references/scoped-agents.md` in the installed release.
 - Sub-agents take no outward action beyond § Consent's task-branch push, draft PR and granted release.
 
 ## Scheduling and hooks

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import re
+from .observation_evidence import assess_coverage
 
 
 CLAIM_LEVELS = {"observed", "hypothesis", "known-platform-limit", "coverage-gap"}
@@ -550,7 +551,7 @@ def synthesize(findings, *, source_manifest, prior_findings=(), required_sources
 
 
 def monitoring_verdict(*, wake_receipt, readback_receipt, expires_at_utc,
-                       observed_at_utc, traffic_count, functional_results):
+                       observed_at_utc, traffic_count, functional_results, coverage=None):
     """A configured watch is not armed without current wake and readback receipts."""
     if (type(traffic_count) is not int or traffic_count < 0 or not isinstance(functional_results, list) or
             any(type(value) is not bool for value in functional_results)):
@@ -559,19 +560,27 @@ def monitoring_verdict(*, wake_receipt, readback_receipt, expires_at_utc,
     expires = _utc(expires_at_utc, "expires_at_utc") if expires_at_utc else None
     receipts_current = bool(wake_receipt and readback_receipt and expires and observed <= expires)
     armed = "armed" if receipts_current else "not-armed"
+    source = assess_coverage(coverage, observed_at_utc=observed_at_utc)
     if not receipts_current:
         acceptance = "unverified"
     elif traffic_count == 0:
         acceptance = "inconclusive-zero-traffic"
     elif not functional_results:
         acceptance = "unverified"
+    elif source['state'] not in ('complete', 'partial'):
+        acceptance = "unverified"
+    elif not all(functional_results):
+        acceptance = "failed"
+    elif source['state'] != 'complete':
+        acceptance = "unverified"
     else:
-        acceptance = "passed" if all(x is True for x in functional_results) else "failed"
+        acceptance = "passed"
     return {"watch_state": armed, "functional_acceptance": acceptance,
             "traffic_count": traffic_count,
             "wake_receipt": _text(wake_receipt, "wake_receipt", optional=True),
             "readback_receipt": _text(readback_receipt, "readback_receipt", optional=True),
-            "expires_at_utc": expires_at_utc, "observed_at_utc": observed_at_utc}
+            "expires_at_utc": expires_at_utc, "observed_at_utc": observed_at_utc,
+            "source_coverage": source}
 
 
 def audit_artifact(*, audit_id, revision, scope_ref, window_start, window_end,

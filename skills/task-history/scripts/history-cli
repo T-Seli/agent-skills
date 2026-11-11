@@ -1,0 +1,16 @@
+#!/bin/sh
+# Exact-release history entrypoints, without writing bytecode into that release.
+set -eu
+SCRIPT_DIR=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
+SKILL_DIR=$(CDPATH= cd -P "$SCRIPT_DIR/.." && pwd)
+case "${1-}" in
+  history|markdown|capture) MODE=$1; shift ;;
+  *) echo "usage: history-cli history|markdown|capture <arguments>" >&2; exit 2 ;;
+esac
+exec python3 -I -B -c '
+import pathlib,runpy,sys
+root=pathlib.Path(sys.argv.pop(1)); mode=sys.argv.pop(1)
+sys.path.insert(0,str(root))
+name={"history":"history.py","markdown":"markdown.py","capture":"checkpoint_capture.py"}[mode]
+runpy.run_path(str(root/name),run_name="__main__")
+' "$SKILL_DIR" "$MODE" "$@"

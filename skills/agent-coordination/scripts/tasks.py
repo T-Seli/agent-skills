@@ -595,10 +595,50 @@ def reconcile_parent_readback(record, *, binding, result_receipt_ref, decision_s
     if (not active.get("result_receipt_ref") or result_receipt_ref != active["result_receipt_ref"] or
             decision_source_ref != active["source_ref"]):
         raise ValueError("parent readback must consume the matching result and decision source")
-    active["parent_readback"] = {"result_receipt_ref": result_receipt_ref,
+    from agent_skills.task_reconciliation import handoff_binding
+    active["parent_readback"] = {"binding": handoff_binding(r), "result_receipt_ref": result_receipt_ref,
         "decision_source_ref": decision_source_ref,
         "read_receipt_ref": _text(read_receipt_ref, "read_receipt_ref"),
         "answer_ref": _text(answer_ref, "answer_ref")}
+    return r
+
+
+def record_coordinator_followup(record, *, binding, kind, next_action, source_ref,
+                                receipt_ref, next_check_at_utc):
+    """Record an assignment or legitimate hold; never dispatch or grant authority."""
+    from agent_skills.task_reconciliation import handoff_binding, coordinator_projection
+    if binding != handoff_binding(record) or not coordinator_projection(record, now=next_check_at_utc)['last_consumed_result']:
+        raise ValueError('followup requires matching current result and parent readback')
+    if kind not in ('assignment', 'hold'):
+        raise ValueError('assignment or hold required')
+    from agent_skills.task_checkpoint import _time
+    _time(next_check_at_utc)
+    r = copy.deepcopy(record)
+    followup = {
+        'binding': copy.deepcopy(binding), 'kind': kind,
+        'next_action': _text(next_action, 'next_action'), 'source_ref': _text(source_ref, 'source_ref'),
+        'receipt_ref': _text(receipt_ref, 'receipt_ref'), 'next_check_at_utc': next_check_at_utc,
+        'acknowledgment_ref': None}
+    active = r['coordination']['active_deliverable']
+    previous = active.get('coordinator_followup') or {}
+    if previous.get('receipt_ref') == followup['receipt_ref']:
+        if {k: v for k, v in previous.items() if k != 'acknowledgment_ref'} != {k: v for k, v in followup.items() if k != 'acknowledgment_ref'}:
+            raise ValueError('followup receipt already binds different content')
+        return r  # exact replay retains worker acknowledgment
+    active['coordinator_followup'] = followup
+    return r
+
+
+def acknowledge_coordinator_followup(record, *, binding, assignment_ref, owner, receipt_ref):
+    """Receipt of the exact recorded assignment, not progress or permission."""
+    from agent_skills.task_reconciliation import handoff_binding
+    a = (record.get('coordination') or {}).get('active_deliverable') or {}
+    f = a.get('coordinator_followup') or {}
+    if (binding != handoff_binding(record) or f.get('binding') != binding or f.get('kind') != 'assignment'
+            or f.get('receipt_ref') != assignment_ref or owner != a.get('owner')):
+        raise ValueError('current assignment and accountable owner required')
+    r = copy.deepcopy(record)
+    r['coordination']['active_deliverable']['coordinator_followup']['acknowledgment_ref'] = _text(receipt_ref, 'receipt_ref')
     return r
 
 
@@ -1170,7 +1210,7 @@ def settle_dispatch(record, dispatch_id, state):
     return r
 
 
-from agent_skills.task_reconciliation import reconcile_tasks
+from agent_skills.task_reconciliation import reconcile_tasks, coordinator_attention
 
 
 def attention(records, *, now=None):

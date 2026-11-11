@@ -36,6 +36,8 @@ Use the channels in CLAUDE.md § Observe (logs, errors and crashes, dashboards, 
 - No PII in output: mask identifiers, give user-written text as a short gist.
 Many changes or tenants: up to `Parallel sub-agents` `scout`s, each returning counts and ≤100 words of evidence.
 
+Record [actual source coverage](../workflow-contracts/references/review-evidence.md) before classification: requested versus observed window, source time/pins, cap/truncation and state. Scheduler/task/preflight activity cannot refresh it; unavailable or capped evidence cannot prove full-window health. Bind claims to changed identifiers/configuration, target/version and deadline; declare sampling and coverage gaps, not full-scope acceptance from a partial query.
+
 ## 5. Classify
 Each change lands in one bucket, with evidence:
 - **Confirmed working**: real traffic hit it and every pass condition held.
@@ -53,7 +55,9 @@ Load the scheduler tools (contracts.md). Task id: from the args, else the log's 
 - **Overlap:** a scheduled run first checks this task's runs (`mcp__scheduled-tasks__list_task_runs`); an earlier run still `running` → report `skipped: previous run still active` and stop.
 - **Unattended:** a scheduled run never rolls back or changes production, even if its prompt says to: it leads with ALERT and the exact rollback for an attended session to run.
 - **Ownership:** only the runtime named in the `Scheduler:` line updates or deletes the schedule. Running in the other runtime: change nothing; report `owned by <runtime> <id>, left` and what the owner should do.
-- **End:** give the final report, then `update_scheduled_task({ taskId, enabled: false })` (never delete) and verify per contracts.md § Scheduler that it lists as disabled; still enabled: report `still enabled: <id>`, never `disabled`. Refused in an unattended run: log `disable refused: <id>`; the daily janitor retries.
+- **End:** give the final verdict; only the configured authorized owner with a supported scheduler/disable route may disable (never delete) and verify the actual disabled state per contracts.md § Scheduler. A missing route, refusal or still-enabled readback remains pending with exact owner/next step. Record `disable refused: <id>` on refusal; no automatic retry after denial. A configured authorized janitor may reconcile only within its real authority; uncertain outcomes require readback before any attempt, and a denial needs materially new relevant authority under the applicable retry rule. Never invent a janitor or claim disable from an attempted call.
+
+A FAIL/regression binds a stable finding ID, artifact revision, actual changed scope, evidence window/deadline and owner. Use the task's named escalation route only with actual supported transport and send authority; otherwise retain an explicit delivery gap and next reader/checkpoint. Preserve sent/readback/disposition/verified-resolution states: acknowledgment is not resolution. Keep the finding open until its actual closure test passes or an authenticated scoped disposition changes it; deduplicate unchanged alerts and retain urgent material changes.
 
 There is no push tool: the alert is the report's first line, which the task's completion notice carries. Alert once per finding: if an earlier `monitor:` entry already reported it, list it under Problems without leading with it.
 - **Regressed:** alert (what broke, impact, one line) and keep the schedule.
@@ -61,7 +65,7 @@ There is no push tool: the alert is the report's first line, which the task's co
 - **Anything not yet exercised:** keep the schedule.
 - **Past the deadline** (from the args): alert if anything is unverified, then **End**.
 - Manual run, something pending, nothing scheduled: first check the log for a `Scheduler:` line and the list for the id, so none is duplicated. The id exists but is disabled: update it with the new fields and `enabled: true`, then confirm it lists as enabled. Neither exists: create it with `/deploy`'s fields (recheck times, deadline = deploy + `Monitor window`), `Deadline: <YYYY-MM-DDTHH:MMZ>` in the task description, and append `Scheduler: <runtime> <id>` to the entry. Scheduler unavailable: end with the next recheck time and the command (contracts.md).
-- **Janitor run:** a daily scheduled run lists the schedules and passes them, with now in UTC, to `agent_skills.task_reconciliation.expired_monitors` via `python3 -c` (repo root on `PYTHONPATH`: `cd -P "${CLAUDE_SKILL_DIR}/../.."`). It ends each expired one per **End** with a final verdict line `<id>: past deadline <deadline>, disabled`, and reports the unparsed ids as lacking a `Deadline:`. A cron that pins its calendar days ends after its last pinned day.
+- **Janitor run:** only an existing configured authorized janitor lists schedules through its supported route and passes them, with now in UTC, to `agent_skills.task_reconciliation.expired_monitors` via `python3 -c` (repo root on `PYTHONPATH`: `cd -P "${CLAUDE_SKILL_DIR}/../.."`). It ends each expired one per **End** with a final verdict line `<id>: past deadline <deadline>, disabled`, and reports the unparsed ids as lacking a `Deadline:`. A cron that pins its calendar days ends after its last pinned day.
 
 ## Report (≤8 lines, skeleton per contracts.md § Report)
 ```
