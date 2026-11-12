@@ -5,10 +5,16 @@ description: 'Shape UI, frontend and local prototype design with distinct option
 
 # UI design
 
-Select/read the governing phase and [portable execution proof](../workflow-contracts/references/execution-proof.md), including for non-Git prototypes; this UI supplement alone is not the implementation/review workflow. Preflight the actual reply against the user's cap.
+Before any reply, hypothetical or capped included, read these in order:
+1. `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`
+2. the governing phase skill, e.g. `${CLAUDE_SKILL_DIR}/../blueprint/SKILL.md`
+3. `${CLAUDE_SKILL_DIR}/../workflow-contracts/references/execution-proof.md` (including for non-Git prototypes)
+4. `${CLAUDE_SKILL_DIR}/references/design.md`
+5. `${CLAUDE_SKILL_DIR}/references/iteration.md`
+6. `${CLAUDE_SKILL_DIR}/../workflow-contracts/references/research.md`
 
-Read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md` first, then
-[design](references/design.md), [iteration](references/iteration.md), and the shared [research contract](../workflow-contracts/references/research.md).
+This UI supplement alone is not the implementation/review workflow. Preflight the actual reply against the smaller of the user's cap and the phase cap (blueprint plan: 12 lines).
+
 For charts, dashboards or interactive explanations also read [visualization](references/visualization.md).
 This is a design workflow, not a renderer or implementation engine. Pair with the
 actual installed blueprint, implement or test-review skill; its authority and
@@ -92,5 +98,4 @@ Report actual checks and limits; human acceptance and release stay separate.
 
 For the offline selector, explicitly compose `company.ui-design` with the phase
 skill (at most three skills); a link alone does not load another skill's body or
-references. Native hosts read the selected skill and conditional references on
-demand. Never assume a tool, connector, design library or session route exists.
+references. Native hosts read the selected skill and the listed references before replying. Never assume a tool, connector, design library or session route exists.

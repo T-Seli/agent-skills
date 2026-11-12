@@ -423,7 +423,10 @@ class HistoryTests(unittest.TestCase):
     def test_remote_identity_and_fresh_clone_permissions(self):
         subprocess.run(['git', '-C', str(self.repo), 'remote', 'set-url', 'origin', 'https://github.com/T-Seli/wrong.git'], check=True)
         with self.assertRaisesRegex(ValueError, 'intended'): history.checkout(self.repo)
-        subprocess.run(['git', '-C', str(self.repo), 'remote', 'set-url', 'origin', 'https://github.com/T-Seli/agent-task-history.git'], check=True)
+        for name in ('agent-knowledge-base', 'agent-task-history'):
+            subprocess.run(['git', '-C', str(self.repo), 'remote', 'set-url', 'origin', f'git@github.com:T-Seli/{name}.git'], check=True)
+            self.assertEqual(history.checkout(self.repo), self.repo.resolve())
+        subprocess.run(['git', '-C', str(self.repo), 'remote', 'set-url', 'origin', 'https://github.com/T-Seli/agent-knowledge-base.git'], check=True)
         self.add(packet()); self.path.chmod(0o644); self.path.parent.chmod(0o755)
         with self.assertRaisesRegex(ValueError, 'private'): history.events(self.repo, 'task-001')
         history.initialize(self.repo)

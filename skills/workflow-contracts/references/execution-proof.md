@@ -58,7 +58,7 @@ the complete intended reply, including headings/tables, before sending; put deta
 in the authorized artifact while keeping blockers/decisions/next action inline.
 Use `agent_skills.evaluation_contract.measure_report` when available, or a
 supported equivalent, to measure lexical words/lines; disclose an uncounted cap.
-it neither shortens text nor enforces native generation. Do not drop acceptance
+Measuring neither shortens text nor enforces native generation. Do not drop acceptance
 limits or claim success just to fit. State any incompatible required format.
 At a checkpoint retain task/spec/source, owner, pending effects, evidence cursor,
 next action/checkpoint and actual capability/budget gaps in the existing record.

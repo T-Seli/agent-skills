@@ -15,7 +15,7 @@ import sys
 
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,100}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
-REMOTE = re.compile(r"^(?:https://github\.com/|git@github\.com:)T-Seli/agent-task-history(?:\.git)?$")
+REMOTE = re.compile(r"^(?:https://github\.com/|git@github\.com:)T-Seli/(?:agent-knowledge-base|agent-task-history)(?:\.git)?$")
 SECRET = re.compile(r"(?i)(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*\S+|\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,})\b)")
 PRIVATE_PATH = re.compile(r"(?:^|[ /])(?:\.codex/sessions|\.claude/projects)(?:[/ ]|$)")
 KINDS = {"start", "decision", "implementation", "test", "review", "deploy", "failure", "handoff", "verification", "proposal", "feedback", "cancellation", "close"}
