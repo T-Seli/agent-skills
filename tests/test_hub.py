@@ -43,7 +43,7 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(status.splitlines(), [
             'Progress (unverified): Dispatch receipt is uncertain; no task progress verified',
             'Next: Check the destination for an existing receipt · Owner: Orchestrator',
-            'Need from Thomas: None'])
+            'Need from user: None'])
         for changes in ({'next_action': ''}, {'next_owner': ''}, {'need_from_user': ''},
                         {'progress_state': 'independently verified'},
                         {'need_kind': 'approval'}):
@@ -62,7 +62,7 @@ class StatusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'do not repeat'):
             h.material_status(**fields)
         fields.update(need_kind='none', need_from_user='None')
-        self.assertIn('Need from Thomas: None', h.material_status(**fields))
+        self.assertIn('Need from user: None', h.material_status(**fields))
 
     def test_plain_statuses(self):
         cases = [(record('running'), {}, 'In progress'),
@@ -349,7 +349,7 @@ class MaterialTraceTests(unittest.TestCase):
         events.append(('notify-origin', text))
         events.append(('other-work', None))
         self.assertEqual(events[0][0], 'notify-origin')
-        self.assertIn('Need from Thomas: None', text)
+        self.assertIn('Need from user: None', text)
         self.assertIn('reconcile', text.lower())
         failed = t.settle_dispatch(r, 'launch', 'not-sent')
         self.assertIn('retry the failed dispatch', h.material_from_record(
@@ -361,8 +361,8 @@ class MaterialTraceTests(unittest.TestCase):
     def test_genuine_user_decision_once_then_orchestrator_owns_next_action(self):
         r = record('blocked', {'need': 'Which schema?', 'action': 'use schema', 'target': 'A'})
         before = h.material_from_record(r, progress='Worker asks for schema', progress_state='reported', where='chat')
-        self.assertIn('Owner: Thomas', before)
-        self.assertIn('Need from Thomas: Approve or decline', before)
+        self.assertIn('Owner: User', before)
+        self.assertIn('Need from user: Approve or decline', before)
         r, outcome = t.apply(r, {'id': 'decision', 'task': 'wi-1', 'ts': BASE + 1,
                                  'source': 'user', 'kind': 'decided',
                                  'data': {'channel': 'chat', 'text': 'Use A', 'approve': True,
@@ -371,7 +371,7 @@ class MaterialTraceTests(unittest.TestCase):
         after = h.material_from_record(r, progress='Decision recorded; resume pending',
                                        progress_state='performed', where='chat')
         self.assertIn('Owner: Orchestrator', after)
-        self.assertIn('Need from Thomas: None', after)
+        self.assertIn('Need from user: None', after)
         self.assertNotIn('running', after.lower())
         self.assertEqual(t.apply(r, {'id': 'decision', 'task': 'wi-1', 'ts': BASE + 1,
                                      'source': 'user', 'kind': 'decided', 'data': {}})[1], 'duplicate')
@@ -381,7 +381,7 @@ class MaterialTraceTests(unittest.TestCase):
         text = h.material_from_record(r, progress='Worker reports commit and tests; review pending',
                                       progress_state='reported', where='chat')
         self.assertIn('Owner: Orchestrator', text)
-        self.assertIn('Need from Thomas: None', text)
+        self.assertIn('Need from user: None', text)
         self.assertNotIn('Needs you', h.plain_status(r))
 
 class UncertainOwnershipTests(unittest.TestCase):
@@ -391,4 +391,4 @@ class UncertainOwnershipTests(unittest.TestCase):
         text = h.material_from_record(r, progress='Receipt uncertain',
                                       progress_state='unverified', where='chat')
         self.assertIn('Owner: Orchestrator', text)
-        self.assertIn('Need from Thomas: None', text)
+        self.assertIn('Need from user: None', text)

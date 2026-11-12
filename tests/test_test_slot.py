@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from agent_skills.test_slot import run_in_slot  # noqa: E402
+from agent_skills.test_slot import HELD, run_in_slot  # noqa: E402
 
 
 class TestSlotTests(unittest.TestCase):
@@ -22,6 +22,9 @@ class TestSlotTests(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.procs = []
         self.addCleanup(lambda: [p.kill() for p in self.procs if p.poll() is None])
+        held = os.environ.pop(HELD, None)  # run under the wrapper, the marker would make run_in_slot exec over this runner
+        if held is not None:
+            self.addCleanup(os.environ.__setitem__, HELD, held)
         self.configure({"test_slots": 1})
 
     def configure(self, config):
@@ -187,3 +190,16 @@ class TestSlotTests(unittest.TestCase):
     def test_a_nested_run_inside_a_held_slot_passes_straight_through(self):
         inner = f"{sys.executable} -m agent_skills.safeguard_cli test-slot --wait-seconds 1 'exit 4'"
         self.assertEqual(self.start(inner).wait(timeout=15), 4)
+
+    def test_wrapper_marker_does_not_replace_the_runner_or_hide_failures(self):
+        module = self.tmp / "t_inner.py"
+        module.write_text("import unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertTrue(True)\n    def test_b(self):\n        self.fail('boom')\nunittest.main()\n")
+        env = dict(os.environ, **{HELD: "1"})
+        proc = subprocess.run([sys.executable, str(module)], env=env, capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Ran 2 tests", proc.stderr)
+        self.assertIn("FAILED", proc.stderr)
+        again = subprocess.run([sys.executable, "-m", "unittest", "tests.test_test_slot.TestSlotTests.test_runs_when_memory_is_within_limits"],
+                               cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertIn("Ran 1 test", again.stderr)

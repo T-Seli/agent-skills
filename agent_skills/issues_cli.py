@@ -157,6 +157,11 @@ def claim(gh, repo, n, branch, session, approved):
         gh(['issue', 'edit', str(n), '-R', repo, '--add-assignee', '@me'])
     if not any(c['author']['login'] == me and c['body'].strip() == note for c in data['comments']):
         gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'], note + '\n')
+        # Check-then-act is not atomic and sessions can share one login: the first claim note posted after our read wins.
+        newer = view(gh, repo, n, 'comments')['comments'][len(data['comments']):]
+        first = next((c['body'].strip() for c in newer if c['author']['login'] == me and c['body'].startswith('Claimed:')), note)
+        if first != note:
+            raise Refused(f'#{n} was claimed meanwhile by another session ({first}); stop and ask the user')
     print(f'#{n} claimed by {me}')
 
 

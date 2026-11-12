@@ -59,8 +59,8 @@ Shared context that belongs to no ticket.
 class FakeGh:
     """Records every call and the links it was asked to make; issue numbers start at 100 and an issue's id is its
     number × 1000. `fail` names a call (by predicate) that raises once, as gh does on an API error."""
-    def __init__(self, issues=None, viewer='me', fail=None):
-        self.calls, self.next, self.issues, self.viewer, self.fail = [], 100, issues or {}, viewer, fail
+    def __init__(self, issues=None, viewer='me', fail=None, rival=None):
+        self.calls, self.next, self.issues, self.viewer, self.fail, self.rival = [], 100, issues or {}, viewer, fail, rival
         self.links = {}  # 'repos/o/r/issues/<n>/<sub_issues|dependencies/blocked_by>' -> [linked numbers]
 
     def __call__(self, args, stdin=None):
@@ -82,6 +82,11 @@ class FakeGh:
             return ''.join(f'{n}\n' for n in self.links.get(args[1], []))
         if args[:2] == ['issue', 'view']:
             return json.dumps(self.issues[int(args[2])])
+        if args[:2] == ['issue', 'comment']:
+            comments = self.issues[int(args[2])]['comments']
+            if self.rival:
+                comments.append({'author': {'login': self.viewer}, 'body': self.rival})
+            comments.append({'author': {'login': self.viewer}, 'body': stdin.strip()})
         return ''
 
     def writes(self):
@@ -289,6 +294,13 @@ class Claim(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(writes, [])
 
+
+    def test_second_session_under_the_same_login_is_refused_when_the_other_note_landed_first(self):
+        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session s2')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+        self.assertNotEqual(code, 0)
+        self.assertIn('claimed meanwhile', err)
+        self.assertIn('session s2', err)
 
     def test_successor_same_branch_gets_current_session_pointer(self):
         code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session old-session']))

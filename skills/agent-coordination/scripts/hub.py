@@ -59,7 +59,7 @@ def material_status(*, progress, progress_state, next_action, next_owner, need_k
         fields["need_from_user"] = "None"
     return (f"Progress ({progress_state}): {fields['progress']}\n"
             f"Next: {fields['next_action']} · Owner: {fields['next_owner']}\n"
-            f"Need from Thomas: {fields['need_from_user']}")
+            f"Need from user: {fields['need_from_user']}")
 
 
 def coordination_route(*, intent, work_item=None, desktop_surface="desktop main conversation",
@@ -111,7 +111,7 @@ def material_from_record(record, *, progress, progress_state, where):
     need = _user_need(record)
     action = next_step(record, where=where)
     return material_status(progress=progress, progress_state=progress_state,
-                           next_action=action, next_owner="Thomas" if need else "Orchestrator",
+                           next_action=action, next_owner="User" if need else "Orchestrator",
                            need_kind=("approval" if pending(record)["action"] and pending(record)["target"] else "decision") if need else "none",
                            need_from_user=action if need else "None")
 
