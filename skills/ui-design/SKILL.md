@@ -6,7 +6,7 @@ description: 'Shape UI, frontend and local prototype design with distinct option
 # UI design
 
 Before any reply, hypothetical or capped included, read these in order:
-1. `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`
+1. `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`, then `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md` (applies to every task)
 2. the governing phase skill, e.g. `${CLAUDE_SKILL_DIR}/../blueprint/SKILL.md`
 3. `${CLAUDE_SKILL_DIR}/../workflow-contracts/references/execution-proof.md` (including for non-Git prototypes)
 4. `${CLAUDE_SKILL_DIR}/references/design.md`
