@@ -18,4 +18,4 @@ Keep technical decisions in the owning worker; route broad priority and scope ch
 Finish an explicit interview with a concise understanding check, open/deferred decisions and the acceptance criteria; for a big implementation (contracts.md § Chain) also the test seams to confirm, so blueprint writes the spec without re-interviewing. Understanding confirmation is not execution approval. Continue only actions already authorized for their exact scope; do not automatically commit, publish, install, deploy, send, clean up or start another workflow.
 
 ## Report (≤6 lines)
-Report the settled scope, the next ready question IDs or confirmed understanding, and the current owner/next action. Do not repeat answered questions unless a named assumption changed; a question the user skipped with a message is answered by it.
+Report the settled scope, the next ready question IDs or confirmed understanding, and the current owner/next action. Do not repeat answered questions unless a named assumption changed; a message that plainly answers a question settles it, an unrelated message does not.

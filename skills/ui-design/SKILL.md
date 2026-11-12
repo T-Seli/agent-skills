@@ -12,7 +12,6 @@ Before any reply, hypothetical or capped included, read these in order:
 4. `${CLAUDE_SKILL_DIR}/references/design.md`
 5. `${CLAUDE_SKILL_DIR}/references/iteration.md`
 6. `${CLAUDE_SKILL_DIR}/../workflow-contracts/references/research.md`
-
 This UI supplement alone is not the implementation/review workflow. Preflight the actual reply against the smaller of the user's cap and the phase cap (blueprint plan: 12 lines).
 
 For charts, dashboards or interactive explanations also read [visualization](references/visualization.md).
