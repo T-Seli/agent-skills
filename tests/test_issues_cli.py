@@ -59,8 +59,9 @@ Shared context that belongs to no ticket.
 class FakeGh:
     """Records every call and the links it was asked to make; issue numbers start at 100 and an issue's id is its
     number × 1000. `fail` names a call (by predicate) that raises once, as gh does on an API error."""
-    def __init__(self, issues=None, viewer='me', fail=None, rival=None):
+    def __init__(self, issues=None, viewer='me', fail=None, rival=None, rival_login=None, rival_assignee=None):
         self.calls, self.next, self.issues, self.viewer, self.fail, self.rival = [], 100, issues or {}, viewer, fail, rival
+        self.rival_login, self.rival_assignee = rival_login or viewer, rival_assignee
         self.links = {}  # 'repos/o/r/issues/<n>/<sub_issues|dependencies/blocked_by>' -> [linked numbers]
 
     def __call__(self, args, stdin=None):
@@ -85,7 +86,9 @@ class FakeGh:
         if args[:2] == ['issue', 'comment']:
             comments = self.issues[int(args[2])]['comments']
             if self.rival:
-                comments.append({'author': {'login': self.viewer}, 'body': self.rival})
+                comments.append({'author': {'login': self.rival_login}, 'body': self.rival})
+            if self.rival_assignee:
+                self.issues[int(args[2])]['assignees'].append({'login': self.rival_assignee})
             comments.append({'author': {'login': self.viewer}, 'body': stdin.strip()})
         return ''
 
@@ -301,6 +304,37 @@ class Claim(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn('claimed meanwhile', err)
         self.assertIn('session s2', err)
+
+    def test_takeover_posts_a_fresh_note_even_when_an_identical_old_one_exists(self):
+        history = ['Claimed: branch `feat/x` · session s1', 'Claimed: branch `feat/y` · session s2']
+        code, writes, _ = self.claim(issue(assignees=['me'], comments=history), '--takeover')
+        self.assertEqual(code, 0)
+        self.assertEqual(len(writes), 1)
+        self.assertIn('session s1', writes[0][1])
+
+    def test_a_loser_retracts_and_the_winner_stays_the_owner(self):
+        self.assertEqual(issues_cli.claim_owner([
+            {'body': 'Claimed: branch `a` · session s2'}, {'body': 'Claimed: branch `b` · session s1'},
+            {'body': 'Released: session s1 · lost claim to session s2'}]), 's2')
+        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session s2')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+        self.assertNotEqual(code, 0)
+        self.assertIn('Released: session s1', gh.issues[7]['comments'][-1]['body'])
+        self.assertEqual(issues_cli.claim_owner(gh.issues[7]['comments']), 's2')
+
+    def test_a_rival_note_from_another_login_between_the_reads_loses_the_claim(self):
+        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session s9', rival_login='hayk')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+        self.assertNotEqual(code, 0)
+        self.assertIn('session s9', err)
+        self.assertEqual(issues_cli.claim_owner(gh.issues[7]['comments']), 's9')
+
+    def test_a_rival_assignee_appearing_between_the_reads_loses_the_claim(self):
+        gh = FakeGh(issues={7: issue()}, rival_assignee='hayk')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+        self.assertNotEqual(code, 0)
+        self.assertIn('hayk', err)
+        self.assertIsNone(issues_cli.claim_owner(gh.issues[7]['comments']))
 
     def test_successor_same_branch_gets_current_session_pointer(self):
         code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session old-session']), '--takeover')

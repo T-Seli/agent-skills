@@ -146,6 +146,18 @@ def claim_session(body):
     return match[1] if match else None
 
 
+def claim_owner(comments):
+    """The session holding the issue: the latest claim note whose session did not later post a `Released:` note."""
+    held = []
+    for c in comments:
+        body = c['body'].strip()
+        if claim_session(body):
+            held.append(claim_session(body))
+        elif body.startswith('Released:') and (m := re.search(r'session (\S+)', body)):
+            held = [x for x in held if x != m[1]]
+    return held[-1] if held else None
+
+
 def claim(gh, repo, n, branch, session, approved, takeover=False):
     session = session or os.environ.get('CLAUDE_CODE_HOST_SESSION_ID') or os.environ.get('CLAUDE_CODE_SESSION_ID')
     if not session:
@@ -158,18 +170,21 @@ def claim(gh, repo, n, branch, session, approved, takeover=False):
     if data['author']['login'] != me and not approved:
         raise Refused(f"#{n} was filed by {data['author']['login']}; claim it only with the user's OK (--approved)")
     note = f'Claimed: branch `{branch}` · session {session}'
-    latest = next((claim_session(c['body']) for c in reversed(data['comments']) if claim_session(c['body'])), None)
-    if latest and latest != session and not takeover:
-        raise Refused(f'#{n} already carries a claim by session {latest}; ask the user, then pass --takeover')
+    owner = claim_owner(data['comments'])
+    if owner and owner != session and not takeover:
+        raise Refused(f'#{n} already carries a claim by session {owner}; ask the user, then pass --takeover')
     if not data['assignees']:
         gh(['issue', 'edit', str(n), '-R', repo, '--add-assignee', '@me'])
-    if not any(c['author']['login'] == me and c['body'].strip() == note for c in data['comments']):
+    if owner != session:
         gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'], note + '\n')
-        # Check-then-act is not atomic and sessions can share one login: the first claim note posted after our read wins.
-        newer = view(gh, repo, n, 'comments')['comments'][len(data['comments']):]
-        first = next((c['body'].strip() for c in newer if c['author']['login'] == me and c['body'].startswith('Claimed:')), note)
-        if first != note:
-            raise Refused(f'#{n} was claimed meanwhile by another session ({first}); stop and ask the user')
+        # Best-effort guard, not atomic: the first claim note of any login after our read wins; a loser retracts its note.
+        fresh = view(gh, repo, n, 'assignees,comments')
+        winner = next((claim_session(c['body']) for c in fresh['comments'][len(data['comments']):] if claim_session(c['body'])), session)
+        rivals = [a['login'] for a in fresh['assignees'] if a['login'] != me]
+        if winner != session or rivals:
+            who = f'session {winner}' if winner != session else ', '.join(rivals)
+            gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'], f'Released: session {session} · lost claim to {who}\n')
+            raise Refused(f'#{n} was claimed meanwhile by {who}; stop and ask the user')
     print(f'#{n} claimed by {me}')
 
 
