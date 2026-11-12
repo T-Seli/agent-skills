@@ -303,10 +303,29 @@ class Claim(unittest.TestCase):
         self.assertIn('session s2', err)
 
     def test_successor_same_branch_gets_current_session_pointer(self):
-        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session old-session']))
+        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session old-session']), '--takeover')
         self.assertEqual(code, 0)
         self.assertEqual(len(writes), 1)
         self.assertIn('session s1', writes[0][1])
+
+    def test_existing_claim_by_another_session_is_refused_without_takeover(self):
+        code, writes, err = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/y` · session s2']))
+        self.assertNotEqual(code, 0)
+        self.assertEqual(writes, [])
+        self.assertIn('session s2', err)
+        self.assertIn('--takeover', err)
+
+    def test_claim_note_from_a_different_login_is_also_refused(self):
+        data = issue(assignees=['me'])
+        data['comments'] = [{'author': {'login': 'hayk'}, 'body': 'Claimed: branch `feat/y` · session s9'}]
+        code, writes, err = self.claim(data)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(writes, [])
+
+    def test_our_own_latest_claim_is_not_blocked_by_an_older_one(self):
+        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/y` · session s2', 'Claimed: branch `feat/x` · session s1']))
+        self.assertEqual(code, 0)
+        self.assertEqual(writes, [])
 
     def test_session_defaults_to_the_desktop_session_id(self):
         gh = FakeGh(issues={7: issue()})

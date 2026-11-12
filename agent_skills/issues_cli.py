@@ -141,7 +141,12 @@ def view(gh, repo, n, fields):
     return json.loads(gh(['issue', 'view', str(n), '-R', repo, '--json', fields]))
 
 
-def claim(gh, repo, n, branch, session, approved):
+def claim_session(body):
+    match = re.search(r'· session (\S+)\s*$', body.strip()) if body.startswith('Claimed:') else None
+    return match[1] if match else None
+
+
+def claim(gh, repo, n, branch, session, approved, takeover=False):
     session = session or os.environ.get('CLAUDE_CODE_HOST_SESSION_ID') or os.environ.get('CLAUDE_CODE_SESSION_ID')
     if not session:
         raise Refused('no session id in the environment; pass --session')
@@ -153,6 +158,9 @@ def claim(gh, repo, n, branch, session, approved):
     if data['author']['login'] != me and not approved:
         raise Refused(f"#{n} was filed by {data['author']['login']}; claim it only with the user's OK (--approved)")
     note = f'Claimed: branch `{branch}` · session {session}'
+    latest = next((claim_session(c['body']) for c in reversed(data['comments']) if claim_session(c['body'])), None)
+    if latest and latest != session and not takeover:
+        raise Refused(f'#{n} already carries a claim by session {latest}; ask the user, then pass --takeover')
     if not data['assignees']:
         gh(['issue', 'edit', str(n), '-R', repo, '--add-assignee', '@me'])
     if not any(c['author']['login'] == me and c['body'].strip() == note for c in data['comments']):
@@ -327,6 +335,7 @@ def main(argv=None, gh=None):
     c.add_argument('--branch', required=True)
     c.add_argument('--session', help='default: the desktop session id, else the CLI session id')
     c.add_argument('--approved', action='store_true', help="the user OK'd claiming an issue someone else filed")
+    c.add_argument('--takeover', action='store_true', help="the user OK'd replacing another session's claim")
     t = subs.add_parser('tick', help="tick a ticket's acceptance criteria after its merge")
     t.add_argument('--repo', required=True); t.add_argument('number', type=int)
     t.add_argument('--evidence-file', help='versioned exact-body, per-criterion evidence JSON; required to write')
@@ -349,7 +358,7 @@ def main(argv=None, gh=None):
         if args.action == 'publish':
             publish(gh, args.repo, Path(args.draft), args.title, args.body_file, args.label, args.dry_run)
         elif args.action == 'claim':
-            claim(gh, args.repo, args.number, args.branch, args.session, args.approved)
+            claim(gh, args.repo, args.number, args.branch, args.session, args.approved, args.takeover)
         elif args.action == 'tick':
             tick(gh, args.repo, args.number, args.evidence_file)
         elif args.action == 'close':

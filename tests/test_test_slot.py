@@ -191,6 +191,22 @@ class TestSlotTests(unittest.TestCase):
         inner = f"{sys.executable} -m agent_skills.safeguard_cli test-slot --wait-seconds 1 'exit 4'"
         self.assertEqual(self.start(inner).wait(timeout=15), 4)
 
+    def test_failure_propagates_through_the_real_slot_path_to_the_tail_sentinel(self):
+        module = self.tmp / "t_inner.py"
+        module.write_text("import unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertTrue(True)\n    def test_b(self):\n        self.fail('boom')\nunittest.main()\n")
+        command = f"{sys.executable} {module}; s=$?; echo TAIL_SENTINEL; exit $s"
+        for marker in (False, True):
+            if marker:
+                os.environ[HELD] = "1"
+                self.addCleanup(os.environ.pop, HELD, None)
+            proc = self.start(command)
+            out, err = proc.communicate(timeout=60)
+            self.assertNotEqual(proc.returncode, 0, marker)
+            self.assertIn("TAIL_SENTINEL", out, marker)
+            self.assertIn("Ran 2 tests", err, marker)
+            self.assertIn("FAILED", err, marker)
+            os.environ.pop(HELD, None)
+
     def test_wrapper_marker_does_not_replace_the_runner_or_hide_failures(self):
         module = self.tmp / "t_inner.py"
         module.write_text("import unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertTrue(True)\n    def test_b(self):\n        self.fail('boom')\nunittest.main()\n")
