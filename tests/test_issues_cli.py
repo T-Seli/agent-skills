@@ -322,6 +322,13 @@ class Claim(unittest.TestCase):
         self.assertIn('Released: session s1', gh.issues[7]['comments'][-1]['body'])
         self.assertEqual(issues_cli.claim_owner(gh.issues[7]['comments']), 's2')
 
+    def test_a_release_note_from_another_login_does_not_free_the_claim(self):
+        comments = [{'author': {'login': 'me'}, 'body': 'Claimed: branch `a` · session s1'},
+                    {'author': {'login': 'hayk'}, 'body': 'Released: session s1 · lost claim to hayk'}]
+        self.assertEqual(issues_cli.claim_owner(comments), 's1')
+        comments[1]['author']['login'] = 'me'
+        self.assertIsNone(issues_cli.claim_owner(comments))
+
     def test_a_rival_note_from_another_login_between_the_reads_loses_the_claim(self):
         gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session s9', rival_login='hayk')
         code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')

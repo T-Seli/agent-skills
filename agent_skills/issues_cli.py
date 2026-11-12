@@ -147,15 +147,15 @@ def claim_session(body):
 
 
 def claim_owner(comments):
-    """The session holding the issue: the latest claim note whose session did not later post a `Released:` note."""
+    """The session holding the issue: the latest claim note whose session did not later get a `Released:` note from the login that wrote the claim."""
     held = []
     for c in comments:
-        body = c['body'].strip()
+        body, login = c['body'].strip(), (c.get('author') or {}).get('login')
         if claim_session(body):
-            held.append(claim_session(body))
+            held.append((claim_session(body), login))
         elif body.startswith('Released:') and (m := re.search(r'session (\S+)', body)):
-            held = [x for x in held if x != m[1]]
-    return held[-1] if held else None
+            held = [x for x in held if x != (m[1], login)]
+    return held[-1][0] if held else None
 
 
 def claim(gh, repo, n, branch, session, approved, takeover=False):
