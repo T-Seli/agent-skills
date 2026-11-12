@@ -12,7 +12,7 @@ Before any reply, hypothetical or capped included, read these in order:
 4. `${CLAUDE_SKILL_DIR}/references/design.md`
 5. `${CLAUDE_SKILL_DIR}/references/iteration.md`
 6. `${CLAUDE_SKILL_DIR}/../workflow-contracts/references/research.md`
-This UI supplement alone is not the implementation/review workflow. The reply obeys the smaller of the user's cap and the phase cap (blueprint plan: 12 lines) and a cap overrides every list, evidence or option requirement below: count words and lines of the final text, cut options, rationale and restatement until under both, then send.
+This UI supplement alone is not the implementation/review workflow. The reply fits the smaller of the user's cap and the phase cap (blueprint plan: 12 lines). Count words and physical lines, blank ones included, of the final text; cut repetition and optional rationale first, keep the verification status, material holds and requested decisions, and if those cannot fit say so in the reply instead of dropping them.
 
 For charts, dashboards or interactive explanations also read [visualization](references/visualization.md).
 This is a design workflow, not a renderer or implementation engine. Pair with the
