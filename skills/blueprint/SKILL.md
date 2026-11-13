@@ -49,7 +49,7 @@ For UI/frontend or visualization choices, also load [ui-design](../ui-design/SKI
    § Tenancy is `none`: root cause replaces config-driven & generalized. Nothing to choose (one obvious S change the scout already pinned, or an approach the user or brief already chose) → no architects; say so. Use agent type `Plan` (built-in, cannot edit; Codex: a read-only default subagent). Angles:
    - **Minimal fix**: the smallest change that fully solves it.
    - **Root cause**: fix the mechanism, at its most central point.
-   - **Config-driven & generalized**: the behavior becomes config or data, so a new tenant or project adopts it with no code edit.
+   - **Config-driven & generalized**: the behavior becomes config or data, so a new tenant or project adopts it with no code edit. Extend by registration, not by id list; a lint or test fails on tenant, agent or job-type literals in shared code.
    - **Redesign**: what you would build today, plus the migration path.
    - **Stress-test**: attack the obvious answer (how it fails, what it misses), then propose the version that survives.
 
