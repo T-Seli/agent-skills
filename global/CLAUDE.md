@@ -21,7 +21,7 @@ Tenant = what varies per install. § Tenancy `none` disables tenant rules.
 - Production data is read-only unless asked. A script, job, backfill or migration that writes to production asserts its target first; writes in normal request handlers are exempt. Allow-list DDL; migrations are idempotent with a down path.
 - Secrets: env or gitignored config only, never in source, URLs, logs, screenshots or sub-agent prompts. Strip PII before third-party LLM calls.
 - Shared external config (webhooks, DNS, vendor dashboards): additive changes only, snapshot first.
-- Look before overwriting or deleting. Outward or irreversible actions need the user's go-ahead (contracts.md § Consent); a review verdict or a bare "continue" is not one.
+- Look before overwriting or deleting. Outward or irreversible actions need the user's go-ahead (contracts.md § Consent); a review verdict or a bare "continue" is not one. Never send email: write a draft file.
 
 ## Git
 - Only `/implement`, workers included, commits code: on task branches, or on `<base>` in trunk flow (contracts.md `<flow>`). `/test-review` commits its log entry and `/deploy` its record commits. Nothing else commits unless asked.

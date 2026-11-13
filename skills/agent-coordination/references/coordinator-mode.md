@@ -77,3 +77,4 @@ including input/cache/output and actual model where available. Report retries,
 held launches and missing cost metadata separately. CLI-reported dollar amounts
 and cached-input totals do not establish subscription quota consumption. Do not
 attribute a weekly limit to one mechanism without account-wide evidence.
+Workspace hygiene and the draft-PR release train: [workspace-and-train](workspace-and-train.md).
