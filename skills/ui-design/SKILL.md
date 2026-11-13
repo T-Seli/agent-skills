@@ -5,14 +5,14 @@ description: 'Shape UI, frontend and local prototype design with distinct option
 
 # UI design
 
-Before any reply, hypothetical or capped included, read these in order:
-1. `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md` and `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md` (applies to every task), read together as the first reads, before any other file
+Before any reply, hypothetical or capped included, do these reads in order; loading this skill only discovers it and counts as none of them:
+1. `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md` and `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md` (applies to every task), read together as the first reads after this skill loads, before any other file
 2. the governing phase skill, e.g. `${CLAUDE_SKILL_DIR}/../blueprint/SKILL.md`
 3. `${CLAUDE_SKILL_DIR}/../workflow-contracts/references/execution-proof.md` (including for non-Git prototypes)
 4. `${CLAUDE_SKILL_DIR}/references/design.md`
 5. `${CLAUDE_SKILL_DIR}/references/iteration.md`
 6. `${CLAUDE_SKILL_DIR}/../workflow-contracts/references/research.md`
-This UI supplement alone is not the implementation/review workflow. Reply budget: the smaller of the user's cap and the phase cap (blueprint plan: 12 lines); target 80% of it, with no blank lines, because words and physical lines are counted exactly on the final text. Spend it in order: recommendation, the acceptance line (see Iterate), holds and requested decisions, option rationale last; cut from the end, and if the first three cannot fit say so instead of dropping them.
+This UI supplement alone is not the implementation/review workflow. Reply budget: the smaller of the user's cap and the phase cap (blueprint plan: 12 lines); target 80% of it, with no blank lines, because words and physical lines are counted exactly on the final text. Spend it in order: recommendation, the verification line (see Iterate), holds and requested decisions, option rationale last; cut from the end, and if the first three cannot fit say so instead of dropping them.
 
 For charts, dashboards or interactive explanations also read [visualization](references/visualization.md).
 This is a design workflow, not a renderer or implementation engine. Pair with the
@@ -60,13 +60,13 @@ scope and verify fixes on the exact final candidate. Keep stable finding IDs and
 actual tool receipts, a bounded convergence rule and explicit missing-capability
 gaps; screenshot-only or simulated critique is not interactive verification.
 
-Every UI design plan, spec, handoff and capped reply carries one acceptance line:
-"Verification (not yet run): independent critics, real interactions/screenshots,
-at least two review rounds, findings fixed then retested independently on the
-exact final candidate, stop at convergence or the round budget; a hold names
-open findings, owner and next action." Keep all five items, adapt wording to the
-task, and never imply it ran. Execution not authorized or no worker/browser:
-describe the gated work, do not launch it.
+Every UI design plan, spec, handoff and capped reply carries one verification line
+with true status: for each of independent critics, real interactions/screenshots,
+at least two review rounds, independent retest of the exact final candidate, and
+the convergence or round-budget stop, say what ran (with its receipt) and what is
+still required; open findings get an owner and next action. Write "not yet run"
+only for work that has not run: never imply unrun work ran, never relabel
+completed work. No worker/browser or no authorization: describe, do not launch.
 Cut option rationale before this line.
 
 ## One design packet, carried through the work
