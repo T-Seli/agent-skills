@@ -6,7 +6,7 @@ argument-hint: "[tests | PR <n> | PR URL | branch | commit range]"
 
 # Test review
 
-Decide one thing: is this ready to deploy? Strictly read-only: no code or test edits, code commits, rebases or merges; fixes go through `/implement`. Its only writes: its log entry (§ Log), `gh pr ready <PR>` on a YES for an authorized readiness review of a tracked task's draft PR (never an advisory draft review; `${CLAUDE_SKILL_DIR}/../workflow-contracts/issues.md`), and the temp worktrees and test services it makes and removes. First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`: names, `DRAFT`, `TASK`, temp worktrees, record commits, "outside the plan" and the defaults named below are per it.
+Decide one thing: is this ready to deploy? Strictly read-only: no code or test edits, code commits, rebases or merges; fixes go through `/implement`. Its only writes: its log entry (§ Log), `gh pr ready <PR>` on a YES for an authorized readiness review of a tracked task's draft PR (never an advisory draft review, and never a release-member PR, which stays draft until merged into the release branch; `${CLAUDE_SKILL_DIR}/../workflow-contracts/issues.md`), and the temp worktrees and test services it makes and removes. First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`: names, `DRAFT`, `TASK`, temp worktrees, record commits, "outside the plan" and the defaults named below are per it.
 
 For an explicitly authorized non-Git prototype review, use [portable execution proof](../workflow-contracts/references/execution-proof.md) before resolving Git paths: bind base/final content manifests, scoped checks and an allowed review receipt. Keep independence and unmet gates; do not invent commits or call a prototype pass deployment acceptance.
 
