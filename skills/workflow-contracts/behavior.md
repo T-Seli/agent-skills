@@ -44,6 +44,19 @@ Applies to a change to an agent prompt, knowledge base, tool description or agen
 - **One home per tool:** a tool's instructions live once, in its description or one shared block every agent reuses. End users never see internal tool names.
 - **Proven:** a change, shorter ones included, ships only when the project's `Prompt checks` pass rate holds against the base.
 
+## Tune prompts with evals
+
+Applies when a change to an agent prompt, judge, guard or tool description aims to improve accuracy, cost or latency.
+- **Cases:** labelled cases from real transcripts or outcomes, with enough negatives (things that must NOT flag or block) to show a false-positive rate. Record each label's source (human, assistant-reviewed, mined); a person labels every case where versions disagree.
+- **Split:** by conversation. Train failures drive edits; test decides; a frozen holdout is read once, at the end.
+- **Measure both directions:** misses and wrong additions, per harm class, plus cost, latency (median and slowest 5%) and unavailable/timeout rate. Run each version at least 3 times; a gap inside run-to-run noise is no gap. With few positives, say how wide the margin is.
+- **Keep rule:** keep a change only if the harm-side metric holds beyond noise and the target metric improves on train AND test. Revert if only train improves. Stop when two rounds stall.
+- **Patches are rules, not cases:** never paste transcript text, names or ids into a prompt; run `Prompt checks` lint; a patch tuned on a case needs a held-out case to prove it.
+- **Data:** redact before any model or third party sees it, spot-check every batch, keep raw data local. A user-approved dollar cap before any paid run; keep a ledger and stop at the cap.
+- **Cheaper-model tries:** same cases, same split; also report format failures, which a prompt or parser fix may remove.
+- **Ship:** a person reviews the diff and the numbers; the budget ratchet and `Prompt checks` hold; normal release flow, then monitor.
+- **One runner:** reuse the project's eval runner and case registry; a new check plugs in by config, with no tenant or id in shared code.
+
 ## Release train
 
 One outstanding release candidate per repo. A draft train (references/workspace-and-train.md) may feed that candidate. A candidate still awaiting its go-ahead absorbs newly ready reviewed work instead of queuing another release: merge it in, rerun the test diff, lint and an independent `/test-review` of the combined diff, and refresh the prepared command and its landing-check string. Re-batching needs no user answer; only the final run needs the go-ahead, and that ask names every task in the candidate. A candidate whose go-ahead is already given takes nothing new. A release of two or more PRs through a base that requires pull requests is one release branch and one release PR (single-PR, hotfix, direct-push and local flows are unchanged): member PRs stay drafts until each is merged into the branch with a merge commit (a revert point per PR); conflicts are resolved once there; only the release PR is marked ready, once the branch contains the base; mandatory and security checks are never cancelled; the test diff runs on the combined result and the PR merges only with no newly failing tests against the base. A PR that breaks the combined run is dropped and the run repeated; failures are attributed by bisect. Record and docs commits wait for the candidate to land, or ride in it, so the base never moves under a prepared command. After a verified deploy, `/deploy` removes worktrees and branches whose commits the deployed sha contains when they are clean, unlocked and inactive; the rest are kept and listed.
