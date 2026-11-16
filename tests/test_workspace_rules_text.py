@@ -6,7 +6,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 MARKERS = {
     "skills/agent-coordination/references/workspace-and-train.md": (
         "a flag alone is not approval", "Archiving is not task closure",
-        "separately from archiving", "the transcript stays recoverable"),
+        "separately from archiving", "the transcript stays recoverable",
+        "pending follow-through", "an undo list", "at most `Test slots`", "delete only after the user's yes"),
     "skills/workflow-contracts/issues.md": ("except a release-member PR",),
     "skills/test-review/SKILL.md": ("never a release-member PR",),
     "ENGINEERING-COORDINATOR.md": ("a grant the user recorded",),

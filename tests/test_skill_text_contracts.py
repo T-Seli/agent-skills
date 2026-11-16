@@ -54,11 +54,11 @@ class DataAccessReadiness(unittest.TestCase):
 
 
 class QuestionsAndConsent(unittest.TestCase):
-    def test_round_size_is_a_proposed_configurable_default(self):
+    def test_round_size_is_a_recorded_configurable_default(self):
         defaults = text(CONTRACTS).split('## Defaults', 1)[1]
         line = next(x for x in defaults.splitlines() if x.startswith('- Question round size:'))
-        self.assertIn('1–3', line)
-        self.assertIn('proposed', line)
+        self.assertIn('1–4', line)
+        self.assertIn('2026-11-16', line)
         for path in ('skills/workflow-contracts/decisions.md', 'skills/grill-me/SKILL.md'):
             body = text(path)
             self.assertIn('`Question round size`', body)
