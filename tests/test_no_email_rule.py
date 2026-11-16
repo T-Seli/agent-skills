@@ -5,7 +5,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MARKERS = {
     "skills/workflow-contracts/contracts.md": "no session sends, replies to or forwards email",
-    "global/CLAUDE.md": "Never send email: write a draft file.",
+    "global/CLAUDE.md": "Never send email: show paste-ready text.",
     "skills/agent-coordination/SKILL.md": "no session sends, replies or forwards email",
     "skills/agent-coordination/references/worker-execution.md": "no email send, reply or forward",
     "ENGINEERING-COORDINATOR.md": "never send, reply or forward",
