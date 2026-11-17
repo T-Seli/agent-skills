@@ -191,6 +191,29 @@ class TestSlotTests(unittest.TestCase):
         self.assertEqual(self.held(), 2)
         self.assertEqual(self.start("true", "--wait-seconds", "1").wait(timeout=15), 75)
 
+    def test_review_runs_leave_the_reserved_slot_for_a_release_run(self):
+        self.configure({"test_slots": 2, "test_release_reserve": 1})
+        self.holding()
+        review = self.start("true", "--class", "review", "--wait-seconds", "1")
+        self.assertEqual(review.wait(timeout=15), 75)
+        self.assertEqual(self.start("true", "--class", "release", "--wait-seconds", "1").wait(timeout=15), 0)
+        self.assertEqual(self.start("true", "--wait-seconds", "1").wait(timeout=15), 0)  # no class: unchanged
+
+    def test_review_run_is_admitted_while_a_slot_beyond_the_reserve_is_free(self):
+        self.configure({"test_slots": 2, "test_release_reserve": 1})
+        self.assertEqual(self.start("true", "--class", "review").wait(timeout=15), 0)
+
+    def test_review_weight_beyond_slots_minus_reserve_and_bad_reserve_are_errors(self):
+        self.configure({"test_slots": 2, "test_release_reserve": 1})
+        proc = self.start("true", "--class", "review", "--weight", "2")
+        self.assertEqual(proc.wait(timeout=15), 1)
+        self.assertIn("reserve", proc.stderr.read())
+        for bad in (-1, "one", 2):
+            self.configure({"test_slots": 2, "test_release_reserve": bad})
+            proc = self.start("true")
+            self.assertEqual(proc.wait(timeout=15), 1, bad)
+            self.assertIn("test_release_reserve", proc.stderr.read())
+
     def test_weight_above_the_slot_count_is_an_error(self):
         proc = self.start("true", "--weight", "2")
         self.assertEqual(proc.wait(timeout=15), 1)

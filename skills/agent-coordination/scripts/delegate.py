@@ -109,6 +109,18 @@ def refuse(reason):
     sys.exit(REFUSED)
 
 
+def overlapping_prs(files, cwd):
+    """Open PRs touching any declared file; refuses when gh cannot answer, never a silent pass."""
+    try:
+        out = subprocess.run(["gh", "pr", "list", "--state", "open", "--limit", "200", "--json", "number,files,headRefName"],
+                             cwd=cwd, capture_output=True, text=True, check=True).stdout
+        prs = json.loads(out)
+    except (OSError, subprocess.CalledProcessError, ValueError) as error:
+        refuse(f"overlap check needs `gh pr list` and it failed ({error}); fix gh or start without --files after checking by hand")
+    declared = {f.removeprefix("./") for f in files}
+    return {pr["number"]: sorted(declared & {f["path"] for f in pr["files"]}) for pr in prs if declared & {f["path"] for f in pr["files"]}}
+
+
 def guard_settings(run, remote=False):
     """Deny rules plus the fail-closed PreToolUse hook, with this install's absolute paths; `remote`
     lifts the ssh, scp and rsync denies for a grant whose targets name hosts."""
@@ -416,6 +428,11 @@ def start(args):
     for r in live:
         if json.loads((r / "params.json").read_text())["cwd"] == str(cwd):
             refuse(f"a worker is already writing in {cwd} ({r.parent.name}): one writer per directory")
+    if args.files and not args.resume:
+        for number, shared in overlapping_prs(args.files.split(","), cwd).items():
+            refuse(f"open PR #{number} already touches {', '.join(shared)}: coordinate or wait before a second writer")
+    elif not args.resume:
+        print("delegate: overlap check skipped: no --files declared; open PRs were not compared", file=sys.stderr)
     prompt = sys.stdin.read() if args.prompt_file == "-" else Path(args.prompt_file).read_text()
     if not prompt.strip():
         sys.exit("delegate: empty prompt")
@@ -910,6 +927,7 @@ def main(argv=None):
     s = sub.add_parser("start", allow_abbrev=False)  # no "--approved" shorthand slipping past the guard
     s.add_argument("--prompt-file", required=True, help="the brief; '-' reads stdin")
     s.add_argument("--cwd", default=".")
+    s.add_argument("--files", help="comma-separated files a write task will change; refused when an open PR touches any")
     s.add_argument("--task-id")
     s.add_argument("--work-item")
     s.add_argument("--name")
