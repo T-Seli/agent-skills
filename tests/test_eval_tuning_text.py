@@ -11,7 +11,8 @@ class EvalTuningTextTests(unittest.TestCase):
         self.assertLess(a, b)
         self.assertLess(b, c)
         for marker in ("a frozen holdout is read once", "Revert if only train improves",
-                       "never paste transcript text", "A user-approved dollar cap"):
+                       "never paste transcript text", "A user-approved dollar cap",
+                       "never reused as a tuning set"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, BODY)
 

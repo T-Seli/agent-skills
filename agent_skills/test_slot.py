@@ -46,7 +46,9 @@ def _command(*args):
 
 
 def read_memory():
-    """(swap used GB, free memory GB) from macOS; fails loudly when the output can't be read."""
+    """(swap used GB, free memory GB) from macOS, or None elsewhere (no memory gate); fails loudly when macOS output can't be read."""
+    if sys.platform != 'darwin':
+        return None
     swap = re.search(r'used = ([0-9.]+)M', _command('sysctl', '-n', 'vm.swapusage'))
     free = re.search(r'free percentage: ([0-9]+)%', _command('memory_pressure', '-Q'))
     if not swap or not free:
@@ -56,6 +58,8 @@ def read_memory():
 
 
 def _memory_problem(reading, max_swap_gb, min_free_gb):
+    if reading is None:
+        return None
     swap, free = reading
     if swap > max_swap_gb:
         return f'swap {swap:.1f} GB used (limit {max_swap_gb:g} GB)'
@@ -159,7 +163,10 @@ def run_in_slot(command, *, slots, wait_seconds, max_swap_gb, min_free_gb, weigh
     problem, checked = None, None
     while True:
         if checked is None or time.monotonic() - checked >= MEMORY_RECHECK_SECONDS:
-            problem, checked = _memory_problem(memory(), max_swap_gb, min_free_gb), time.monotonic()
+            reading = memory()
+            if reading is None and checked is None:
+                print(f'test-slot: memory gate unavailable on {sys.platform}; slot cap only', file=sys.stderr)
+            problem, checked = _memory_problem(reading, max_swap_gb, min_free_gb), time.monotonic()
             if problem and not waiting:
                 print(f'test-slot: waiting for memory: {problem}', file=sys.stderr)
                 waiting = True

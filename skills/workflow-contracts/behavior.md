@@ -54,7 +54,7 @@ Applies when a change to an agent prompt, judge, guard or tool description aims 
 - **Patches are rules, not cases:** never paste transcript text, names or ids into a prompt; run `Prompt checks` lint; a patch tuned on a case needs a held-out case to prove it.
 - **Data:** redact before any model or third party sees it, spot-check every batch, keep raw data local. A user-approved dollar cap before any paid run; keep a ledger and stop at the cap.
 - **Cheaper-model tries:** same cases, same split; also report format failures, which a prompt or parser fix may remove.
-- **Ship:** a person reviews the diff and the numbers; the budget ratchet and `Prompt checks` hold; normal release flow, then monitor.
+- **Ship:** a holdout below its predeclared acceptance bar blocks shipping and is never reused as a tuning set; a person reviews the diff and the numbers; the budget ratchet and `Prompt checks` hold; normal release flow, then monitor.
 - **One runner:** reuse the project's eval runner and case registry; a new check plugs in by config, with no tenant or id in shared code.
 
 ## Release train

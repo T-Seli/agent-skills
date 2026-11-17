@@ -12,6 +12,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from unittest import mock  # noqa: E402
+from agent_skills import test_slot  # noqa: E402
 from agent_skills.test_slot import HELD, run_in_slot  # noqa: E402
 
 
@@ -105,6 +107,13 @@ class TestSlotTests(unittest.TestCase):
         status, err = self.in_process((0.0, 2.5))
         self.assertEqual(status, 75)
         self.assertIn("free memory 2.5 GB (needs 6 GB)", err)
+
+    def test_memory_gate_is_unavailable_off_macos_and_says_so_once(self):
+        with mock.patch.object(test_slot.sys, "platform", "linux"):
+            self.assertIsNone(test_slot.read_memory())
+        status, err = self.in_process(None)
+        self.assertEqual(status, 0)
+        self.assertEqual(err.count("memory gate unavailable"), 1)
 
     def test_runs_when_memory_is_within_limits(self):
         self.assertEqual(self.in_process((2.0, 20.0))[0], 0)

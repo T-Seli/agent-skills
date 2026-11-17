@@ -86,5 +86,5 @@ Outside the plan = a file, dependency, schema, config, external call or behaviou
 - Parallel sub-agents: ≤4 (never >5 incl. scout)
 - Review fan-out above: 200 changed lines
 - Handoffs kept: 5
-- Question round size: 1–4 ready questions per native call, asked at once when ready, recommended option first, blocking and time-critical first (the user's answer, 2026-11-16)
+- Question round size: 1–4 ready questions per native call (never above the host's cap), asked at once when ready, recommended option first, blocking and time-critical first (the user's answer, 2026-11-16)
 - Spec mode: ticket brief ≤15 lines; worker receipt ≤150 words; review cap ≤400 words per axis; orchestrator hands off after 6 merged tickets, or sooner when the host shows context use above 40%

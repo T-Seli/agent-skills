@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class TargetAndAwakeTests(unittest.TestCase):
+    @unittest.skipUnless((ROOT / ".git").exists(), "needs a git checkout; a source snapshot has no .git")
     def test_installed_safeguard_entrypoint_binds_the_linked_release_from_an_unrelated_cwd(self):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as cwd:
             env = dict(os.environ, HOME=home)
