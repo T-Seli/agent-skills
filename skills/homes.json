@@ -71,6 +71,11 @@
    "also": [
     "output-styles/orchestrator.md"
    ]
+  },
+  {
+   "id": "model-selection",
+   "pattern": "two climb one tier|Never fall back to a weaker tier",
+   "home": "skills/agent-coordination/references/model-selection.md"
   }
  ]
 }

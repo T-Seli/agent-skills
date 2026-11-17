@@ -71,6 +71,10 @@
    "bytes": 6694,
    "long": 0
   },
+  "skills/agent-coordination/references/model-selection.md": {
+   "bytes": 1904,
+   "long": 0
+  },
   "skills/agent-coordination/references/reviewer-access.md": {
    "bytes": 4113,
    "long": 0
@@ -92,7 +96,7 @@
    "long": 10
   },
   "skills/agent-coordination/references/worker-execution.md": {
-   "bytes": 20809,
+   "bytes": 20784,
    "long": 12
   },
   "skills/agent-coordination/references/workspace-and-train.md": {

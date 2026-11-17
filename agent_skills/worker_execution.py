@@ -23,12 +23,27 @@ def _text(value):
     return value.strip()
 
 
-def select_route(policy, capabilities, *, provider, signals=(), reason):
-    """Choose involved work up front; never fall back when that route is unavailable."""
+def _tier(policy, provider, role, signals, failures):
+    """Role tier (or the signal rule), then one step up the ladder per two failures; never down."""
+    ladder = policy[provider].get("ladder", ["ordinary", "involved"])
+    tier = policy[provider].get("roles", {}).get(role) if role else None
+    tier = tier or ("involved" if signals else "ordinary")
+    if tier not in ladder:
+        raise ValueError("tier is not on the policy ladder")
+    if type(failures) is not int or failures < 0:
+        raise ValueError("failure count must be a non-negative integer")
+    step = ladder.index(tier) + failures // 2
+    if step >= len(ladder):
+        raise ValueError("no stronger tier; report blocked")
+    return ladder[step]
+
+
+def select_route(policy, capabilities, *, provider, signals=(), reason, role=None, failures=0):
+    """Choose the tier for the role, signals and failures; never fall back when it is unavailable."""
     signals = set(signals)
     if signals - SIGNALS:
         raise ValueError("unrecognized complexity signal")
-    tier = "involved" if signals else "ordinary"
+    tier = _tier(policy, provider, role, signals, failures)
     route = deepcopy(policy[provider][tier])
     model, effort = _text(route["model"]), _text(route["effort"])
     if effort not in capabilities.get(provider, {}).get(model, []):
@@ -50,7 +65,8 @@ def select_route(policy, capabilities, *, provider, signals=(), reason):
         raise ValueError("Codex adapter cannot enforce a dollar cap; use a time bound")
     limits = {"effort_ceiling": ceiling} if ceiling is not None else {}
     return {**route, "provider": provider, "model": model, "effort": effort, **limits,
-            "tier": tier, "signals": sorted(signals), "reason": _text(reason)}
+            "tier": tier, "signals": sorted(signals), "reason": _text(reason),
+            **({"role": role} if role else {}), **({"failures": failures} if failures else {})}
 
 
 def _ref(value):
