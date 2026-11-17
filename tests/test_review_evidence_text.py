@@ -13,8 +13,9 @@ HOSTED = 'skills/test-review/references/hosted-review.md'
 class ReviewEvidenceText(unittest.TestCase):
     def test_pr_diff_must_be_subset_of_merge_base_and_stack_retargeted(self):
         t = flat(SKILL)
-        self.assertIn('diff must be a subset of `merge-base..head`', t)
-        self.assertIn('retargeted to the integration branch before merge', t)
+        self.assertIn('diff must be a subset of `merge-base(integration branch, head)..head`', t)
+        self.assertIn("the integration branch being the plan's recorded target", t)
+        self.assertIn('retargeted to it before merge, then the subset is rechecked', t)
 
     def test_hosted_green_on_exact_head_replaces_local_rerun_of_same_suite(self):
         t = flat(HOSTED)
