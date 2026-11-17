@@ -263,6 +263,45 @@ class DelegateTests(unittest.TestCase):
         self.assertIn("max_depth", json.loads(refused.stdout)["refused"])
         self.assertFalse((self.dir / "state" / "deep.json").exists())
 
+    def fake_gh(self, out="[]", code=0):
+        body = f'#!/bin/sh\necho "$@" > "$FAKE_DIR/gh.args"\ncat <<\'EOF\'\n{out}\nEOF\nexit {code}\n'
+        (self.dir / "bin" / "gh").write_text(body)
+        (self.dir / "bin" / "gh").chmod(0o755)
+
+    def test_overlap_with_an_open_pr_refuses_before_any_record(self):
+        self.fake_gh(json.dumps([{"number": 7, "headRefName": "feat/x", "files": [{"path": "tests/test_x.py"}]}]))
+        refused = self.start("--task-id", "olap", "--files", "tests/test_x.py,docs/a.md")
+        self.assertEqual(refused.returncode, 3, refused.stderr)
+        reason = json.loads(refused.stdout)["refused"]
+        self.assertIn("#7", reason)
+        self.assertIn("tests/test_x.py", reason)
+        self.assertFalse((self.dir / "state" / "olap.json").exists())
+
+    def test_disjoint_files_start_and_gh_gets_the_documented_query(self):
+        self.fake_gh(json.dumps([{"number": 7, "headRefName": "feat/x", "files": [{"path": "other.py"}]}]))
+        started = self.start("--task-id", "clear", "--files", "tests/test_x.py")
+        self.assertEqual(started.returncode, 0, started.stderr)
+        args = (self.dir / "gh.args").read_text()
+        self.assertIn("pr list --state open", args)
+        self.assertIn("--json number,files,headRefName", args)
+
+    def test_overlap_check_fails_loudly_when_gh_errors_or_is_missing(self):
+        self.fake_gh("", code=1)
+        failed = self.start("--task-id", "g1", "--files", "a.py")
+        self.assertEqual(failed.returncode, 3)
+        self.assertIn("overlap check", json.loads(failed.stdout)["refused"])
+        (self.dir / "empty").mkdir()
+        missing = self.start("--task-id", "g2", "--files", "a.py", env={"PATH": str(self.dir / "empty")})
+        self.assertEqual(missing.returncode, 3)
+        self.assertIn("gh", json.loads(missing.stdout)["refused"])
+
+    def test_no_declared_files_warns_that_the_overlap_check_was_skipped(self):
+        self.fake_gh("", code=1)
+        started = self.start("--task-id", "nofiles")
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.assertIn("overlap check skipped: no --files declared", started.stderr)
+        self.assertFalse((self.dir / "gh.args").exists())
+
     def test_live_limit_and_one_writer_per_directory(self):
         self.write_config(max_live=2)
         first = self.start("--task-id", "long", env={"FAKE_SLEEP": "4"})

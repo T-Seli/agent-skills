@@ -31,6 +31,14 @@ def configured_slots(config):
     return value, 'config'
 
 
+def configured_reserve(config, slots):
+    """Slots a `review` run must leave free so a `release` run is admitted ahead of the review queue."""
+    value = config.get('test_release_reserve', 0)
+    if type(value) is not int or not 0 <= value < slots:
+        raise ValueError(f'test_release_reserve must be an integer from 0 to {slots - 1}, got {value!r}')
+    return value
+
+
 def configured_memory_limits(config):
     limits = []
     for key, default in (('test_max_swap_gb', DEFAULT_MAX_SWAP_GB), ('test_min_free_gb', DEFAULT_MIN_FREE_GB)):
@@ -135,27 +143,28 @@ def _supervise(command, poll):
             signal.signal(signum, handler)
 
 
-def _take(directory, slots, weight):
-    """`weight` slot fds, or None with nothing held."""
+def _take(directory, slots, weight, reserve=0):
+    """`weight` slot fds, or None with nothing held; a run with a `reserve` leaves that many free slots."""
     fds = []
     for index in range(slots):
         fd = _try_lock(directory, index)
         if fd is not None:
             fds.append(fd)
-            if len(fds) == weight:
-                return fds
-    for fd in fds:
+            if len(fds) == weight + reserve:
+                break
+    keep = fds[:weight] if len(fds) == weight + reserve else []
+    for fd in fds[len(keep):]:
         os.close(fd)
-    return None
+    return keep or None
 
 
-def run_in_slot(command, *, slots, wait_seconds, max_swap_gb, min_free_gb, weight=1, memory=read_memory, poll=0.2):
+def run_in_slot(command, *, slots, wait_seconds, max_swap_gb, min_free_gb, weight=1, memory=read_memory, poll=0.2, reserve=0):
     """Run `command` holding `weight` slots until the run and everything it started has ended.
     Waits while slots are busy or memory is short; BUSY after wait_seconds. Inside a run it passes straight through."""
     if os.environ.get(HELD):
         os.execvp('/bin/sh', ['sh', '-c', command])
-    if not 1 <= weight <= slots:
-        raise ValueError(f'weight must be between 1 and the slot count {slots}, got {weight}')
+    if not 1 <= weight <= slots - reserve:
+        raise ValueError(f'weight must be between 1 and the slot count {slots} less the release reserve {reserve}, got {weight}')
     directory = slot_dir()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     deadline = time.monotonic() + wait_seconds
@@ -176,7 +185,7 @@ def run_in_slot(command, *, slots, wait_seconds, max_swap_gb, min_free_gb, weigh
                 return BUSY
             time.sleep(poll)
             continue
-        fds = _take(directory, slots, weight)
+        fds = _take(directory, slots, weight, reserve)
         if fds is not None:
             owner = json.dumps({'pid': os.getpid(), 'cwd': os.getcwd(), 'cmd': command, 'weight': weight,
                                 'utc': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}).encode()
