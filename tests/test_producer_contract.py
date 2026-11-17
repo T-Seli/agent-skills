@@ -66,6 +66,7 @@ class ProducerContractTests(unittest.TestCase):
         cfg=json.loads((ROOT/'agent_skills/delegate_config.example.json').read_text())
         cfg['policy']['claude']['ordinary']['model']='fixture-claude'
         cfg['capabilities']['claude']['fixture-claude']=['medium','high']
+        cfg['worktree_start_free_gb']=0  # the real disk must not decide these tests
         (self.dir/'config.json').write_text(json.dumps(cfg))
         (self.dir/'prompt.md').write_text('Return a synthetic answer; no tools needed.')
         (self.dir/'contract.json').write_text(json.dumps(contract_value()))

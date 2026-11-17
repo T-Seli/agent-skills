@@ -74,6 +74,7 @@ class DelegateTests(unittest.TestCase):
         cfg = json.loads((ROOT / "agent_skills" / "delegate_config.example.json").read_text())
         cfg["policy"]["claude"]["ordinary"]["model"] = "fixture-claude"
         cfg["capabilities"]["claude"]["fixture-claude"] = ["medium", "high"]
+        cfg["worktree_start_free_gb"] = 0  # the real disk must not decide these tests
         cfg.update(overrides)
         self.config.write_text(json.dumps(cfg))
 
@@ -107,6 +108,13 @@ class DelegateTests(unittest.TestCase):
 
     def release(self, task_id, log, targets, env=None):
         return self.start("--task-id", task_id, "--approved-log", str(log), "--targets", targets, env=env)
+
+    def test_start_refuses_below_the_worktree_start_free_floor(self):
+        self.write_config(worktree_start_free_gb=10 ** 9)
+        result = self.start()
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("Worktree start free", json.loads(result.stdout)["refused"])
+        self.assertFalse(list(self.dir.glob("claude-*.json")))
 
     def test_start_returns_at_once_and_wait_returns_the_receipt(self):
         began = time.time()
@@ -845,6 +853,7 @@ class SandboxLivenessTests(unittest.TestCase):
             {"supervisor_pid": 424242, "worker_pid": 424243, "started_at": "2026-10-19T00:00:00Z"}))
         (self.run_dir / "params.json").write_text(json.dumps({"cwd": str(self.work), "depth": 1}))
         cfg = json.loads((ROOT / "agent_skills" / "delegate_config.example.json").read_text())
+        cfg["worktree_start_free_gb"] = 0  # the real disk must not decide these tests
         (self.dir / "workers.json").write_text(json.dumps(cfg))
         (self.dir / "brief.md").write_text("Run ls.")
         spec = importlib.util.spec_from_file_location("delegate_under_test", DELEGATE)
