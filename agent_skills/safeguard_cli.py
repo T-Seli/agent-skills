@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 
+from .disk_check import check as disk_check
 from .closeout import cleanup_gate, main_sync_gate, sweep
 from .code_state import code_state
 from .release_reconciliation import reconcile_release
@@ -98,6 +99,8 @@ def main(argv=None):
     slot.add_argument('--weight', type=int, default=1, help='Slots this command uses, e.g. 2 when it runs two suites at once')
     slot.add_argument('--class', dest='run_class', choices=['release', 'review'], help='review runs leave test_release_reserve slots free for release runs; admission only, not a priority queue')
     slot.add_argument('command', help='Shell command, e.g. the project test command')
+    disk = subs.add_parser('disk-check', help='Free space on the volume holding PATH; exit 0 ok, 10 warn, 20 hard stop')
+    disk.add_argument('path')
     sync = subs.add_parser('main-sync')
     sync.add_argument('main')
     sync.add_argument('--base', required=True)
@@ -169,6 +172,10 @@ def main(argv=None):
             return run_in_slot(args.command, slots=slots, wait_seconds=args.wait_seconds,
                                max_swap_gb=max_swap_gb, min_free_gb=min_free_gb, weight=args.weight,
                                reserve=reserve if args.run_class == 'review' else 0)
+        elif args.action == 'disk-check':
+            code, line = disk_check(args.path, machine_config())
+            print(line)
+            return code
         elif args.action == 'sweep':
             result = sweep(args.main, base=args.base, apply=args.apply, rebuildable=args.rebuildable,
                            lease_files=machine_config().get('worktree_lease_files', []),
