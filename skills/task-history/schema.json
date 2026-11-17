@@ -290,6 +290,14 @@
         "runbook_gap",
         "dispatch_failure",
         "repeated_blocker",
+        "credential_prompt",
+        "approval_relay",
+        "tool_hook",
+        "permission_classifier",
+        "stale_state",
+        "surface_access",
+        "scheduling",
+        "resource",
         "other"
       ]
     },

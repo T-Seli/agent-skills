@@ -11,8 +11,8 @@ spec.loader.exec_module(history)
 MARKERS = {
     "skills/implement/SKILL.md": ("Record `Existing method:`", "gh pr list --state all --search",
                                   "another owner's open PR, branch or claim stops the write"),
-    "skills/workflow-contracts/issues.md": ("the PR uses `Refs`, never `Closes`",
-                                            "release owner closes the issue after the deploy record"),
+    "skills/workflow-contracts/issues.md": ("accepted scope requires a deployment that the merge is not",
+                                            "implementation-only issues keep `Closes`"),
     "skills/task-history/SKILL.md": ("cost_min=<n>; user_pastes=<n>; theme=<category>",),
     "skills/monitor/SKILL.md": ("replay the last 7 days of real data", "would-fire count"),
     "ENGINEERING-COORDINATOR.md": ("chat alone is not the queue",
@@ -34,6 +34,23 @@ class Release2Tests(unittest.TestCase):
         for category in NEW_CATEGORIES + ("scope_drift", "other"):
             with self.subTest(category=category):
                 self.assertIn(category, history.FEEDBACK_CATEGORIES)
+
+    def test_schema_enum_matches_python_categories(self):
+        import json
+        schema = json.loads((ROOT / "skills/task-history/schema.json").read_text())
+        def find(node):
+            if isinstance(node, dict):
+                cat = node.get("feedback_category")
+                if isinstance(cat, dict) and "enum" in cat:
+                    return cat["enum"]
+                for v in node.values():
+                    r = find(v)
+                    if r:
+                        return r
+            return None
+
+        enum = find(schema)
+        self.assertEqual(set(enum), set(history.FEEDBACK_CATEGORIES))
 
     def test_unknown_feedback_category_is_still_rejected(self):
         self.assertNotIn("made_up_category", history.FEEDBACK_CATEGORIES)
