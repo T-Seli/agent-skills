@@ -458,8 +458,6 @@ def start(args):
     disk_code, disk_line = disk_check.check(str(cwd), cfg)
     if disk_code == disk_check.EXIT_STOP:
         refuse(disk_line)
-    if disk_code:
-        print(f"delegate: {disk_line}", file=sys.stderr)
     live = [r for r in runs() if run_state(r) in ("live", "unknown")]  # unknown may still be writing
     if len(live) >= cfg["max_live"]:
         refuse(f"{len(live)} workers already running (max_live {cfg['max_live']}): wait for one")

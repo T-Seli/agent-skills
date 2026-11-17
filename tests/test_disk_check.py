@@ -34,22 +34,17 @@ class DiskCheckTests(unittest.TestCase):
 
     def test_ok_above_warn_floor(self):
         code, out, _, stat = run(self.dir.name, 12)
-        self.assertEqual((code, out), (0, f'disk ok: 12.0 GB free on {self.dir.name} (warn below 10 GB, stop below 5.4 GB)\n'))
+        self.assertEqual((code, out), (0, f'disk ok: 12.0 GB free on {self.dir.name} (Worktree start free floor 10 GB)\n'))
         stat.assert_called_once_with(self.dir.name)
 
-    def test_warn_below_warn_floor_has_distinct_code(self):
+    def test_below_floor_stops_with_distinct_code(self):
         code, out, _, _ = run(self.dir.name, 8)
-        self.assertEqual(code, 10)
-        self.assertTrue(out.startswith('disk warn: 8.0 GB free'))
-
-    def test_hard_stop_below_hard_floor_has_distinct_code(self):
-        code, out, _, _ = run(self.dir.name, 5.0)
         self.assertEqual(code, 20)
-        self.assertTrue(out.startswith('disk stop: 5.0 GB free'))
+        self.assertTrue(out.startswith('disk stop: 8.0 GB free'))
 
-    def test_exactly_at_floor_is_not_below_it(self):
+    def test_floor_itself_is_ok_and_just_below_stops(self):
         self.assertEqual(run(self.dir.name, 10)[0], 0)
-        self.assertEqual(run(self.dir.name, 9.99)[0], 10)
+        self.assertEqual(run(self.dir.name, 9.99)[0], 20)
 
     def test_missing_path_fails_loudly_without_probing(self):
         code, out, err, stat = run(pathlib.Path(self.dir.name) / 'nope', 50)
@@ -68,15 +63,15 @@ class DiskCheckTests(unittest.TestCase):
             self.assertEqual(disk_check.check('/home/work', {})[0], 0)
         self.assertEqual(calls, ['/Volumes/other/work', '/home/work'])
 
-    def test_floors_come_from_machine_config(self):
+    def test_floor_comes_from_machine_config(self):
         with mock.patch('os.statvfs', return_value=vfs(15)):
-            code, line = disk_check.check(self.dir.name, {'disk_warn_gb': 20, 'disk_hard_stop_gb': 1})
-        self.assertEqual(code, 10)
-        self.assertIn('warn below 20 GB, stop below 1 GB', line)
+            self.assertEqual(disk_check.check(self.dir.name, {'worktree_start_free_gb': 20})[0], 20)
+            self.assertEqual(disk_check.check(self.dir.name, {'worktree_start_free_gb': 1})[0], 0)
 
-    def test_bad_floor_config_fails_loudly(self):
-        with self.assertRaises(ValueError):
-            disk_check.check(self.dir.name, {'disk_warn_gb': 2, 'disk_hard_stop_gb': 5})
+    def test_nonsensical_floor_config_fails_loudly(self):
+        for bad in (-1, 'ten', True, None):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                disk_check.check(self.dir.name, {'worktree_start_free_gb': bad})
 
 
 class DiskCheckTextTests(unittest.TestCase):

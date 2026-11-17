@@ -99,7 +99,7 @@ def main(argv=None):
     slot.add_argument('--weight', type=int, default=1, help='Slots this command uses, e.g. 2 when it runs two suites at once')
     slot.add_argument('--class', dest='run_class', choices=['release', 'review'], help='review runs leave test_release_reserve slots free for release runs; admission only, not a priority queue')
     slot.add_argument('command', help='Shell command, e.g. the project test command')
-    disk = subs.add_parser('disk-check', help='Free space on the volume holding PATH; exit 0 ok, 10 warn, 20 hard stop')
+    disk = subs.add_parser('disk-check', help='Free space on the volume holding PATH; exit 0 ok, 20 below the Worktree start free floor')
     disk.add_argument('path')
     sync = subs.add_parser('main-sync')
     sync.add_argument('main')
