@@ -137,9 +137,10 @@ class WorkflowAuditGuardrails(unittest.TestCase):
         gate = body.index('## Expired invocation gate')
         self.assertLess(gate, body.index('## 1. Build the change list'))
         self.assertLess(gate, body.index('## 4. Probe'))
+        self.assertIn('No deadline supplied (manual or discovery run): continue normally; it is never final.', body)
         self.assertIn('Deadline not yet passed: continue normally.', body)
         self.assertIn('exit without probing, recording or changing a schedule', body)
-        self.assertIn('past the deadline go to the final report and **End**', body)
+        self.assertIn('past the deadline go to **6. Record** (with the `final` marker), then the final report and **End**', body)
         self.assertIn('Do not schedule another check.', body)
         self.assertIn('Disabling follows **End**.', body)
 
