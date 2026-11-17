@@ -470,6 +470,36 @@ class ReadinessBinding(unittest.TestCase):
             with self.subTest(declared=sorted(declared)), self.assertRaisesRegex(ValueError, 'readiness'):
                 e.bind_route(r, CODEX_ROUTE, source_pin='source:a', decision_ref='decision:synthetic', **declared)
 
+class RoleTierSelection(unittest.TestCase):
+    P = {'claude': {'ordinary': {'model': 'm-small', 'effort': 'medium', 'timeout_seconds': 30},
+                    'standard': {'model': 'm-mid', 'effort': 'medium', 'timeout_seconds': 30},
+                    'involved': {'model': 'm-strong', 'effort': 'high', 'timeout_seconds': 60},
+                    'ladder': ['ordinary', 'standard', 'involved'],
+                    'roles': {'builder': 'ordinary', 'scout': 'ordinary', 'planner': 'involved', 'reviewer': 'involved'}}}
+    C = {'claude': {'m-small': ['medium'], 'm-mid': ['medium'], 'm-strong': ['high']}}
+
+    def sel(self, **kw):
+        return e.select_route(self.P, self.C, provider='claude', reason='synthetic', **kw)
+
+    def test_role_picks_tier_and_default_rule_is_unchanged(self):
+        self.assertEqual(self.sel(role='builder')['model'], 'm-small')
+        self.assertEqual(self.sel(role='planner')['model'], 'm-strong')
+        self.assertEqual(self.sel(role='unlisted')['model'], 'm-small')
+        self.assertEqual(self.sel(signals=['architecture'])['model'], 'm-strong')
+
+    def test_two_failures_climb_one_step_and_the_top_blocks(self):
+        self.assertEqual(self.sel(role='builder', failures=1)['model'], 'm-small')
+        self.assertEqual(self.sel(role='builder', failures=2)['model'], 'm-mid')
+        self.assertEqual(self.sel(role='builder', failures=4)['model'], 'm-strong')
+        with self.assertRaises(ValueError):
+            self.sel(role='builder', failures=6)
+        with self.assertRaises(ValueError):
+            self.sel(role='planner', failures=2)
+
+    def test_unavailable_stronger_tier_never_downgrades(self):
+        with self.assertRaises(ValueError):
+            e.select_route(self.P, {'claude': {'m-small': ['medium']}}, provider='claude', reason='x', role='planner')
+
 
 if __name__ == '__main__':
     unittest.main()
