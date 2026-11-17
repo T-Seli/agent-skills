@@ -19,7 +19,7 @@ Apply [Documentation currency](../workflow-contracts/behavior.md#documentation-c
 4. Discovery: `HEAD`, ranged per `<flow>` below.
 
 `UP` = `origin/<base>` after `git fetch` (contracts.md § Git); no remote: `<base>`. Range = `$BASE..<head>`, `<head>` = `HEAD` unless an input names one:
-- Branch flow, a branch or a PR: `BASE=$(git merge-base UP <head>)` (a PR: its own base in place of `<base>`).
+- Branch flow, a branch or a PR: `BASE=$(git merge-base UP <head>)` (a PR: its own base in place of `<base>`). A PR's diff must be a subset of `merge-base..head`; a stacked base is retargeted to the integration branch before merge.
 - Trunk flow (`HEAD` on `<base>`): `BASE` = the sha in the newest `deploy:` heading of any task or draft log; else `origin/<base>`; else the newest `Reviewed:` sha, so the range starts at the first commit after it; none: ask for a range and stop.
 
 Empty committed range with no worktree changes: say so and stop. A worktree source candidate needs a complete manifest before review: run `"${CLAUDE_SKILL_DIR:-$HOME/.agents/skills/test-review}/../workflow-contracts/scripts/safeguard-cli" manifest <repo> --include <each new source path> --exclude-private <each private untracked path>`. This entrypoint binds the helper to the installed skill release; never substitute a bare module or stale `PYTHONPATH`. Resolve every untracked name explicitly; nonzero exit blocks review. Record its digest and rerun immediately before approval or release; any change invalidates review. A worktree review is provisional until the exact source is committed and reviewed. Never read private payloads into the manifest. PR targets need the git host CLI from CLAUDE.md § Map (read the PR, fetch its head); no CLI: review the branch if it exists here.
