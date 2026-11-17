@@ -12,7 +12,11 @@ Choose a role first, then a tier. Skills and prompts never name a model id: ids,
 Config: `policy.<provider>.roles` maps role to tier; `ladder` orders tiers weakest to strongest (default `ordinary`, `involved`; add middle tiers freely). An unlisted role uses the signal rule in worker-execution.md § Select and pin.
 
 ## Inputs
-Difficulty decides the tier, not spec clarity: a clear spec can still be a migration or performance task. Smaller tiers fit checkable, high-volume or side work (lookups, classification, log reading) where a wrong answer is cheap to spot, and fit long dependent agent loops less. Strong tiers take open-ended planning, architecture, large blast radius (shared state, production, security, many systems) and leading others. Cost and latency break ties: weakest tier whose failure the task's tests or reviewer would catch; compare cost per finished task, not per token. Edits and judgment stay on the stronger tier when it leads; delegate verbose reading to the smaller one. Let code, not a model, route when the rule is this simple.
+- Difficulty decides the tier, not spec clarity: a clear spec can still be a migration or performance task.
+- Smaller tiers fit checkable, high-volume or side work (lookups, classification, log reading) where a wrong answer is cheap to spot, and fit long dependent agent loops less.
+- Strong tiers take open-ended planning, architecture, large blast radius (shared state, production, security, many systems) and leading others.
+- Cost and latency break ties: weakest tier whose failure the task's tests or reviewer would catch; compare cost per finished task, not per token.
+- Edits and judgment stay on the stronger tier when it leads; delegate verbose reading to the smaller one. Let code, not a model, route when the rule is this simple.
 
 ## Effort
 Effort comes from the tier profile and never exceeds `effort_ceiling`. Raise effort before the model, and give the builder a way to verify its own work (test, build, script) before either. A cheap pass with automatic checks, rerunning only failures higher, beats running everything high.
