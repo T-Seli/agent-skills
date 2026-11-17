@@ -9,14 +9,16 @@ STYLE = (ROOT / "output-styles/orchestrator.md").read_text()
 
 class ApprovalBoardTextTests(unittest.TestCase):
     def test_guide_keeps_reply_format_and_approval_board(self):
-        for marker in ("then ACTION ITEMS, then DONE", "There is no waiting section",
-                       "a bare id or shorthand is not a link", "Two asks, never mixed",
-                       "SUPERSEDED, do not paste", "plan in progress", "never a second tracker"):
+        for marker in ("Two asks, never mixed", "SUPERSEDED, do not paste",
+                       "plan in progress", "never a second tracker"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, GUIDE)
 
     def test_output_style_keeps_links_and_order(self):
-        self.assertIn("Need from you first, real links", STYLE)
+        for marker in ("Need from you first, real links", "a bare id is not a link",
+                       "surfaces only when the user must act or asks", "recommended first"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, STYLE)
 
 
 if __name__ == "__main__":

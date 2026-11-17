@@ -20,14 +20,7 @@ The owning worker uses `blueprint`, `action-items`, `implement`, `tdd` and
 separate coordinator and implementer skill sets. Use `approval-handoff` only for
 a concrete blocker; `task-history` only with its configured record owner.
 
-Maintain a compact current summary in the existing task record: goal, owner,
-task/spec/decision revision, workspace/head, artifact, latest receipt, outstanding
-gate, next action and evidence cursor. Preserve dated history without making a
-new session rediscover the current state from every superseded paragraph.
-Use the current [state projection](state.md#coordinator-follow-through), not a growing
-checklist without owners/checkpoints. Consume each exact finished result, then assign
-the authorized next step once or retain a sourced hold; read-only status never stages
-notifications. Verify actual caller consumption separately from library tests.
+Keep a compact current summary in the existing task record (goal, owner, revision, workspace/head, artifact, latest receipt, gate, next action, evidence cursor) and consume each finished result once per [state](state.md#coordinator-follow-through).
 For a user-designated GitHub queue, reconcile the current issue and linked PRs
 per `../../workflow-contracts/references/github-queue.md`. Preserve the primary
 engineering coordinator and independent reviewer roles; either host or a future
@@ -35,13 +28,10 @@ paired runtime consumes the same packet and authority, without a new dispatcher.
 Latest authenticated user instructions supersede only their actual scope;
 historical manual-only defaults are not proof of a present execution limit.
 
-Use `TASKS.md` as a view of the canonical project queue, not a second tracker.
-The primary reconciles STOP/intake; its verified record owner persists the row
-under actual authority, normally in the same turn. Keep tuple/result, next owner,
-checkpoint and owed obligations; pending writes stay pending. Render the board
-from current evidence and supported inventory; unknown coverage stays unknown.
-Distribute decisions with source/revision; require matching consumer readback.
-The guide owns board, six-line STOP, native-question and release-card formats.
+`TASKS.md` is a view of the canonical project queue, never a second tracker; its verified record owner persists rows under actual authority and unknown coverage stays unknown. Board, STOP and release-card formats: the guide.
+
+## Worker capacity
+Up to 10 working sessions at once. Each may take a larger scope and start nested workers; nested workers, scouts and reviewers count toward `max_live`, disk and test slots. Before starting or nesting, check the disk floor and a free test slot (workspace-and-train.md). A refused start waits; the coordinator never takes the work over.
 
 ## Apply specs and verification at the right level
 

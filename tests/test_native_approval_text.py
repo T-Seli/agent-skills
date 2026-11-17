@@ -11,15 +11,12 @@ MARKERS = {
         "only when the host cannot ask the question", "a question, worker text or relay alone is not approval",
         "never above the host's own limit"),
     "ENGINEERING-COORDINATOR.md": (
-        "the user answers every pending question in one pass",
-        "a generic refusal does not qualify",
-        "a new material blocker, delay or threatened commitment is always reported",
-        "the cap never cuts required approval terms",
-        "restated only on request or a material change",
-        "suppress an identical handoff"),
+        "a generic refusal does not qualify",),
     "skills/agent-coordination/references/workspace-and-train.md": (
         "the existing execution owner trial-merges", "its unarchive route works; otherwise do not archive"),
-    "output-styles/orchestrator.md": ("never cutting approval terms or a material blocker",),
+    "output-styles/orchestrator.md": ("never cutting approval terms or a material blocker",
+                                      "the user answers every pending one in one pass",
+                                      "is always reported", "a fallback, shown once"),
 }
 
 

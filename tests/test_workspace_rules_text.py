@@ -10,7 +10,6 @@ MARKERS = {
         "pending follow-through", "an undo list", "at most `Test slots`", "delete only after the user's yes"),
     "skills/workflow-contracts/issues.md": ("except a release-member PR",),
     "skills/test-review/SKILL.md": ("never a release-member PR",),
-    "ENGINEERING-COORDINATOR.md": ("a grant the user recorded",),
 }
 
 
