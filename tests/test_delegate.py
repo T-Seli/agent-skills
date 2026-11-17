@@ -324,6 +324,31 @@ class DelegateTests(unittest.TestCase):
         for n, outside in enumerate(["../x.py", "/etc/hosts"]):
             self.assertIn("outside", self.refused_reason(self.start("--task-id", f"o{n}", "--files", outside)))
 
+    def test_a_declared_symlink_keeps_its_own_git_path_identity(self):
+        self.fake_gh(json.dumps([self.pr(7, "link.py")]))
+        (self.work / "target.py").write_text("x")
+        (self.work / "link.py").symlink_to("target.py")
+        self.assertIn("#7", self.refused_reason(self.start("--task-id", "sym", "--files", "link.py")))
+
+    def test_empty_and_non_file_declarations_are_refused(self):
+        self.fake_gh()
+        (self.work / "sub").mkdir()
+        for n, declared in enumerate([",", "a.py,", ".", "sub", "./"]):
+            self.assertIn("not a file", self.refused_reason(self.start("--task-id", f"nf{n}", "--files", declared)), declared)
+
+    def test_a_bad_gh_timeout_setting_refuses_with_the_structured_reply(self):
+        self.fake_gh()
+        for n, bad in enumerate([None, "5", True, 0, -1, float("nan"), float("inf")]):
+            self.write_config(gh_timeout_seconds=bad)
+            self.assertIn("gh_timeout_seconds", self.refused_reason(self.start("--task-id", f"to{n}", "--files", "a.py")), bad)
+
+    def test_a_hung_git_lookup_is_bounded_by_the_same_timeout(self):
+        self.write_config(gh_timeout_seconds=1)
+        self.fake_gh()
+        (self.dir / "bin" / "git").write_text("#!/bin/sh\nsleep 5\n")
+        (self.dir / "bin" / "git").chmod(0o755)
+        self.assertIn("timed out", self.refused_reason(self.start("--task-id", "slowgit", "--files", "a.py")))
+
     def test_a_hung_gh_is_bounded_by_the_configured_timeout(self):
         self.write_config(gh_timeout_seconds=1)
         self.fake_gh(sleep=5)
