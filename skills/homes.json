@@ -1,0 +1,74 @@
+{
+ "note": "Each obligation has one home file. `pattern` is a regex only the home may contain; `also` lists files that still repeat it and may only shrink.",
+ "homes": [
+  {
+   "id": "stop-packet",
+   "pattern": "STOP <task-key>",
+   "home": "ENGINEERING-COORDINATOR.md"
+  },
+  {
+   "id": "board-template",
+   "pattern": "NEED FROM YOU \\(n\\)",
+   "home": "ENGINEERING-COORDINATOR.md"
+  },
+  {
+   "id": "approval-board",
+   "pattern": "### Approval board",
+   "home": "ENGINEERING-COORDINATOR.md"
+  },
+  {
+   "id": "primary-role",
+   "pattern": "Primary-role precedence",
+   "home": "ENGINEERING-COORDINATOR.md"
+  },
+  {
+   "id": "release-card",
+   "pattern": "Release card template",
+   "home": "ENGINEERING-COORDINATOR.md"
+  },
+  {
+   "id": "reply-format",
+   "pattern": "Need from you: N",
+   "home": "output-styles/orchestrator.md",
+   "also": [
+    "ENGINEERING-COORDINATOR.md"
+   ]
+  },
+  {
+   "id": "release-bundling",
+   "pattern": "one release branch and one release PR",
+   "home": "skills/workflow-contracts/behavior.md",
+   "also": [
+    "ENGINEERING-COORDINATOR.md"
+   ]
+  },
+  {
+   "id": "auto-archive",
+   "pattern": "Auto-archive",
+   "home": "skills/agent-coordination/references/workspace-and-train.md"
+  },
+  {
+   "id": "disk-floor",
+   "pattern": "Worktree start free",
+   "home": "skills/agent-coordination/references/workspace-and-train.md",
+   "also": [
+    "skills/implement/SKILL.md"
+   ]
+  },
+  {
+   "id": "test-slots",
+   "pattern": "Test slots",
+   "home": "skills/agent-coordination/references/workspace-and-train.md"
+  },
+  {
+   "id": "question-round",
+   "pattern": "Question round size:",
+   "home": "skills/workflow-contracts/contracts.md"
+  },
+  {
+   "id": "handoffs-kept",
+   "pattern": "Handoffs kept:",
+   "home": "skills/workflow-contracts/contracts.md"
+  }
+ ]
+}

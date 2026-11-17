@@ -205,6 +205,7 @@ Role guidance: start with the [role map](skills/agent-coordination/references/ro
 - Edit here and commit. Never patch a skill per project, and never edit `~/.claude`, `~/.agents` or `~/.codex` copies (they are symlinks into this repo, or built from it by `install.sh`).
 - Each topic has exactly one home (table above); reference it, never restate it. Skills refer to their own steps by bold name, never by number, and never to another skill's steps.
 - Changing a parsed token (contracts.md § Task log, including the `/monitor` args in scheduled prompts): readers accept both the old and the new form for one `Monitor window`, so logs and scheduled tasks written before the change still parse. No version marker.
+- Byte budgets: `skills/budgets.json` caps every guidance file in bytes (tokens ≈ bytes/3.9) and counts lines over 600 characters; caps only fall (`python3 tests/budget_lint.py --ratchet` after a shrink). `skills/homes.json` names each rule's single home; `tests/check.sh` fails a rule found outside it and caps text repeated across files.
 - Budgets: global `CLAUDE.md` ≤ 600 words, `skills/workflow-contracts/contracts.md` ≤ 90 lines, project `CLAUDE.md` ≤ 1,000 words, output style ≤ 25 lines, scout ≤ 25 lines, each `SKILL.md` ≤ 100 lines, each `references/` file ≤ 80 lines, skill description ≤ 300 chars. Check with `wc -w` / `wc -l`.
 - No project, tenant, company, stack, vendor, person, machine or model names in any file here; point to project facts by section ("the command in `CLAUDE.md` § Run & test").
 

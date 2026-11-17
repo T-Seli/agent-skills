@@ -81,6 +81,10 @@ for p in ("skills/blueprint/SKILL.md", "skills/blueprint/references/bug-mode.md"
     if os.path.exists(p) and "data-access.md" not in text(p):
         fail("data-access", f"{p} does not cite data-access.md")
 
+sys.path.insert(0, "tests")
+import budget_lint
+fails += budget_lint.lint(".", tracked)
+
 print("\n".join(fails) if fails else "ok")
 sys.exit(1 if fails else 0)
 EOF
