@@ -1,15 +1,15 @@
 {
  "unit": "bytes; tokens ~ bytes/3.9",
  "long_line_chars": 600,
- "duplicate_runs": 80,
+ "duplicate_runs": 64,
  "files": {
   "CLAUDE.md": {
    "bytes": 2935,
    "long": 0
   },
   "ENGINEERING-COORDINATOR.md": {
-   "bytes": 55081,
-   "long": 33
+   "bytes": 32586,
+   "long": 18
   },
   "agents/local-scout.md": {
    "bytes": 869,
@@ -28,11 +28,11 @@
    "long": 0
   },
   "global/CLAUDE.md": {
-   "bytes": 4026,
+   "bytes": 3980,
    "long": 0
   },
   "output-styles/orchestrator.md": {
-   "bytes": 2284,
+   "bytes": 3022,
    "long": 0
   },
   "skills/action-items/SKILL.md": {
@@ -40,15 +40,23 @@
    "long": 0
   },
   "skills/agent-coordination/SKILL.md": {
-   "bytes": 19754,
-   "long": 11
+   "bytes": 15668,
+   "long": 10
   },
   "skills/agent-coordination/references/approval-attempts.md": {
    "bytes": 3192,
    "long": 0
   },
+  "skills/agent-coordination/references/coordinator-maintenance.md": {
+   "bytes": 5977,
+   "long": 0
+  },
   "skills/agent-coordination/references/coordinator-mode.md": {
-   "bytes": 5375,
+   "bytes": 4997,
+   "long": 0
+  },
+  "skills/agent-coordination/references/coordinator-release.md": {
+   "bytes": 5267,
    "long": 0
   },
   "skills/agent-coordination/references/friction-regressions.md": {
@@ -88,8 +96,8 @@
    "long": 12
   },
   "skills/agent-coordination/references/workspace-and-train.md": {
-   "bytes": 4215,
-   "long": 4
+   "bytes": 5354,
+   "long": 1
   },
   "skills/approval-handoff/SKILL.md": {
    "bytes": 4003,

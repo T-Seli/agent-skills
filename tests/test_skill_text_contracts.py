@@ -166,12 +166,18 @@ class CriticalExecutionNavigation(unittest.TestCase):
         self.assertIn('queues control, not completion',contract)
 
 
+COORD='skills/agent-coordination/references/'
+def guide_set():
+    """The coordinator guide and its on-demand references, for rules that may live in any of them."""
+    return '\n'.join(text(p) for p in ('ENGINEERING-COORDINATOR.md',COORD+'coordinator-release.md',COORD+'coordinator-maintenance.md'))
+
+
 class PrimaryCoordinatorGuide(unittest.TestCase):
     """Static guide/decision-table checks, never runtime enforcement."""
     def cases(self):
-        body=text('ENGINEERING-COORDINATOR.md')
-        self.assertIn('### Primary-role validation cases',body)
-        section=body.split('### Primary-role validation cases',1)[1].split('## 2.',1)[0]
+        body=text(COORD+'coordinator-maintenance.md')
+        self.assertIn('## Primary-role validation cases',body)
+        section=body.split('## Primary-role validation cases',1)[1].split('## Independent reviewer checkpoint',1)[0]
         rows=[line.split('|')[1:-1] for line in section.splitlines() if line.startswith('| ')]
         return {row[0].strip():row[1].strip() for row in rows if len(row)==3 and row[0].strip() not in ('Case','---')}
 
@@ -195,7 +201,7 @@ class PrimaryCoordinatorGuide(unittest.TestCase):
             'Unknown inventory or overdue/idle lane without current result':'INSPECT'}
         for case,decision in expected.items():
             with self.subTest(case=case):self.assertEqual(cases[case],decision)
-        self.assertIn('not live runtime enforcement',text('ENGINEERING-COORDINATOR.md'))
+        self.assertIn('not live runtime enforcement',text(COORD+'coordinator-maintenance.md'))
 
     def test_start_resume_checks_readability_without_claiming_commit_prevents_eviction(self):
         body=text('ENGINEERING-COORDINATOR.md')
@@ -205,9 +211,9 @@ class PrimaryCoordinatorGuide(unittest.TestCase):
             with self.subTest(fact=fact):self.assertIn(fact,body)
 
     def test_reviewer_checks_primary_inventory_through_existing_shared_queue(self):
-        body=text('ENGINEERING-COORDINATOR.md')
-        self.assertIn('### Independent reviewer checkpoint',body)
-        section=body.split('### Independent reviewer checkpoint',1)[1].split('## 6.',1)[0]
+        body=text(COORD+'coordinator-maintenance.md')
+        self.assertIn('## Independent reviewer checkpoint',body)
+        section=body.split('## Independent reviewer checkpoint',1)[1].split('## Maintain the guide',1)[0]
         for fact in ('actual live inventory','durable checkpoints','canonical shared queue',
                      'stable IDs','source/revision','observation time','aging decisions',
                      'approvals','grill-me questions','intentional waits',
@@ -220,10 +226,9 @@ class PrimaryCoordinatorGuide(unittest.TestCase):
             with self.subTest(fact=fact):self.assertIn(fact,section)
 
     def test_small_release_checks_bind_reuse_and_preserve_required_gates(self):
-        body=text('ENGINEERING-COORDINATOR.md').split('## 6. Preserve traceability and review the same artifact',1)[1].split('## 7.',1)[0]
-        paragraphs=[line for line in body.splitlines() if line.startswith('Keep small releases proportionate to risk.')]
-        self.assertEqual(len(paragraphs),1)
-        paragraph=paragraphs[0]
+        body=text(COORD+'coordinator-release.md')
+        self.assertEqual(body.count('Keep small releases proportionate to risk.'),1)
+        paragraph=body.split('Keep small releases proportionate to risk.',1)[1].split('Name one release owner',1)[0]
         for binding in ('exact artifact/base','relevant paths','dependencies','configuration',
                         'toolchain','environment','acceptance criteria','command'):
             with self.subTest(binding=binding):self.assertIn(binding,paragraph)
@@ -252,10 +257,11 @@ class PrimaryCoordinatorGuide(unittest.TestCase):
             with self.subTest(field=field):self.assertIn(field,stop)
 
     def test_board_ledger_and_native_question_rules_are_present(self):
-        body=text('ENGINEERING-COORDINATOR.md')
+        body=guide_set()
         self.assertIn('### Board, ledger and owed list',body)
         board=body.split('### Board, ledger and owed list',1)[1].split('## 3.',1)[0]
-        for fact in ('Need from you: N','NEED FROM YOU','READY TO ACT','RUNNING','HELD','DONE SINCE LAST',
+        self.assertIn('Need from you: N',text('output-styles/orchestrator.md'))
+        for fact in ('NEED FROM YOU','READY TO ACT','RUNNING','HELD','DONE SINCE LAST',
                      'CLEANUP BATCH','TASKS.md','same turn','48 hours','Owed list'):
             with self.subTest(fact=fact):self.assertIn(fact,board)
         for fact in ('(Recommended)','executing worker in its own session','authenticated original approval','action-time permission flow',
@@ -263,7 +269,7 @@ class PrimaryCoordinatorGuide(unittest.TestCase):
             with self.subTest(fact=fact):self.assertIn(fact,body)
 
     def test_coordination_formats_preserve_authority_capability_and_queue_ownership(self):
-        body=text('ENGINEERING-COORDINATOR.md');mode=text('skills/agent-coordination/references/coordinator-mode.md')
+        body=guide_set();mode=text('skills/agent-coordination/references/coordinator-mode.md')
         decisions=text('skills/workflow-contracts/decisions.md')
         for fact in ('canonical project queue','verified record owner','not a second project queue',
                      '48 hours','age alone never closes','materially changed scope/revision',
@@ -292,7 +298,7 @@ class PrimaryCoordinatorGuide(unittest.TestCase):
                 check(text('ENGINEERING-COORDINATOR.md')+'\n'+grant)
 
     def test_release_card_exposes_exact_candidate_and_real_gates(self):
-        body=text('ENGINEERING-COORDINATOR.md')
+        body=guide_set()
         self.assertIn('Release card template',body)
         card=body.split('Release card template',1)[1].split('```text',1)[1].split('```',1)[0]
         for field in ('Release/target/owner:','Candidate/source:','Includes/gates:',

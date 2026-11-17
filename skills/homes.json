@@ -24,23 +24,17 @@
   {
    "id": "release-card",
    "pattern": "Release card template",
-   "home": "ENGINEERING-COORDINATOR.md"
+   "home": "skills/agent-coordination/references/coordinator-release.md"
   },
   {
    "id": "reply-format",
    "pattern": "Need from you: N",
-   "home": "output-styles/orchestrator.md",
-   "also": [
-    "ENGINEERING-COORDINATOR.md"
-   ]
+   "home": "output-styles/orchestrator.md"
   },
   {
    "id": "release-bundling",
    "pattern": "one release branch and one release PR",
-   "home": "skills/workflow-contracts/behavior.md",
-   "also": [
-    "ENGINEERING-COORDINATOR.md"
-   ]
+   "home": "skills/workflow-contracts/behavior.md"
   },
   {
    "id": "auto-archive",
@@ -69,6 +63,14 @@
    "id": "handoffs-kept",
    "pattern": "Handoffs kept:",
    "home": "skills/workflow-contracts/contracts.md"
+  },
+  {
+   "id": "worker-cap",
+   "pattern": "10 working sessions",
+   "home": "skills/agent-coordination/references/coordinator-mode.md",
+   "also": [
+    "output-styles/orchestrator.md"
+   ]
   }
  ]
 }
