@@ -8,7 +8,7 @@
    "long": 0
   },
   "ENGINEERING-COORDINATOR.md": {
-   "bytes": 32586,
+   "bytes": 32730,
    "long": 18
   },
   "agents/local-scout.md": {
@@ -196,7 +196,11 @@
    "long": 0
   },
   "skills/ui-design/SKILL.md": {
-   "bytes": 7013,
+   "bytes": 7093,
+   "long": 0
+  },
+  "skills/ui-design/references/approval-pairs.md": {
+   "bytes": 826,
    "long": 0
   },
   "skills/ui-design/references/design.md": {

@@ -76,6 +76,11 @@
    "id": "model-selection",
    "pattern": "two climb one tier|Never fall back to a weaker tier",
    "home": "skills/agent-coordination/references/model-selection.md"
+  },
+  {
+   "id": "approval-pairs",
+   "pattern": "never files|data:` URIs",
+   "home": "skills/ui-design/references/approval-pairs.md"
   }
  ]
 }
