@@ -99,8 +99,8 @@ def main(argv=None):
     slot.add_argument('--weight', type=int, default=1, help='Slots this command uses, e.g. 2 when it runs two suites at once')
     slot.add_argument('--class', dest='run_class', choices=['release', 'review'], help='review runs leave test_release_reserve slots free for release runs; admission only, not a priority queue')
     slot.add_argument('command', help='Shell command, e.g. the project test command')
-    disk = subs.add_parser('disk-check', help='Free space on the volume holding PATH; exit 0 ok, 20 below the Worktree start free floor')
-    disk.add_argument('path')
+    disk = subs.add_parser('disk-check', help='Free space on each PATH volume (nearest existing ancestor); exit 0 ok, 20 below the Worktree start free floor')
+    disk.add_argument('path', nargs='+')
     sync = subs.add_parser('main-sync')
     sync.add_argument('main')
     sync.add_argument('--base', required=True)
@@ -173,9 +173,10 @@ def main(argv=None):
                                max_swap_gb=max_swap_gb, min_free_gb=min_free_gb, weight=args.weight,
                                reserve=reserve if args.run_class == 'review' else 0)
         elif args.action == 'disk-check':
-            code, line = disk_check(args.path, machine_config())
-            print(line)
-            return code
+            config = machine_config()
+            results = [disk_check(path, config) for path in args.path]
+            print('\n'.join(line for _, line in results))
+            return max(code for code, _ in results)
         elif args.action == 'sweep':
             result = sweep(args.main, base=args.base, apply=args.apply, rebuildable=args.rebuildable,
                            lease_files=machine_config().get('worktree_lease_files', []),
