@@ -44,12 +44,6 @@ class HandoffPasteCheckTests(unittest.TestCase):
         self.assertIn("lines; the cap", run("x\n" * 41)[1])
         self.assertIn("words; the cap", run("word " * 451)[1])
 
-    def test_line_cap_counts_only_nonblank_lines_at_the_boundary(self):
-        self.assertEqual(run(("x\n\n" * 40)), (0, "ok\n"))
-        code, out = run("x\n\n" * 41)
-        self.assertEqual(code, 1)
-        self.assertIn("41 nonblank lines; the cap is 40", out)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -137,7 +137,9 @@ class WorkflowAuditGuardrails(unittest.TestCase):
         gate = body.index('## Expired invocation gate')
         self.assertLess(gate, body.index('## 1. Build the change list'))
         self.assertLess(gate, body.index('## 4. Probe'))
+        self.assertIn('Deadline not yet passed: continue normally.', body)
         self.assertIn('exit without probing, recording or changing a schedule', body)
+        self.assertIn('past the deadline go to the final report and **End**', body)
         self.assertIn('Do not schedule another check.', body)
         self.assertIn('Disabling follows **End**.', body)
 
@@ -149,7 +151,8 @@ class WorkflowAuditGuardrails(unittest.TestCase):
         self.assertLess(log, report)
         self.assertLess(report, chain)
         self.assertIn('verify its `Reviewed:` SHA is the current candidate head', body)
-        self.assertIn('Only after the exact-head § Log receipt is saved and read back', body)
+        self.assertIn('Print a release-ready YES only after the exact-head § Log receipt is saved and read back', body)
+        self.assertIn('a NO or blocker report may be printed without it', body)
 
 
 class CriticalExecutionNavigation(unittest.TestCase):
