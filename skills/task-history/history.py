@@ -19,7 +19,7 @@ REMOTE = re.compile(r"^(?:https://github\.com/|git@github\.com:)T-Seli/(?:agent-
 SECRET = re.compile(r"(?i)(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*\S+|\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,})\b)")
 PRIVATE_PATH = re.compile(r"(?:^|[ /])(?:\.codex/sessions|\.claude/projects)(?:[/ ]|$)")
 KINDS = {"start", "decision", "implementation", "test", "review", "deploy", "failure", "handoff", "verification", "proposal", "feedback", "cancellation", "close"}
-FEEDBACK_CATEGORIES = {"user_correction", "confusion", "clarification", "scope_drift", "runbook_gap", "dispatch_failure", "repeated_blocker", "other"}
+FEEDBACK_CATEGORIES = {"user_correction", "confusion", "clarification", "scope_drift", "runbook_gap", "dispatch_failure", "repeated_blocker", "credential_prompt", "approval_relay", "tool_hook", "permission_classifier", "stale_state", "surface_access", "scheduling", "resource", "other"}
 FEEDBACK_CHECK_STATES = {"unverified", "verified_pass", "verified_fail"}
 FEEDBACK_CAUSE_BASES = {"observed", "hypothesis"}
 STATES = {"performed", "reported", "independently_verified"}
