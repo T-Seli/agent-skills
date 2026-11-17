@@ -1,0 +1,267 @@
+{
+ "unit": "bytes; tokens ~ bytes/3.9",
+ "long_line_chars": 600,
+ "duplicate_runs": 70,
+ "files": {
+  "CLAUDE.md": {
+   "bytes": 2935,
+   "long": 0
+  },
+  "ENGINEERING-COORDINATOR.md": {
+   "bytes": 55081,
+   "long": 33
+  },
+  "agents/local-scout.md": {
+   "bytes": 869,
+   "long": 0
+  },
+  "agents/scout.md": {
+   "bytes": 1600,
+   "long": 0
+  },
+  "agents/skill-implementer.md": {
+   "bytes": 1039,
+   "long": 0
+  },
+  "agents/skill-reviewer.md": {
+   "bytes": 1134,
+   "long": 0
+  },
+  "global/CLAUDE.md": {
+   "bytes": 4026,
+   "long": 0
+  },
+  "output-styles/orchestrator.md": {
+   "bytes": 2284,
+   "long": 0
+  },
+  "skills/action-items/SKILL.md": {
+   "bytes": 6627,
+   "long": 0
+  },
+  "skills/agent-coordination/SKILL.md": {
+   "bytes": 19754,
+   "long": 11
+  },
+  "skills/agent-coordination/references/approval-attempts.md": {
+   "bytes": 3192,
+   "long": 0
+  },
+  "skills/agent-coordination/references/coordinator-mode.md": {
+   "bytes": 5375,
+   "long": 0
+  },
+  "skills/agent-coordination/references/friction-regressions.md": {
+   "bytes": 5658,
+   "long": 2
+  },
+  "skills/agent-coordination/references/hub.md": {
+   "bytes": 9786,
+   "long": 4
+  },
+  "skills/agent-coordination/references/independent-reviewer.md": {
+   "bytes": 5245,
+   "long": 0
+  },
+  "skills/agent-coordination/references/reviewer-access.md": {
+   "bytes": 4113,
+   "long": 0
+  },
+  "skills/agent-coordination/references/roles.md": {
+   "bytes": 3247,
+   "long": 0
+  },
+  "skills/agent-coordination/references/routing.md": {
+   "bytes": 6543,
+   "long": 4
+  },
+  "skills/agent-coordination/references/state.md": {
+   "bytes": 14802,
+   "long": 9
+  },
+  "skills/agent-coordination/references/tasks.md": {
+   "bytes": 16460,
+   "long": 10
+  },
+  "skills/agent-coordination/references/worker-execution.md": {
+   "bytes": 20549,
+   "long": 11
+  },
+  "skills/agent-coordination/references/workspace-and-train.md": {
+   "bytes": 4003,
+   "long": 4
+  },
+  "skills/approval-handoff/SKILL.md": {
+   "bytes": 4003,
+   "long": 0
+  },
+  "skills/ask-assistant/SKILL.md": {
+   "bytes": 429,
+   "long": 0
+  },
+  "skills/blueprint/SKILL.md": {
+   "bytes": 10788,
+   "long": 0
+  },
+  "skills/blueprint/references/bug-mode.md": {
+   "bytes": 2520,
+   "long": 0
+  },
+  "skills/deploy/SKILL.md": {
+   "bytes": 15326,
+   "long": 8
+  },
+  "skills/deploy/references/modes.md": {
+   "bytes": 4300,
+   "long": 0
+  },
+  "skills/grill-me/SKILL.md": {
+   "bytes": 2404,
+   "long": 1
+  },
+  "skills/handoff/SKILL.md": {
+   "bytes": 8974,
+   "long": 1
+  },
+  "skills/implement/SKILL.md": {
+   "bytes": 12807,
+   "long": 6
+  },
+  "skills/implement/references/review-axes.md": {
+   "bytes": 3006,
+   "long": 0
+  },
+  "skills/implement/references/spec-mode.md": {
+   "bytes": 6402,
+   "long": 1
+  },
+  "skills/monitor/SKILL.md": {
+   "bytes": 10286,
+   "long": 1
+  },
+  "skills/prime-context/SKILL.md": {
+   "bytes": 5280,
+   "long": 0
+  },
+  "skills/skill-steward/SKILL.md": {
+   "bytes": 2165,
+   "long": 0
+  },
+  "skills/system-audit/SKILL.md": {
+   "bytes": 10473,
+   "long": 7
+  },
+  "skills/system-audit/references/reviewers.md": {
+   "bytes": 4618,
+   "long": 1
+  },
+  "skills/task-history/CAPTURE.md": {
+   "bytes": 1424,
+   "long": 0
+  },
+  "skills/task-history/ROLLOUT.md": {
+   "bytes": 4070,
+   "long": 1
+  },
+  "skills/task-history/SKILL.md": {
+   "bytes": 12185,
+   "long": 11
+  },
+  "skills/task-history/examples/synthetic-readable-task.md": {
+   "bytes": 4735,
+   "long": 0
+  },
+  "skills/tdd/SKILL.md": {
+   "bytes": 4508,
+   "long": 0
+  },
+  "skills/test-review/SKILL.md": {
+   "bytes": 15798,
+   "long": 5
+  },
+  "skills/test-review/references/hosted-review.md": {
+   "bytes": 5703,
+   "long": 0
+  },
+  "skills/ui-design/SKILL.md": {
+   "bytes": 7013,
+   "long": 0
+  },
+  "skills/ui-design/references/design.md": {
+   "bytes": 4941,
+   "long": 0
+  },
+  "skills/ui-design/references/iteration.md": {
+   "bytes": 5576,
+   "long": 0
+  },
+  "skills/ui-design/references/visualization.md": {
+   "bytes": 3051,
+   "long": 0
+  },
+  "skills/workflow-contracts/SKILL.md": {
+   "bytes": 760,
+   "long": 0
+  },
+  "skills/workflow-contracts/behavior.md": {
+   "bytes": 12999,
+   "long": 6
+  },
+  "skills/workflow-contracts/contracts.md": {
+   "bytes": 17901,
+   "long": 8
+  },
+  "skills/workflow-contracts/data-access.md": {
+   "bytes": 1935,
+   "long": 0
+  },
+  "skills/workflow-contracts/decisions.md": {
+   "bytes": 9559,
+   "long": 4
+  },
+  "skills/workflow-contracts/issues.md": {
+   "bytes": 8637,
+   "long": 5
+  },
+  "skills/workflow-contracts/project-CLAUDE-template.md": {
+   "bytes": 5909,
+   "long": 0
+  },
+  "skills/workflow-contracts/references/ci-evidence.md": {
+   "bytes": 2738,
+   "long": 0
+  },
+  "skills/workflow-contracts/references/execution-proof.md": {
+   "bytes": 4699,
+   "long": 0
+  },
+  "skills/workflow-contracts/references/github-migration.md": {
+   "bytes": 4271,
+   "long": 0
+  },
+  "skills/workflow-contracts/references/github-queue.md": {
+   "bytes": 4611,
+   "long": 0
+  },
+  "skills/workflow-contracts/references/issue-evidence.md": {
+   "bytes": 2889,
+   "long": 0
+  },
+  "skills/workflow-contracts/references/research.md": {
+   "bytes": 4461,
+   "long": 0
+  },
+  "skills/workflow-contracts/references/review-evidence.md": {
+   "bytes": 3716,
+   "long": 0
+  },
+  "skills/workflow-contracts/references/scoped-agents.md": {
+   "bytes": 4457,
+   "long": 0
+  },
+  "skills/workflow-contracts/references/work-trace.md": {
+   "bytes": 3520,
+   "long": 0
+  }
+ }
+}
