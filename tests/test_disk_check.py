@@ -4,6 +4,7 @@ import io
 import json
 import os
 import pathlib
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -55,7 +56,8 @@ class DiskCheckTests(unittest.TestCase):
         stat.assert_called_once_with(self.real)
 
     def test_totally_missing_root_fails_loudly_without_probing(self):
-        with mock.patch('os.path.exists', return_value=False), mock.patch('os.statvfs') as stat:
+        with mock.patch('os.stat', side_effect=FileNotFoundError), mock.patch('os.lstat', side_effect=FileNotFoundError), \
+                mock.patch('os.statvfs') as stat:
             with self.assertRaises(ValueError):
                 disk_check.check('/gone/work', {})
         stat.assert_not_called()
@@ -85,14 +87,58 @@ class DiskCheckTests(unittest.TestCase):
         self.assertEqual(code, 20)
         self.assertEqual([l.split(':')[0] for l in out.getvalue().splitlines()], ['disk ok', 'disk stop'])
 
+    def fail_closed(self, path):
+        with mock.patch('os.statvfs', return_value=vfs(90)) as stat:
+            code, out, err, _ = run(path, 90)
+        self.assertEqual((code, out), (1, ''))
+        self.assertIn('safeguard failed', err)
+        return err
+
+    def test_permission_denied_parent_fails_closed_not_to_a_healthy_ancestor(self):
+        if os.geteuid() == 0:
+            self.skipTest('root ignores permissions')
+        hidden = pathlib.Path(self.real) / 'hidden'
+        hidden.mkdir()
+        (hidden / 'inside').mkdir()
+        hidden.chmod(0)
+        self.addCleanup(hidden.chmod, 0o700)
+        self.fail_closed(hidden / 'inside' / 'worktree')
+
+    def test_symlink_loop_fails_closed(self):
+        loop = pathlib.Path(self.real) / 'loop'
+        loop.symlink_to(loop)
+        self.fail_closed(loop / 'worktree')
+
+    def test_regular_file_as_path_component_fails_closed(self):
+        plain = pathlib.Path(self.real) / 'plain'
+        plain.write_text('x')
+        self.fail_closed(plain / 'worktree')
+
+    def test_dangling_symlink_fails_closed(self):
+        dangling = pathlib.Path(self.real) / 'dangling'
+        dangling.symlink_to(pathlib.Path(self.real) / 'nowhere')
+        self.fail_closed(dangling / 'worktree')
+
+    def test_separate_git_dir_is_what_the_callers_clause_resolves_and_checks(self):
+        git_dir = pathlib.Path(self.real) / 'lowvol' / 'repo.git'
+        repo = pathlib.Path(self.real) / 'repo'
+        git_dir.parent.mkdir()
+        env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_SYSTEM': os.devnull}
+        subprocess.run(['git', 'init', '-q', '--separate-git-dir', str(git_dir), str(repo)], check=True, env=env)
+        common = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+                                capture_output=True, text=True, check=True, env=env).stdout.strip()
+        self.assertEqual(os.path.realpath(common), str(git_dir))
+        with mock.patch('os.statvfs', side_effect=lambda p: vfs(3 if p == str(git_dir) else 90)):
+            self.assertEqual(disk_check.check(str(repo), {})[0], 0)
+            self.assertEqual(disk_check.check(common, {})[0], 20)
+
     def test_other_volume_path_is_measured_not_root(self):
         calls = []
 
         def fake(path):
             calls.append(path)
             return vfs(3 if path.startswith('/Volumes/other') else 90)
-        with mock.patch('os.path.exists', return_value=True), mock.patch('os.path.realpath', side_effect=lambda p: p), \
-                mock.patch('os.statvfs', side_effect=fake):
+        with mock.patch('agent_skills.disk_check.volume_path', side_effect=lambda p: p), mock.patch('os.statvfs', side_effect=fake):
             self.assertEqual(disk_check.check('/Volumes/other/work', {})[0], 20)
             self.assertEqual(disk_check.check('/home/work', {})[0], 0)
         self.assertEqual(calls, ['/Volumes/other/work', '/home/work'])
@@ -116,8 +162,8 @@ class DiskCheckTests(unittest.TestCase):
 
 class DiskCheckTextTests(unittest.TestCase):
     MARKERS = {
-        'skills/implement/SKILL.md': ('safeguard-cli disk-check "$MAIN" "$MAIN/.claude/worktrees/<slug>"', 'proceed only on exit 0', 'no helper: start nothing'),
-        'skills/test-review/SKILL.md': ('safeguard-cli disk-check "$MAIN" <the worktree path below>', 'proceed only on exit 0', 'no helper: start nothing'),
+        'skills/implement/SKILL.md': ('git -C "$MAIN" rev-parse --path-format=absolute --git-common-dir', 'proceed only on exit 0', 'no helper: start nothing'),
+        'skills/test-review/SKILL.md': ('--git-common-dir', 'proceed only on exit 0', 'no helper: start nothing'),
         'skills/agent-coordination/scripts/delegate.py': ('disk_check', 'EXIT_STOP'),
         'skills/agent-coordination/references/workspace-and-train.md': ('disk-check',),
     }

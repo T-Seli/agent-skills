@@ -16,14 +16,27 @@ def floor(config):
 
 
 def volume_path(path):
-    """Resolve symlinks, then walk up to the nearest ancestor that exists: a worktree not yet created lives on its parent's volume."""
-    current = os.path.realpath(path)
-    while not os.path.exists(current):
-        parent = os.path.dirname(current)
-        if parent == current:
-            raise ValueError(f'no existing ancestor for {path}')
-        current = parent
-    return current
+    """Nearest existing ancestor of path, symlinks resolved: a worktree not yet created lives on its parent's volume.
+    Only a genuinely missing component (ENOENT) moves up; EACCES, ELOOP, ENOTDIR, a dangling symlink and the rest fail closed."""
+    current = path if os.path.isabs(path) else os.path.join(os.getcwd(), path)
+    while True:
+        try:
+            os.stat(current)
+            return os.path.realpath(current)
+        except FileNotFoundError:
+            try:
+                os.lstat(current)
+            except FileNotFoundError:
+                parent = os.path.dirname(current)
+                if parent == current:
+                    raise ValueError(f'no existing ancestor for {path}')
+                current = parent
+                continue
+            except OSError as exc:
+                raise ValueError(f'cannot resolve {current}: {exc.strerror}')
+            raise ValueError(f'dangling symlink at {current}')
+        except OSError as exc:
+            raise ValueError(f'cannot resolve {current}: {exc.strerror}')
 
 
 def check(path, config):
