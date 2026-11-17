@@ -68,9 +68,9 @@ Gates, all on by default, each switchable in layered config (`scripts/review_gat
 `g1` draft PR head before ready · `g2` release candidate · `g3` prompt/skill change vs budgets ·
 `g4` deploy record · `g5` monitor verdict · `audit` weekly independent audit · `plan` major plan, spec or decision.
 Send a script-built packet (head, tree, base, diff stats, tests and who ran them, done-when, prior-finding ledger; secrets and private ids refused), never hand-written text.
-The reply is `VERDICT <gate> <head> <tree> NO-BLOCKER|BLOCKERS <n>` plus `FINDING <id> <P1|P2|P3> <source> <evidence>; <check>` lines. Another head is stale; no or malformed reply is unreviewed, never approval.
+The reply is `VERDICT <gate> <head> <tree> NO-BLOCKER|BLOCKERS <n>` plus `FINDING <id> <P1|P2|P3> <source> <evidence>; <check>` lines. Another gate, head or tree is stale; no, malformed, duplicate or extra-line reply is unreviewed, never approval.
 Loop protection only: an identical packet for the same head is not resent; at the deadline (default 4 h) retry once, then tell the user. The watcher closes on a verdict or that report.
-Reviewer NO against worker YES, or the reverse, goes to the user with both receipts, never resolved here. A new thread (`audit`, `plan`) needs the standing policy to cover it. Log per gate requests, blockers, tests-missed blockers, false positives, latency; drop a gate that finds nothing in 20 requests.
+Reviewer NO against worker YES, or the reverse, goes to the user with both receipts, never resolved here; the watcher closes it only after the escalation is recorded. A new thread (`audit`, `plan`) needs the standing policy to cover it. Log per gate requests, blockers, tests-missed blockers, false positives, latency; drop a gate that finds nothing in 20 requests.
 
 Audit [documentation currency](../../workflow-contracts/behavior.md#documentation-currency) against verified changes and cross-channel evidence: report stale/conflicting guidance to its actual owner, not another writer. Verify doc-impact disposition and recoverable supersession; authoritative guidance changes trigger affected role/procedure rereads and source-bound readback.
 
