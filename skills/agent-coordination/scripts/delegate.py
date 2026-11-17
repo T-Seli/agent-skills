@@ -34,7 +34,7 @@ ROOT = HERE.parents[2]
 sys.path[:0] = [str(HERE), str(ROOT)]
 import tasks  # noqa: E402
 import workers  # noqa: E402
-from agent_skills import worker_execution, keep_awake, producer_contract, task_checkpoint  # noqa: E402
+from agent_skills import disk_check, worker_execution, keep_awake, producer_contract, task_checkpoint  # noqa: E402
 
 CONFIG = Path(os.environ.get("AGENT_SKILLS_CONFIG", "~/.config/agent-skills/workers.json")).expanduser()
 EXAMPLE = ROOT / "agent_skills" / "delegate_config.example.json"
@@ -455,6 +455,11 @@ def start(args):
     cwd = Path(args.cwd).expanduser().resolve()
     if not cwd.is_dir():
         sys.exit(f"delegate: no such directory {cwd}")
+    disk_code, disk_line = disk_check.check(str(cwd), cfg)
+    if disk_code == disk_check.EXIT_STOP:
+        refuse(disk_line)
+    if disk_code:
+        print(f"delegate: {disk_line}", file=sys.stderr)
     live = [r for r in runs() if run_state(r) in ("live", "unknown")]  # unknown may still be writing
     if len(live) >= cfg["max_live"]:
         refuse(f"{len(live)} workers already running (max_live {cfg['max_live']}): wait for one")
