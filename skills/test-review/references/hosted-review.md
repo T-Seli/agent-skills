@@ -13,10 +13,10 @@ A default PR checkout can test a synthetic merge commit; do not relabel it as
 branch-head proof. A mutable base branch name is not a resolved base identity.
 
 Compare that receipt with the current review candidate and required acceptance.
-Matching evidence may replace the same aggregate run; local focused regression,
-changed consumer, database, composed release and live behavior checks remain as
-required by scope. Changed source, base, runner, dependencies or environment
-invalidate affected evidence only. Missing receipt fields mean unproved coverage,
+A green hosted check on the exact head SHA replaces rerunning that same suite locally (test gate only), not when no hosted check exists, it is on a different SHA or excludes the changed area, nor for consent, deploy or monitoring gates.
+Local focused regression, changed consumer, database, composed release and live behavior checks remain as required by scope.
+Changed source, base, runner, dependencies or environment invalidate affected evidence only.
+Missing receipt fields mean unproved coverage,
 not a reason to relabel CI as proof or rerun every suite reflexively.
 
 Baseline comparison requires complete executions on both sides. Distinguish
