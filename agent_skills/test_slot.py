@@ -32,7 +32,8 @@ def configured_slots(config):
 
 
 def configured_reserve(config, slots):
-    """Slots a `review` run must leave free so a `release` run is admitted ahead of the review queue."""
+    """Slots a `review` run must leave free so a `release` run has room. It is admission, not a priority queue:
+    a release needing more slots than the reserve (weight > reserve) can still wait behind repeated reviews."""
     value = config.get('test_release_reserve', 0)
     if type(value) is not int or not 0 <= value < slots:
         raise ValueError(f'test_release_reserve must be an integer from 0 to {slots - 1}, got {value!r}')

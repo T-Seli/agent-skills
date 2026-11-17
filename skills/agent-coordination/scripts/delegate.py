@@ -109,16 +109,43 @@ def refuse(reason):
     sys.exit(REFUSED)
 
 
-def overlapping_prs(files, cwd):
-    """Open PRs touching any declared file; refuses when gh cannot answer, never a silent pass."""
+PR_LIMIT, GH_FILE_CAP = 200, 100  # gh lists at most this many PRs, and at most this many files per PR
+
+
+def repo_relative(files, cwd):
     try:
-        out = subprocess.run(["gh", "pr", "list", "--state", "open", "--limit", "200", "--json", "number,files,headRefName"],
-                             cwd=cwd, capture_output=True, text=True, check=True).stdout
+        top = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, text=True,
+                                  check=True).stdout.strip()).resolve()
+    except (OSError, subprocess.CalledProcessError) as error:
+        refuse(f"overlap check needs the repo root and `git rev-parse` failed ({error})")
+    declared = set()
+    for name in files:
+        path = (top / name).resolve()
+        if not path.is_relative_to(top):
+            refuse(f"declared file {name} is outside the repo {top}")
+        declared.add(path.relative_to(top).as_posix())
+    return declared
+
+
+def overlapping_prs(files, cwd, timeout):
+    """{PR number: shared files} for open PRs touching a declared file; refuses whenever it cannot be sure of the answer."""
+    declared = repo_relative(files, cwd)
+    try:
+        out = subprocess.run(["gh", "pr", "list", "--state", "open", "--limit", str(PR_LIMIT), "--json", "number,files,headRefName"],
+                             cwd=cwd, capture_output=True, text=True, check=True, timeout=timeout).stdout
         prs = json.loads(out)
+    except subprocess.TimeoutExpired:
+        refuse(f"overlap check: `gh pr list` timed out after {timeout}s (gh_timeout_seconds)")
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
         refuse(f"overlap check needs `gh pr list` and it failed ({error}); fix gh or start without --files after checking by hand")
-    declared = {f.removeprefix("./") for f in files}
-    return {pr["number"]: sorted(declared & {f["path"] for f in pr["files"]}) for pr in prs if declared & {f["path"] for f in pr["files"]}}
+    if (not isinstance(prs, list) or not all(isinstance(pr, dict) and type(pr.get("number")) is int and isinstance(pr.get("files"), list)
+                                              and all(isinstance(f, dict) and isinstance(f.get("path"), str) for f in pr["files"])
+                                              for pr in prs)):
+        refuse("overlap check: unexpected `gh pr list` JSON (want a list of {number, files: [{path}]})")
+    if len(prs) >= PR_LIMIT or any(len(pr["files"]) >= GH_FILE_CAP for pr in prs):
+        refuse(f"overlap check incomplete: gh returns at most {PR_LIMIT} PRs and {GH_FILE_CAP} files per PR; compare by hand")
+    shared = {pr["number"]: sorted(declared & {f["path"] for f in pr["files"]}) for pr in prs}
+    return {number: paths for number, paths in shared.items() if paths}
 
 
 def guard_settings(run, remote=False):
@@ -429,7 +456,7 @@ def start(args):
         if json.loads((r / "params.json").read_text())["cwd"] == str(cwd):
             refuse(f"a worker is already writing in {cwd} ({r.parent.name}): one writer per directory")
     if args.files and not args.resume:
-        for number, shared in overlapping_prs(args.files.split(","), cwd).items():
+        for number, shared in overlapping_prs(args.files.split(","), cwd, cfg.get("gh_timeout_seconds", 30)).items():
             refuse(f"open PR #{number} already touches {', '.join(shared)}: coordinate or wait before a second writer")
     elif not args.resume:
         print("delegate: overlap check skipped: no --files declared; open PRs were not compared", file=sys.stderr)

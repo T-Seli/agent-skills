@@ -199,6 +199,12 @@ class TestSlotTests(unittest.TestCase):
         self.assertEqual(self.start("true", "--class", "release", "--wait-seconds", "1").wait(timeout=15), 0)
         self.assertEqual(self.start("true", "--wait-seconds", "1").wait(timeout=15), 0)  # no class: unchanged
 
+    def test_the_reserve_is_documented_as_admission_not_priority(self):
+        out = subprocess.run([sys.executable, "-m", "agent_skills.safeguard_cli", "test-slot", "--help"], cwd=ROOT,
+                             capture_output=True, text=True).stdout
+        self.assertIn("not a priority queue", " ".join(out.split()))
+        self.assertIn("not a priority queue", test_slot.configured_reserve.__doc__)
+
     def test_review_run_is_admitted_while_a_slot_beyond_the_reserve_is_free(self):
         self.configure({"test_slots": 2, "test_release_reserve": 1})
         self.assertEqual(self.start("true", "--class", "review").wait(timeout=15), 0)
