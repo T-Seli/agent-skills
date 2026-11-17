@@ -8,8 +8,8 @@
    "long": 0
   },
   "ENGINEERING-COORDINATOR.md": {
-   "bytes": 32730,
-   "long": 18
+   "bytes": 32388,
+   "long": 17
   },
   "agents/local-scout.md": {
    "bytes": 869,
@@ -48,7 +48,7 @@
    "long": 0
   },
   "skills/agent-coordination/references/coordinator-maintenance.md": {
-   "bytes": 5977,
+   "bytes": 6024,
    "long": 0
   },
   "skills/agent-coordination/references/coordinator-mode.md": {
@@ -56,7 +56,7 @@
    "long": 0
   },
   "skills/agent-coordination/references/coordinator-release.md": {
-   "bytes": 5267,
+   "bytes": 5263,
    "long": 0
   },
   "skills/agent-coordination/references/friction-regressions.md": {
@@ -72,7 +72,7 @@
    "long": 0
   },
   "skills/agent-coordination/references/model-selection.md": {
-   "bytes": 3105,
+   "bytes": 4417,
    "long": 0
   },
   "skills/agent-coordination/references/reviewer-access.md": {

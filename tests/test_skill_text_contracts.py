@@ -221,8 +221,8 @@ class PrimaryCoordinatorGuide(unittest.TestCase):
                      'user-owned primary coordinator sessions','assistant-created workers',
                      'uncovered or unobserved lanes','private findings','same exact revision',
                      'both source receipts','responsible owner','must not erase unresolved evidence',
-                     'skills/workflow-contracts/decisions.md',
-                     'skills/workflow-contracts/references/review-evidence.md'):
+                     '../../workflow-contracts/decisions.md',
+                     '../../workflow-contracts/references/review-evidence.md'):
             with self.subTest(fact=fact):self.assertIn(fact,section)
 
     def test_small_release_checks_bind_reuse_and_preserve_required_gates(self):

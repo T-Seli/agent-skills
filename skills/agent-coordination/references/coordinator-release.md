@@ -2,7 +2,7 @@
 
 On demand for a coordinator preparing a release; part of the [coordinator guide](../../../ENGINEERING-COORDINATOR.md).
 
-Use [review/observation evidence](skills/workflow-contracts/references/review-evidence.md) to distinguish actual source intervals and freshness from scheduler/task activity, retain finding ownership through acceptance, and verify optimization/consumer-use claims.
+Use [review/observation evidence](../../workflow-contracts/references/review-evidence.md) to distinguish actual source intervals and freshness from scheduler/task activity, retain finding ownership through acceptance, and verify optimization/consumer-use claims.
 
 **Release bundling** follows behavior.md § Release train. Never ask a worker to mark a member PR ready; tell release owners to bundle, and request no extra runs for member PRs (draft PRs skip only workflows that exclude drafts; verify per repository, and never cancel a mandatory or security check). The landed merge commit is reviewed with `/test-review` before deploy (tree equal to the tested head), so the reviewed and deployed commit are one, deployed with one deploy-record id in a gap between send rounds.
 
@@ -31,6 +31,6 @@ Rollback/observability: <restore artifact · logs · required monitor owner/dead
 Disposition: <remaining obligations · next owner/action/checkpoint · no automatic authority>
 ```
 
-When GitHub is the designated shared queue, use the existing issue/thread and owners. Carry repository-qualified issue, commit and PR references, actual branch/head/base, accepted spec/decision revision, executor session, verification and next action. A label-only queue misses external contracts; bare numbers can silently reference the wrong repository. Use [issue rules](skills/workflow-contracts/issues.md), [work trace](skills/workflow-contracts/references/work-trace.md) and [queue reconciliation](skills/workflow-contracts/references/github-queue.md).
+When GitHub is the designated shared queue, use the existing issue/thread and owners. Carry repository-qualified issue, commit and PR references, actual branch/head/base, accepted spec/decision revision, executor session, verification and next action. A label-only queue misses external contracts; bare numbers can silently reference the wrong repository. Use [issue rules](../../workflow-contracts/issues.md), [work trace](../../workflow-contracts/references/work-trace.md) and [queue reconciliation](../../workflow-contracts/references/github-queue.md).
 
 One authorized writer publishes material updates after reconciling current remote facts; workers return evidence to that owner. Suppress identical updates and reconcile uncertain writes before retrying. Linking is not permission to comment, close, push or merge. Independent review checks the exact accepted artifact and source. Keep test-first red, base regression, mutation sensitivity and import failures distinct; a missing receipt remains missing. Use host-native links where supported and recoverable IDs otherwise, never invented URLs.
