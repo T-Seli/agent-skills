@@ -15,13 +15,13 @@ argument-hint: "[repo path] [task folder | commit]"
 4. Discovery: `git log origin/<release> --since="<Monitor window> ago"` by the user or with the assistant co-author trailer; `deploy:` entries in `<tasks>/*/log.md` on `origin/<base>` from that window.
 
 ## Expired invocation gate
-Before **Build the change list** or any live probe, compare the supplied deadline with current UTC and inspect this task's `monitor:` entries. If that exact deadline already has a final entry, report `duplicate expired invocation` and exit without probing, recording or changing a schedule. Otherwise this is the one final run: its **Record** entry includes `Deadline: <UTC>; final`. It never creates or re-enables a recheck schedule.
+Before **Build the change list** or any live probe, compare the supplied deadline with current UTC and inspect this task's `monitor:` entries. Then take exactly one branch. Deadline not yet passed: continue normally. Deadline passed and that exact deadline already has a final entry: report `duplicate expired invocation` and exit without probing, recording or changing a schedule. Deadline passed, no final entry: this is the one final run; its **Record** entry includes `Deadline: <UTC>; final`, and it never creates or re-enables a recheck schedule.
 
 ## 1. Build the change list
 Group commits into changes, one user-visible behaviour each. Backfills, config flips and scheduled jobs are changes too. One line per change.
 
 ## 2. Confirm each change is live
-- Merged: the commit is on `origin/<release>` (`git merge-base --is-ancestor <sha> origin/<release>`). With squash or merge-commit style (§ Deploy), find the merge by its PR number or merge commit (`git log origin/<release> --grep=<PR number or slug>`); a squash merge leaves no branch sha there. A PR not merged yet: say so, keep the schedule, stop.
+- Merged: the commit is on `origin/<release>` (`git merge-base --is-ancestor <sha> origin/<release>`). With squash or merge-commit style (§ Deploy), find the merge by its PR number or merge commit (`git log origin/<release> --grep=<PR number or slug>`); a squash merge leaves no branch sha there. A PR not merged yet: say so; before the deadline keep the schedule and stop; past the deadline go to the final report and **End**.
 - Still on the branch: `git log <merge commit>..origin/<release> -- <files>` shows no revert, and a symbol that exists only because of the change is still there.
 - Still deployed: each target reports a version whose commit contains the merge (`git merge-base --is-ancestor <merge commit> <that commit>`); for static assets, fetch the live file and grep it. How to ask a target: CLAUDE.md § Deploy.
 - Deploy time per target, in UTC. Every "since deploy" window starts there.
