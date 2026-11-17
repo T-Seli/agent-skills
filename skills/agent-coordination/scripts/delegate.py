@@ -112,24 +112,30 @@ def refuse(reason):
 PR_LIMIT, GH_FILE_CAP = 200, 100  # gh lists at most this many PRs, and at most this many files per PR
 
 
-def repo_relative(files, cwd):
+def repo_relative(files, cwd, timeout):
     try:
         top = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, text=True,
-                                  check=True).stdout.strip()).resolve()
+                                  check=True, timeout=timeout).stdout.strip()).resolve()
+    except subprocess.TimeoutExpired:
+        refuse(f"overlap check: `git rev-parse` timed out after {timeout}s (gh_timeout_seconds)")
     except (OSError, subprocess.CalledProcessError) as error:
         refuse(f"overlap check needs the repo root and `git rev-parse` failed ({error})")
     declared = set()
     for name in files:
-        path = (top / name).resolve()
-        if not path.is_relative_to(top):
-            refuse(f"declared file {name} is outside the repo {top}")
-        declared.add(path.relative_to(top).as_posix())
+        path = os.path.normpath(os.path.join(top, name))  # lexical: a tracked symlink keeps its own Git path
+        if os.path.commonpath([top, path]) != str(top):
+            refuse(f"declared file {name!r} is outside the repo {top}")
+        if not name.strip() or path == str(top) or os.path.isdir(path):
+            refuse(f"declared {name!r} is not a file; list each file the task will change")
+        declared.add(Path(path).relative_to(top).as_posix())
     return declared
 
 
 def overlapping_prs(files, cwd, timeout):
     """{PR number: shared files} for open PRs touching a declared file; refuses whenever it cannot be sure of the answer."""
-    declared = repo_relative(files, cwd)
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
+        refuse(f"gh_timeout_seconds must be a positive finite number, got {timeout!r}")
+    declared = repo_relative(files, cwd, timeout)
     try:
         out = subprocess.run(["gh", "pr", "list", "--state", "open", "--limit", str(PR_LIMIT), "--json", "number,files,headRefName"],
                              cwd=cwd, capture_output=True, text=True, check=True, timeout=timeout).stdout
