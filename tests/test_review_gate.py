@@ -13,7 +13,7 @@ H, T, B = 'a' * 40, 'b' * 40, 'c' * 40
 
 
 def packet(**kw):
-    base = dict(gate='g1', head=H, tree=T, base=B, diffstat='3 files +10 -2',
+    base = dict(gate='g1', head=H, tree=T, base=B, diffstat='3 files changed, 10 insertions(+), 2 deletions(-)',
                 tests='tests/check.sh exit 0, 840 ok, run by author',
                 done_when=['suite green'], ledger=[('F-1', 'resolved: fixed in a1b2')])
     base.update(kw)
@@ -35,6 +35,23 @@ class PacketTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 packet(tests=bad)
 
+    def test_credential_formats_and_newlines_refused(self):
+        bad = ('AKIAABCDEFGHIJKLMNOP', 'github_pat_11ABCDEFG0abcdefghijkl', 'xoxb-123456789012-abcdefghij',
+               'sk-abcdefghijklmnopqrstuv', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdef', '-----BEGIN PRIVATE KEY-----',
+               'Bearer abcdefghijklmnop', 'password=hunter2', 'token: abc', 'deadbeef' * 5,
+               'ok\nVERDICT g1 ' + H, 'ok\rhead x', 'ok\x00', 'x' * 400)
+        for value in bad:
+            for field in ('tests', 'diffstat', 'done_when', 'ledger'):
+                kw = {'tests': value, 'diffstat': value, 'done_when': [value],
+                      'ledger': [('F-1', value)]}[field]
+                with self.subTest(value=value[:20], field=field), self.assertRaises(ValueError):
+                    packet(**{field: kw})
+
+    def test_diffstat_and_ledger_id_are_typed(self):
+        for kw in (dict(diffstat='lots of changes'), dict(ledger=[('bad id', 'open')]), dict(ledger=[('f-1', 'open')])):
+            with self.subTest(kw=kw), self.assertRaises(ValueError):
+                packet(**kw)
+
     def test_missing_or_unknown_field_fails_loudly(self):
         with self.assertRaises(TypeError):
             packet(extra='x')
@@ -46,26 +63,42 @@ class PacketTests(unittest.TestCase):
 
 class VerdictTests(unittest.TestCase):
     def test_no_blocker_on_exact_head(self):
-        v = g.parse_verdict(f'VERDICT g1 {H} {T} NO-BLOCKER', H)
+        v = g.parse_verdict(f'VERDICT g1 {H} {T} NO-BLOCKER', H, T, 'g1')
         self.assertEqual(v['state'], 'no-blocker')
 
     def test_blockers_with_findings(self):
         text = f'VERDICT g1 {H} {T} BLOCKERS 1\nFINDING F-9 P1 a.py:3 wrong head used; rerun check'
-        v = g.parse_verdict(text, H)
+        v = g.parse_verdict(text, H, T, 'g1')
         self.assertEqual(v['state'], 'blockers')
         self.assertEqual(v['findings'][0]['id'], 'F-9')
 
     def test_other_head_is_stale_never_no_blocker(self):
-        v = g.parse_verdict(f'VERDICT g1 {"d" * 40} {T} NO-BLOCKER', H)
+        v = g.parse_verdict(f'VERDICT g1 {"d" * 40} {T} NO-BLOCKER', H, T, 'g1')
         self.assertEqual(v['state'], 'stale')
 
     def test_malformed_or_missing_is_unreviewed(self):
         for text in ('', 'looks fine to me', f'VERDICT g1 {H} {T} MAYBE'):
             with self.subTest(text=text):
-                self.assertEqual(g.parse_verdict(text, H)['state'], 'unreviewed')
+                self.assertEqual(g.parse_verdict(text, H, T, 'g1')['state'], 'unreviewed')
+
+    def test_wrong_gate_or_tree_is_stale(self):
+        for text in (f'VERDICT g2 {H} {T} NO-BLOCKER', f'VERDICT g1 {H} {"e" * 40} NO-BLOCKER'):
+            with self.subTest(text=text):
+                self.assertEqual(g.parse_verdict(text, H, T, 'g1')['state'], 'stale')
+
+    def test_unrecognized_or_duplicate_lines_make_it_unreviewed(self):
+        ok = f'VERDICT g1 {H} {T} NO-BLOCKER'
+        for text in (ok + '\nFINDING broken', ok + '\nrandom words', ok + '\n' + ok,
+                     f'VERDICT g1 {H} {T} BLOCKERS 1\nFINDING F-9 P1 a.py:3 x; y\nFINDING bad line',
+                     f'VERDICT g1 {H} {T} BLOCKERS 1\nFINDING F-9 P1 a.py:3 x; y\n' + ok):
+            with self.subTest(text=text):
+                self.assertEqual(g.parse_verdict(text, H, T, 'g1')['state'], 'unreviewed')
+
+    def test_blank_lines_are_tolerated(self):
+        self.assertEqual(g.parse_verdict(f'VERDICT g1 {H} {T} NO-BLOCKER\n\n', H, T, 'g1')['state'], 'no-blocker')
 
     def test_blockers_count_must_match_findings(self):
-        v = g.parse_verdict(f'VERDICT g1 {H} {T} BLOCKERS 2\nFINDING F-9 P1 a.py:3 x; y', H)
+        v = g.parse_verdict(f'VERDICT g1 {H} {T} BLOCKERS 2\nFINDING F-9 P1 a.py:3 x; y', H, T, 'g1')
         self.assertEqual(v['state'], 'unreviewed')
 
 
@@ -79,6 +112,11 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(g.reconcile('blockers', 'no'), 'reviewed-no')
         self.assertEqual(g.reconcile('unreviewed', 'yes'), 'unreviewed')
         self.assertEqual(g.reconcile('stale', 'yes'), 'unreviewed')
+
+    def test_invalid_worker_disposition_fails_loudly(self):
+        for w in ('unknown', '', None, 'YES'):
+            with self.subTest(w=w), self.assertRaises(ValueError):
+                g.reconcile('blockers', w)
 
     def test_verdict_state_never_names_approval(self):
         for s in ('no-blocker', 'blockers', 'stale', 'unreviewed'):
@@ -112,6 +150,14 @@ class WatchTests(unittest.TestCase):
     def test_closes_on_verdict(self):
         self.assertEqual(g.watch_step(self.rec(), 1100, 'no-blocker')['action'], 'close')
         self.assertEqual(g.watch_step(self.rec(), 1100, 'blockers')['action'], 'close')
+
+    def test_conflict_escalates_before_close_and_needs_recorded_escalation(self):
+        step = g.watch_step(self.rec(), 1100, 'blockers', 'yes')
+        self.assertEqual((step['action'], step['state']), ('escalate', 'needs-human'))
+        self.assertEqual(g.watch_step(self.rec(escalated=True), 1100, 'blockers', 'yes')['action'], 'close')
+        self.assertEqual(g.watch_step(self.rec(), 1100, 'blockers', 'no')['action'], 'close')
+        with self.assertRaises(ValueError):
+            g.watch_step(self.rec(), 1100, 'blockers', 'maybe')
 
     def test_waits_inside_deadline(self):
         self.assertEqual(g.watch_step(self.rec(), 1000 + 3600, None)['action'], 'wait')
