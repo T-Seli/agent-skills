@@ -285,6 +285,8 @@ for f in "$R"/agents/*.md; do link "$f" "$INSTALL_HOME/.claude/agents/$(basename
 for f in "$R"/output-styles/*.md; do link "$f" "$INSTALL_HOME/.claude/output-styles/$(basename "$f")"; done
 for f in "$R"/hooks/*.sh; do [ -x "$f" ] || { echo "hook source is not executable: $f" >&2; exit 1; }; link "$f" "$INSTALL_HOME/.claude/hooks/$(basename "$f")"; done
 link "$R/global/CLAUDE.md" "$INSTALL_HOME/.claude/CLAUDE.md"
+# coordinator-mode.md links the guide as ../../../ENGINEERING-COORDINATOR.md, which resolves here through the skill symlink.
+link "$R/ENGINEERING-COORDINATOR.md" "$INSTALL_HOME/.claude/ENGINEERING-COORDINATOR.md"
 # delegate.py refuses to start workers without its private config; seed it once, never overwrite.
 cfg="$INSTALL_HOME/.config/agent-skills/workers.json"
 if [ ! -e "$cfg" ]; then
@@ -299,6 +301,7 @@ fi
 if [ "$TARGET" = all ] || [ "$TARGET" = codex ]; then
 INSTALL_STAGE=codex
 for d in "$R"/skills/*/; do link "${d%/}" "$INSTALL_HOME/.agents/skills/$(basename "$d")"; done
+link "$R/ENGINEERING-COORDINATOR.md" "$INSTALL_HOME/.agents/ENGINEERING-COORDINATOR.md"
 for f in "$R"/codex/agents/*.toml; do copy_role "$f" "$INSTALL_HOME/.codex/agents/$(basename "$f")"; done
 build "$INSTALL_HOME/.codex/AGENTS.md" "$R/codex/AGENTS.md" "$R/global/CLAUDE.md" \
   "$R/output-styles/orchestrator.md" "$R/codex/compatibility.md"

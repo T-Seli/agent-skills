@@ -14,7 +14,7 @@ Before any reply, hypothetical or capped included, do these reads in order; load
 6. `${CLAUDE_SKILL_DIR}/../workflow-contracts/references/research.md`
 This UI supplement alone is not the implementation/review workflow. Reply budget: the smaller of the user's cap and the phase cap (blueprint plan: 12 lines); target 80% of it, with no blank lines, because words and physical lines are counted exactly on the final text. Spend it in order: recommendation, the verification line (see Iterate), holds and requested decisions, option rationale last; cut from the end, and if the first three cannot fit say so instead of dropping them.
 
-For charts, dashboards or interactive explanations also read [visualization](references/visualization.md).
+For charts, dashboards or interactive explanations also read [visualization](references/visualization.md); for approval before/after pairs [approval-pairs](references/approval-pairs.md).
 This is a design workflow, not a renderer or implementation engine. Pair with the
 actual installed blueprint, implement or test-review skill; its authority and
 phase restrictions still apply. Design selection is not implementation consent.
