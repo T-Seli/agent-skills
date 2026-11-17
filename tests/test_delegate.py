@@ -263,8 +263,9 @@ class DelegateTests(unittest.TestCase):
         self.assertIn("max_depth", json.loads(refused.stdout)["refused"])
         self.assertFalse((self.dir / "state" / "deep.json").exists())
 
-    def fake_gh(self, out="[]", code=0):
-        body = f'#!/bin/sh\necho "$@" > "$FAKE_DIR/gh.args"\ncat <<\'EOF\'\n{out}\nEOF\nexit {code}\n'
+    def fake_gh(self, out="[]", code=0, sleep=0):
+        subprocess.run(["git", "init", "-q", str(self.work)], check=True)
+        body = f'#!/bin/sh\necho "$@" > "$FAKE_DIR/gh.args"\nsleep {sleep}\ncat <<\'EOF\'\n{out}\nEOF\nexit {code}\n'
         (self.dir / "bin" / "gh").write_text(body)
         (self.dir / "bin" / "gh").chmod(0o755)
 
@@ -291,9 +292,42 @@ class DelegateTests(unittest.TestCase):
         self.assertEqual(failed.returncode, 3)
         self.assertIn("overlap check", json.loads(failed.stdout)["refused"])
         (self.dir / "empty").mkdir()
+        (self.dir / "empty" / "git").symlink_to(subprocess.run(["which", "git"], capture_output=True, text=True).stdout.strip())
         missing = self.start("--task-id", "g2", "--files", "a.py", env={"PATH": str(self.dir / "empty")})
         self.assertEqual(missing.returncode, 3)
         self.assertIn("gh", json.loads(missing.stdout)["refused"])
+
+    def pr(self, number=7, *paths):
+        return {"number": number, "headRefName": "feat/x", "files": [{"path": p} for p in paths]}
+
+    def refused_reason(self, started):
+        self.assertEqual(started.returncode, 3, started.stderr)
+        self.assertNotIn("Traceback", started.stderr)
+        return json.loads(started.stdout)["refused"]
+
+    def test_an_incomplete_pr_listing_refuses_instead_of_clearing(self):
+        self.fake_gh(json.dumps([self.pr(n, "other.py") for n in range(200)]))
+        self.assertIn("incomplete", self.refused_reason(self.start("--task-id", "lim", "--files", "a.py")))
+        self.fake_gh(json.dumps([self.pr(7, *[f"f{n}.py" for n in range(100)])]))
+        self.assertIn("incomplete", self.refused_reason(self.start("--task-id", "big", "--files", "a.py")))
+
+    def test_malformed_gh_json_refuses_with_the_structured_reply(self):
+        for n, out in enumerate(["{}", "null", "[1]", '[{"files": []}]', '[{"number": 1}]', '[{"number": 1, "files": null}]',
+                                 '[{"number": 1, "files": [{}]}]', '[{"number": 1, "files": [{"path": 3}]}]']):
+            self.fake_gh(out)
+            self.assertIn("unexpected", self.refused_reason(self.start("--task-id", f"bad{n}", "--files", "a.py")), out)
+
+    def test_declared_paths_are_made_repo_relative_before_comparing(self):
+        self.fake_gh(json.dumps([self.pr(7, "sub/a.py")]))
+        self.assertIn("#7", self.refused_reason(self.start("--task-id", "p1", "--files", "./sub/../sub/a.py")))
+        self.assertIn("#7", self.refused_reason(self.start("--task-id", "p2", "--files", f"{self.work}/sub/a.py")))
+        for n, outside in enumerate(["../x.py", "/etc/hosts"]):
+            self.assertIn("outside", self.refused_reason(self.start("--task-id", f"o{n}", "--files", outside)))
+
+    def test_a_hung_gh_is_bounded_by_the_configured_timeout(self):
+        self.write_config(gh_timeout_seconds=1)
+        self.fake_gh(sleep=5)
+        self.assertIn("timed out", self.refused_reason(self.start("--task-id", "slow", "--files", "a.py")))
 
     def test_no_declared_files_warns_that_the_overlap_check_was_skipped(self):
         self.fake_gh("", code=1)
