@@ -6,7 +6,6 @@ import filecmp
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 import time
@@ -14,6 +13,7 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 
+from . import layout
 from .task_contract import assess_completion, resume_check
 
 
@@ -245,15 +245,14 @@ def sweep(main, *, base, apply=False, rebuildable=(), lease_files=(), active_sec
           belt_only=False):
     """Run the cleanup gate over every other worktree; with `apply`, remove (never force) the eligible,
     unheld ones and delete a branch only when its merge proof is `ancestor`. `belt_only` keeps every branch
-    worktree outside the belt registry (conveyor.md § Scope)."""
+    worktree whose branch no `Claimed:` receipt on an open belt issue names (conveyor.md § Scope)."""
     main = Path(main).resolve(strict=True)
     now = time.time() if now is None else now
     # A lease file is text or JSON (e.g. an app's worktree registry); every absolute path it names is held.
     leased = [Path(found.strip()).expanduser().resolve() for name in lease_files
               for found in re.findall(r'(?:^|")(~?/[^"\n]+)', Path(name).expanduser().read_text(encoding="utf-8"),
                                       re.M)]
-    belt = {Path(record["worktree"]).resolve() for record in registry() if record.get("worktree")} \
-        if belt_only else None
+    belt = {row["branch"] for row in registry(main) if row["branch"]} if belt_only else None
     report = {"apply": apply, "candidates": [], "held": [], "kept": [], "removed": []}
     with _sweep_lock(main):
         cwds = _process_cwds()
@@ -268,7 +267,7 @@ def sweep(main, *, base, apply=False, rebuildable=(), lease_files=(), active_sec
             if branch is None and not worktree.name.startswith("_base-"):
                 report["kept"].append({"worktree": str(worktree), "reason": "detached and not a temp base"})
                 continue
-            if belt is not None and branch is not None and worktree not in belt:
+            if belt is not None and branch is not None and branch not in belt:
                 report["kept"].append({"worktree": str(worktree), "reason": "outside the belt registry"})
                 continue
             try:
@@ -298,41 +297,110 @@ def sweep(main, *, base, apply=False, rebuildable=(), lease_files=(), active_sec
     return report
 
 
-# Belt registry (conveyor.md § Scope): the agent-coordination task store is its one home.
-SCRIPTS = Path(__file__).resolve().parents[1] / "skills" / "agent-coordination" / "scripts"
-CONVEYOR = Path(__file__).resolve().parents[1] / "skills" / "workflow-contracts" / "conveyor.json"
-VERDICT_FOR = ("monitor_first", "monitor_24h")  # deploy arms the first-traffic schedule, then the 24 h one
+# Belt registry and guards (conveyor.json `registry`): receipts on the cwd repo's open belt issues are the only source.
+VERDICT_FOR = ("monitor_first", "monitor_24h")  # an issue's first `Scheduler:` id is first-traffic, the second 24 h
+DEADLINE = re.compile(r"Deadline: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z")  # contracts.md § Scheduler
+
+
+def _contract():
+    return json.loads(layout.contract("conveyor.json").read_text(encoding="utf-8"))
 
 
 def _state_dir():
-    if str(SCRIPTS) not in sys.path:
-        sys.path.insert(0, str(SCRIPTS))
+    scripts = layout.ROOT / "skills" / "agent-coordination" / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
     import tasks
     return tasks.state_dir()
 
 
-def registry():
-    """Task records the belt started (`worker.owner` assistant); a human-owned record is the user's own session."""
-    root = _state_dir()
-    records = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(root.glob("*.json"))] \
-        if root.is_dir() else []
-    return [record for record in records if (record.get("worker") or {}).get("owner") == "assistant"]
+def belt_issues(cwd):
+    """Open issues carrying a `lane:` label in the GitHub repo of `cwd`: number, label names, comment lines."""
+    done = subprocess.run(["gh", "issue", "list", "--state", "open", "--limit", "1000", "--json",
+                           "number,labels,comments"], cwd=cwd, capture_output=True, text=True, timeout=30)
+    if done.returncode:
+        raise RuntimeError(f"gh issue list failed: {done.stderr.strip() or done.returncode}")
+    issues = []
+    for found in json.loads(done.stdout):
+        labels = {label["name"] for label in found["labels"]}
+        if any(name.startswith("lane:") for name in labels):
+            issues.append({"number": found["number"], "labels": labels,
+                           "lines": [line.strip() for comment in found["comments"]
+                                     for line in comment["body"].splitlines()]})
+    return issues
 
 
-def archive_check(session_id):
-    """Allowed only for a belt session whose every task record is verified-done."""
-    found = [record for record in registry() if record["worker"].get("session_id") == session_id]
-    if not found:
-        return {"allowed": False, "reason": f"session {session_id} is outside the belt registry; "
-                                            "the belt never archives a user side session"}
-    unfinished = [record["task_id"] for record in found if record.get("status") != "verified-done"]
+def registry(cwd):
+    """One row per `Owner:` or `Claimed:` receipt on an open belt issue: session, issue, parked, claimed branch."""
+    receipts = _contract()["receipts"]
+    rows = []
+    for found in belt_issues(cwd):
+        for line in found["lines"]:
+            for key in ("owner", "claim"):
+                if match := re.match(receipts[key]["pattern"], line):
+                    rows.append({"session": match["session"], "issue": found["number"],
+                                 "parked": "parked" in found["labels"],
+                                 "branch": line.split("`")[1] if key == "claim" else None})
+    return rows
+
+
+def _session(event):
+    """The calling session as receipts name it: the desktop id when the host sets one (as `claim` does)."""
+    return os.environ.get("CLAUDE_CODE_HOST_SESSION_ID") or event["session_id"]
+
+
+def archive_check(cwd, session):
+    """(decision, reason) per conveyor.json registry guards; a closed issue is no longer open, so never unfinished."""
+    contract = _contract()
+    guards = contract["registry"]["guards"]
+    if re.fullmatch(contract["session_id"]["pattern"], session) and not session.startswith("local_"):
+        return "deny", f"session {session} is a headless worker; it ends by itself and is never archived"
+    rows = [row for row in registry(cwd) if row["session"] == session]
+    if not rows:
+        return guards["outside_registry"], f"session {session} is outside the belt registry"
+    unfinished = sorted({row["issue"] for row in rows if not row["parked"]})
     if unfinished:
-        return {"allowed": False, "reason": f"task {', '.join(unfinished)} is not verified-done"}
-    return {"allowed": True, "reason": "verified-done", "tasks": [record["task_id"] for record in found]}
+        return guards["registry_unfinished"], \
+            f"session {session} has unfinished work on {', '.join(f'#{n}' for n in unfinished)}"
+    return guards["registry_done"], "every claimed issue is closed or parked"
+
+
+def _repo_name(cwd):
+    """<repo> (contracts.md): the main worktree's basename; None outside a git checkout."""
+    done = subprocess.run(["git", "-C", str(cwd), "worktree", "list", "--porcelain"], capture_output=True, text=True)
+    return Path(done.stdout.splitlines()[0][len("worktree "):]).name if done.returncode == 0 else None
+
+
+def monitor_create_check(cwd, task_id, description):
+    """Allow `monitor-<repo>-<slug>` whose description carries a `Deadline:`; anything else asks."""
+    repo = _repo_name(cwd)
+    if repo is None:
+        return "ask", f"monitor {task_id}: {cwd} is not a git checkout, so <repo> is unknown"
+    if not re.fullmatch(rf"monitor-{re.escape(repo)}-[a-z0-9]+(?:-[a-z0-9]+)*", task_id or "", re.I):
+        return "ask", f"monitor id {task_id} is not monitor-{repo}-<slug>"
+    if not DEADLINE.search(description or ""):
+        return "ask", f"monitor {task_id} has no `Deadline: YYYY-MM-DDTHH:MMZ` in its description"
+    return "allow", "belt monitor id with a deadline"
+
+
+def monitor_delete_check(cwd, task_id):
+    """Allow a `Scheduler:` id on a belt issue once its verdict is recorded; deny before; any other id asks."""
+    receipts = _contract()["receipts"]
+    for found in belt_issues(cwd):
+        ids = list(dict.fromkeys(line.split()[2] for line in found["lines"]
+                                 if re.match(receipts["schedule"]["pattern"], line)))
+        if task_id in ids:
+            position = ids.index(task_id)
+            need = VERDICT_FOR[position] if position < len(VERDICT_FOR) else None
+            if need and any(re.match(receipts[need]["pattern"], line) for line in found["lines"]):
+                return "allow", "verdict recorded"
+            label = receipts[need]["label"] if need else "verdict (only two schedules have one)"
+            return "deny", f"#{found['number']}: monitor {task_id} has no {label} receipt yet"
+    return "ask", f"{task_id} is not a `Scheduler:` id on an open belt issue"
 
 
 def denial_log():
-    """The auto-mode refusal log, next to the registry it is read with."""
+    """The auto-mode refusal log, in the agent-coordination state dir."""
     return _state_dir() / "denials.jsonl"
 
 
@@ -341,7 +409,7 @@ def record_denial(event, *, now=None):
     command = (event.get("tool_input") or {}).get("command") if event.get("tool_name") == "Bash" else None
     words = [word for word in (command or "").split() if "=" not in word.split("/")[0]]
     line = {"time": (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "session_id": event["session_id"], "cwd": event.get("cwd"), "tool": event["tool_name"],
+            "session_id": _session(event), "cwd": event.get("cwd"), "tool": event["tool_name"],
             "head": os.path.basename(words[0]) if words else None, "tool_use_id": event.get("tool_use_id")}
     path = denial_log()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -350,124 +418,61 @@ def record_denial(event, *, now=None):
     return line
 
 
-def belt_denials():
-    """Logged refusals of belt sessions, each with its task ids; side-session lines are never counted."""
+def belt_denials(cwd):
+    """Logged refusals of registry sessions, each with its issue numbers; side-session lines are never counted."""
+    issues_by_session = {}
+    for row in registry(cwd):
+        issues_by_session.setdefault(row["session"], set()).add(row["issue"])
     path = denial_log()
-    tasks_by_session = {}
-    for record in registry():
-        tasks_by_session.setdefault(record["worker"].get("session_id"), []).append(record["task_id"])
     lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
-    return [{**line, "tasks": tasks_by_session[line["session_id"]]} for line in lines
-            if line["session_id"] in tasks_by_session]
+    return [{**line, "issues": sorted(issues_by_session[line["session_id"]])} for line in lines
+            if line["session_id"] in issues_by_session]
 
 
-def _task_folders(cwd):
-    """Task folders by name, TASK copies (main checkout, then this one) before DRAFT (contracts.md § Folders)."""
-    top = Path(_git(cwd, "rev-parse", "--show-toplevel")).resolve()
-    main = _worktrees(top)[0]["path"]
-    claude = top / "CLAUDE.md"
-    named = re.search(r"^- Task records: *`?([^`\s]+)", claude.read_text(encoding="utf-8"), re.M) \
-        if claude.is_file() else None
-    records = named.group(1) if named else "tasks"
-    roots = ([] if records == "none" else [main / records, top / records]) + [main / ".claude" / "drafts"]
-    folders = {}
-    for root in dict.fromkeys(roots):
-        for folder in sorted(root.glob("*/")) if root.is_dir() else ():
-            folders.setdefault(folder.name, []).append(folder)
-    return folders
+def session_role(event):
+    """The workers.json `roles` name (coordinator, release_owner) of the hook's session, else None."""
+    path = Path(os.environ.get("AGENT_SKILLS_CONFIG", "~/.config/agent-skills/workers.json")).expanduser()
+    roles = json.loads(path.read_text(encoding="utf-8")).get("roles", {}) if path.is_file() else {}
+    names = {event.get("session_id"), os.environ.get("CLAUDE_CODE_HOST_SESSION_ID")} - {None, ""}
+    return next((role for role, session in roles.items() if session in names), None)
 
 
-def _read(folders, name):
-    return "\n".join((folder / name).read_text(encoding="utf-8") for folder in folders if (folder / name).is_file())
-
-
-def _deploy_blocks(text):
-    """Per deploy entry, in order: its schedule ids and the monitor verdict receipts recorded after it."""
-    receipts = json.loads(CONVEYOR.read_text(encoding="utf-8"))["receipts"]
-    blocks = []
-    for line in map(str.strip, text.splitlines()):
-        if re.search(receipts["deploy"]["pattern"], line):
-            blocks.append({"schedules": [], "verdicts": set()})
-        elif blocks and re.match(receipts["schedule"]["pattern"], line):
-            if line.split()[2] not in blocks[-1]["schedules"]:
-                blocks[-1]["schedules"].append(line.split()[2])
-        elif blocks:
-            blocks[-1]["verdicts"].update(key for key in VERDICT_FOR if re.match(receipts[key]["pattern"], line))
-    return blocks
-
-
-def monitor_delete_check(cwd, schedule_id):
-    """A schedule may go once the deploy that recorded it has that schedule's verdict (first, then 24 h)."""
-    found = []
-    for name, folders in _task_folders(cwd).items():
-        blocks = [block for block in _deploy_blocks(_read(folders, "log.md")) if schedule_id in block["schedules"]]
-        if blocks:
-            position = blocks[-1]["schedules"].index(schedule_id)
-            found.append((name, VERDICT_FOR[position] if position < len(VERDICT_FOR) else None, blocks[-1]))
-    if not found:
-        return {"allowed": False, "reason": f"no task log records `Scheduler: <runtime> {schedule_id}`"}
-    missing = [f"{name} ({need or 'a third schedule has no verdict'})" for name, need, block in found
-               if need not in block["verdicts"]]
-    if missing:
-        return {"allowed": False, "reason": f"monitor {schedule_id} has no recorded verdict in {', '.join(missing)}"}
-    return {"allowed": True, "reason": "verdict recorded", "tasks": [name for name, _, _ in found]}
-
-
-def monitoring_entry_check(cwd, issue):
-    """The move into lane monitoring needs two schedule ids on the newest deploy of the issue's task."""
-    plan = re.compile(rf"^Issue: \S+#{issue}$", re.M)
-    tasks = {name: folders for name, folders in _task_folders(cwd).items() if plan.search(_read(folders, "plan.md"))}
-    if not tasks:
-        return {"allowed": False, "reason": f"no task plan records `Issue: <owner/repo>#{issue}`"}
-    for name, folders in tasks.items():
-        blocks = _deploy_blocks(_read(folders, "log.md"))
-        count = len(blocks[-1]["schedules"]) if blocks else 0
-        if count < 2:
-            return {"allowed": False, "reason": f"{name}: {count} `Scheduler:` id(s) on the newest deploy, 2 needed"}
-    return {"allowed": True, "reason": "two schedule ids", "tasks": list(tasks)}
-
-
-def _lane_monitoring_issue(command):
-    """The issue number of an `issues-cli lane <n> monitoring` call in the command, else None."""
-    for segment in re.split(r"&&|\|\||[;|\n]", command):
-        try:
-            tokens = shlex.split(segment)
-        except ValueError:
-            continue
-        for at, token in enumerate(tokens[:-1]):
-            if Path(token).name == "issues-cli" and tokens[at + 1] == "lane":
-                words = [word for word in tokens[at + 2:] if not word.startswith("-")]
-                if words[1:2] == ["monitoring"] and words[0].lstrip("#").isdigit():
-                    return words[0].lstrip("#")
-    return None
+def resume_picture(event):
+    """`issues-cli resume` output for a session named in `roles`, else None; a failed run says so (conveyor.json
+    `resume.hooks`). The command is the installed invocation authorizations.json names."""
+    if not session_role(event):
+        return None
+    done = subprocess.run([os.path.expanduser("~/.agents/skills/workflow-contracts/scripts/issues-cli"), "resume"],
+                          cwd=event.get("cwd") or ".", capture_output=True, text=True)
+    if done.returncode:
+        reason = (done.stderr.strip().splitlines() or ["no output"])[-1]
+        return f"WARNING: issues-cli resume failed (exit {done.returncode}): {reason}"
+    return done.stdout.rstrip("\n")
 
 
 def archive_decision(event):
-    """PreToolUse on the session archive tool: a deny reason, else None."""
-    session = (event.get("tool_input") or {}).get("session_id")
-    verdict = archive_check(event["session_id"] if session in (None, "self") else session)
-    return None if verdict["allowed"] else f"Archive refused: {verdict['reason']}."
+    """PreToolUse on the session archive tool; `session_id` "self" means the calling session."""
+    target = (event.get("tool_input") or {}).get("session_id")
+    return archive_check(event.get("cwd") or ".", _session(event) if target in (None, "self") else target)
 
 
 def monitor_decision(event):
-    """PreToolUse on schedule delete and Bash: a deny reason, else None."""
+    """PreToolUse on schedule create and delete; any other tool passes untouched (None)."""
     tool, given, cwd = event.get("tool_name"), event.get("tool_input") or {}, event.get("cwd") or "."
+    if tool == "mcp__scheduled-tasks__create_scheduled_task":
+        return monitor_create_check(cwd, given.get("taskId"), given.get("description"))
     if tool == "mcp__scheduled-tasks__delete_scheduled_task":
-        verdict = monitor_delete_check(cwd, given.get("taskId"))
-    elif tool == "Bash" and (issue := _lane_monitoring_issue(given.get("command", ""))):
-        verdict = monitoring_entry_check(cwd, issue)
-    else:
-        return None
-    return None if verdict["allowed"] else f"Refused: {verdict['reason']}."
+        return monitor_delete_check(cwd, given.get("taskId"))
+    return None
 
 
 def guard_hook(decide):
-    """Run a guard on the hook event from stdin; any error denies, so a broken guard never lets an action by."""
+    """Run a guard on the hook event from stdin; print its ask or deny; any error denies (guard_failure)."""
     try:
-        reason = decide(json.load(sys.stdin))
+        verdict = decide(json.load(sys.stdin))
     except Exception as exc:  # noqa: BLE001 - fail closed and say why
-        reason = f"Guard error, refused: {type(exc).__name__}: {exc}"
-    if reason:
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                                 "permissionDecisionReason": reason}}))
+        verdict = ("deny", f"Guard error, refused: {type(exc).__name__}: {exc}")
+    if verdict and verdict[0] != "allow":
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": verdict[0],
+                                                 "permissionDecisionReason": verdict[1]}}))
     return 0
