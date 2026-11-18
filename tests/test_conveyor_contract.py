@@ -149,20 +149,35 @@ class ActionsAndCards(unittest.TestCase):
         kinds = re.search(r'\(\?P<kind>([^)]+)\)', R['approved']['pattern']).group(1).split('|')
         self.assertEqual(set(kinds), set(a['kinds']))
 
-    def test_card_has_ten_fields_and_refuses_ids_first(self):
-        c = SCHEMA['card']
+    def test_card_detail_has_ten_fields_and_refuses_ids_first(self):
+        c = SCHEMA['card']['detail']
         self.assertEqual(len(c['fields']), 10)
         self.assertEqual(c['max_lines'], 12)
-        self.assertEqual(set(c['kinds']), {'go', 'choice'})
+        self.assertEqual(set(SCHEMA['card']['kinds']), {'go', 'choice'})
         self.assertTrue(set(c['ai_writes']) <= set(c['fields']))
         for bad in ('#17 ships the contract', 'PR 17 ships', 'PR #17 ships', f'{SHA} ships'):
             self.assertRegex(bad, c['refuse']['opens_with'])
         for ok in ('The belt contract ships', '2 PRs ship today', 'deadbeef is a word here', 'added to the train'):
             self.assertNotRegex(ok, c['refuse']['opens_with'], ok)
-        self.assertIn('recommended', c['ai_writes'])
         self.assertIn('undo', c['script_fills'])
         self.assertIn('digest', c['go_shows'])
         self.assertEqual(set(SCHEMA['questions']), {'bookkeeping', 'go', 'choice'})
+
+    def test_short_card_is_plain(self):
+        sh = SCHEMA['card']['short']
+        self.assertEqual((sh['max_sentences'], sh['max_words']), (3, 45))
+        body = ("Staff will see 'Not delivered' instead of 'Failed to send', and the extra notice only when the number "
+                "was never reached. Tests passed; nothing goes live until the next release.")
+        self.assertLessEqual(len(body.split()), 45)
+        for name, pattern in sh['refuse'].items():
+            self.assertNotRegex(body + ' Before and after: https://x.test/p/1', pattern, name)
+        for name, bad in {'issue_number': 'Ships with #21 today.', 'commit_id': f'Head {SHA} is ready.',
+                          'branch_like': 'Built on feat/conveyor-t1 today.', 'colon_label': 'Changes: the wording.',
+                          'test_count': 'All 75 tests pass.'}.items():
+            self.assertRegex(bad, sh['refuse'][name], name)
+        for link_line in ('See https://x.test/p/1', 'Before and after: https://x.test/p/1'):
+            self.assertNotRegex(link_line, sh['refuse']['colon_label'], link_line)
+        self.assertIn('never in the short form', SCHEMA['card']['detail']['go_shows'])
 
     def test_knowledge_interface_is_named(self):
         k = SCHEMA['knowledge']
