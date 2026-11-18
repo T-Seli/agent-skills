@@ -103,6 +103,14 @@
       "why": "writes the hand-over and frees the slot"
     },
     {
+      "id": "issues-resume",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli resume",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "read-only board since the last checkpoint; writes only the Checkpoint: line"
+    },
+    {
       "id": "disk-check",
       "tool": "bash",
       "match": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli disk-check",

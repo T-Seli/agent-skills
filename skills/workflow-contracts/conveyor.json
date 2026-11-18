@@ -141,7 +141,7 @@
     },
     "owner": {
       "source": "issue_comment",
-      "pattern": "^Owner: (?P<owner>\\S+) · session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z$",
+      "pattern": "^Owner: (?P<owner>\\S+) · session (?P<session>(?:local_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z$",
       "written_by": "publish",
       "label": "owner set"
     },
@@ -152,7 +152,7 @@
     },
     "claim": {
       "source": "issue_comment",
-      "pattern": "^Claimed: branch `[^`]+` · session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+      "pattern": "^Claimed: branch `[^`]+` · session (?P<session>(?:local_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
       "label": "claimed"
     },
     "brief": {
@@ -178,7 +178,7 @@
     },
     "approved": {
       "source": "issue_comment",
-      "pattern": "^Approved: (?P<kind>release|rollback|skills-install) (?P<id>\\S+) · digest (?P<digest>[0-9a-f]{64}) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · question (?P<question>https?://\\S+) · session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+      "pattern": "^Approved: (?P<kind>release|rollback|skills-install) (?P<id>\\S+) · digest (?P<digest>[0-9a-f]{64}) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · question (?P<question>https?://\\S+) · session (?P<session>(?:local_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
       "written_by": "run-approved",
       "label": "approved by you"
     },
@@ -204,14 +204,14 @@
     },
     "reviewer": {
       "source": "issue_comment",
-      "pattern": "^Reviewer: session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) · head (?P<head>[0-9a-f]{7,40}) · (?P<route>outside|fallback)$",
+      "pattern": "^Reviewer: session (?P<session>(?:local_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) · head (?P<head>[0-9a-f]{7,40}) · (?P<route>outside|fallback)$",
       "binds": "pr_head",
       "not_equal": "claim.session",
       "label": "independent reviewer"
     },
     "review_requested": {
       "source": "issue_comment",
-      "pattern": "^Review requested: head (?P<head>[0-9a-f]{7,40}) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+      "pattern": "^Review requested: head (?P<head>[0-9a-f]{7,40}) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · session (?P<session>(?:local_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
       "label": "outside review asked"
     },
     "monitor_first": {
@@ -232,7 +232,7 @@
     },
     "decision": {
       "source": "issue_comment",
-      "pattern": "^Decision: (?P<text>.+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · question (?P<question>https?://\\S+) · session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+      "pattern": "^Decision: (?P<text>.+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · question (?P<question>https?://\\S+) · session (?P<session>(?:local_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
       "written_by": "decide",
       "label": "decision recorded"
     },
@@ -253,7 +253,8 @@
         "deploy",
         "pushed"
       ],
-      "label": "deployed or pushed"
+      "label": "deployed or pushed",
+      "pushed_only_if": "the project file's Deploy `Targets` names no target other than branches; otherwise deploy: is required, written by the deploy step under the user's own word until a deploy kind exists"
     },
     "failed": {
       "source": "issue_comment",
@@ -265,8 +266,12 @@
       "source": "issue_comment",
       "pattern": "^No release: (?P<reason>answered|chore|duplicate|declined|skills) · (?P<text>.+)$",
       "written_by": "close",
-      "note": "skills: the belt's own skills ticket, closed after its Approved: skills-install",
-      "label": "closed without a release"
+      "note": "skills: the belt's own skills ticket, closed after its Approved: skills-install; refused once the issue carries Pushed: or deploy: (only the monitored path closes a landed item)",
+      "label": "closed without a release",
+      "refused_if": [
+        "pushed",
+        "deploy"
+      ]
     },
     "parked": {
       "source": "issue_comment",
@@ -446,9 +451,11 @@
     "build_first": "every command builds all its receipt lines before its first write"
   },
   "session_id": {
-    "form": "local_<uuid>",
-    "pattern": "^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    "why": "the id form the archive tool takes"
+    "forms": {
+      "local_<uuid>": "a desktop session; the archive guard applies",
+      "<uuid>": "a headless worker started through delegate.py; it ends by itself and is never archived by the tool"
+    },
+    "pattern": "^(?:local_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
   },
   "registry": {
     "source": "Owner: and Claimed: sessions on open belt issues",
@@ -512,5 +519,29 @@
     "unanswered_card": "parked after its time box and kept first on the user's list; never decides",
     "drain_before_fill": "Build pulls nothing while Review is full; Review pulls nothing while a train waits past its time for a GO",
     "board": "flow time per size (median, worst), parked count and oldest, items past a time box, items finished per day"
+  },
+  "roles": {
+    "config_key": "roles",
+    "where": "~/.config/agent-skills/workers.json",
+    "shape": "{coordinator: session id, release_owner: session id}",
+    "why": "names the two long-lived sessions the hooks hand resume to"
+  },
+  "resume": {
+    "command": "issues-cli resume",
+    "kind": "read-only bookkeeping; its only write is the Checkpoint: line",
+    "shows": "the sweep's board plus what changed since the last checkpoint: questions waiting with exact option text, lane counts, sessions the belt owns and their state, parked items and why, decisions since the checkpoint, commands that started and wrote no receipt",
+    "cap": {
+      "lines": 60,
+      "chars": 10000
+    },
+    "checkpoint": {
+      "where": "the calling role's own log.md",
+      "pattern": "^Checkpoint: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · tokens (?P<tokens>\\d+|-) · questions (?P<q>\\d+) · in-progress (?P<b>\\d+) · in-review (?P<r>\\d+) · parked (?P<p>\\d+)$"
+    },
+    "hooks": {
+      "SessionStart": "adds the resume output for a session named in `roles`; other sessions keep the git snapshot",
+      "PreCompact": "prints the same picture as instructions for the summary: keep these exactly"
+    },
+    "after_compaction": "a coordinator states no fact about a session, PR, approval or owner from its summary alone; it reads resume first"
   }
 }

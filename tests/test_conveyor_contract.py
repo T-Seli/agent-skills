@@ -102,7 +102,8 @@ class Receipts(unittest.TestCase):
         self.assertIn('Gates read receipts only from the issue', CONVEYOR)
 
     def test_sessions_use_the_archive_tool_form(self):
-        self.assertFalse(matches('claim', 'Claimed: branch `feat/x` · session 1f72e626-fa54-4e3b-8577-2dc51614f5c2'))
+        self.assertTrue(matches('reviewer', f'Reviewer: session 1f72e626-fa54-4e3b-8577-2dc51614f5c2 · head {SHA} · fallback'))
+        self.assertFalse(matches('claim', 'Claimed: branch `feat/x` · session local_1'))
         self.assertRegex(S1, SCHEMA['session_id']['pattern'])
         self.assertEqual(SCHEMA['registry']['guards'], {'registry_done': 'allow', 'registry_unfinished': 'deny', 'outside_registry': 'ask'})
 
@@ -112,6 +113,16 @@ class Receipts(unittest.TestCase):
         self.assertEqual(R['landed']['any_of'], ['deploy', 'pushed'])
         self.assertIn('never deploy:', SCHEMA['action_record']['kinds']['release'])
         self.assertNotIn('sweep', SCHEMA['lanes'][2]['called_at'].split('(')[0])
+        self.assertEqual(R['no_release']['refused_if'], ['pushed', 'deploy'])
+        self.assertIn('names no target other than branches', R['landed']['pushed_only_if'])
+
+    def test_resume_rebuilds_the_picture(self):
+        r = SCHEMA['resume']
+        self.assertEqual(r['cap'], {'lines': 60, 'chars': 10000})
+        self.assertTrue(re.match(r['checkpoint']['pattern'], 'Checkpoint: 2026-11-18 23:00Z · tokens - · questions 2 · in-progress 3 · in-review 1 · parked 0'))
+        self.assertEqual(set(r['hooks']), {'SessionStart', 'PreCompact'})
+        self.assertEqual(SCHEMA['roles']['config_key'], 'roles')
+        self.assertIn('# Compact instructions', text(WC / 'project-CLAUDE-template.md'))
 
     def test_review_is_independent_of_the_builder(self):
         self.assertEqual(R['reviewer']['not_equal'], 'claim.session')
@@ -184,7 +195,7 @@ class Authorizations(unittest.TestCase):
     def test_gates_are_allowed_and_the_go_is_one_click(self):
         mode = {e['match']: e['mode'] for e in AUTH['entries']}
         icli, scli = AUTH['invocation']['issues-cli'], AUTH['invocation']['safeguard-cli']
-        for gate in ('capture', 'prio', 'publish', 'claim', 'lane', 'decide', 'ask', 'brief', 'sweep', 'close', 'feed', 'park'):
+        for gate in ('capture', 'prio', 'publish', 'claim', 'lane', 'decide', 'ask', 'brief', 'sweep', 'close', 'feed', 'park', 'resume'):
             self.assertEqual(mode[f'{icli} {gate}'], 'allow', gate)
         self.assertEqual(mode[f'{scli} run-approved'], 'ask')
         self.assertEqual(mode[f'{scli} prepare-action'], 'allow')

@@ -76,6 +76,9 @@
 ## Defaults
 <!-- Optional. Override a default from contracts.md § Defaults (workflow-contracts skill) with the same label, e.g. "- Monitor window: 7 days". Leave empty to keep them all. -->
 
+# Compact instructions
+Keep exactly: open questions with their option text, pending approval terms, session ids, PR and issue links, the current item and its next action. Drop tool output. After a compaction, read `issues-cli resume` before stating any fact about a session, PR, approval or owner.
+
 <!-- AGENTS.md example (for tools that read AGENTS.md instead of CLAUDE.md):
 ```markdown
 # AGENTS.md

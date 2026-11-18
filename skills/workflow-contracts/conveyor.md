@@ -1,6 +1,6 @@
 # Conveyor: the belt
 
-The one home for the belt. Lanes, receipts, action records, cards, feeds, flow and the knowledge interface are machine-readable in [conveyor.json](conveyor.json); standing permissions in `authorizations.json` at the repo root; numbers in contracts.md § Defaults. Issue mechanics: [issues.md](issues.md); question rounds: [decisions.md](decisions.md).
+The one home for the belt. Lanes, receipts, records, cards, feeds, flow and knowledge are machine-readable in [conveyor.json](conveyor.json); standing permissions in `authorizations.json` at the repo root; numbers in contracts.md § Defaults. Issue mechanics: [issues.md](issues.md); question rounds: [decisions.md](decisions.md).
 
 ## Roles
 | Who | Does | Never does |
@@ -12,7 +12,7 @@ The one home for the belt. Lanes, receipts, action records, cards, feeds, flow a
 A fixed rule, count, state change or check is a script; judgment is a skill; a direction or a go is a question to the user.
 
 ## Scope and registry
-The belt acts only on its registry: the sessions named in `Owner:` and `Claimed:` receipts on open belt issues, in the `local_<uuid>` form the archive tool takes (conveyor.json `registry`). A guard allows a registry session whose claimed issues are all closed or parked, denies one with unfinished work, and asks the user about anything outside the registry. Machine limits (test slots, disk) read real load.
+The belt acts only on its registry: the sessions named in `Owner:` and `Claimed:` receipts on open belt issues, as `local_<uuid>` for a desktop session or a plain uuid for a headless worker, which ends by itself and is never archived (conveyor.json `registry`). A guard allows a registry session whose claimed issues are all closed or parked, denies one with unfinished work, and asks the user about anything outside the registry. Machine limits (test slots, disk) read real load.
 
 ## Labels
 One `lane:<name>`, one `domain:<name>`, one `kind:<name>` and, once sorted, one `size:S|M|L` per open belt issue. Priority `prio:now|next|later` is separate from lane `next`. `hold` stops forward moves; `needs-human` waits for the user; `parked` and `stalled` free the slot. A gate needing a missing belt label creates it: additive only, one receipt.
@@ -28,8 +28,8 @@ Every move is `issues-cli lane <n> <lane>`: it checks the entry rule and refuses
 | `in-progress` | `Claimed:`, brief; size S or M; Build below limit | implement Start |
 | `in-review` | `implement: done`, linked PR | implement done |
 | `ready-to-release` | `Reviewed: <head> YES` on the PR's head, `Reviewer:` ≠ `Claimed:` session | test-review YES |
-| `monitoring` | `Approved:`, `deploy:` or `Pushed:`, `Rollback:`, two `Scheduler:` ids | `run-approved` |
-| `closed` | both `Monitor verdict:` lines, both schedules deleted, `Learned:`; or `No release:` and `Learned:` | monitor end, `close` |
+| `monitoring` | `Approved:`, `deploy:` (or `Pushed:` where every Deploy target is a branch), `Rollback:`, two `Scheduler:` ids | `run-approved` |
+| `closed` | both `Monitor verdict:` lines, both schedules deleted, `Learned:`; or `No release:` and `Learned:` when nothing landed | monitor end, `close` |
 
 ## Receipts
 Gates read receipts only from the issue: body, labels, linked PR and comments. A command that writes a `log.md` line also posts it on the issue; `lane --log <log.md>` copies a stage's lines there before checking. `run-approved` posts its lines on every train issue. Each gate command also writes one timeline line:
@@ -65,6 +65,9 @@ The outside reviewer is asked first (`Review requested:`). With no verdict on th
 
 ## Knowledge
 `agent_skills.knowledge` serves the brain and every repo wiki; checkouts come from `knowledge_stores` in `~/.config/agent-skills/workers.json`. With no brain mapping, reads serve the wiki and say `brain: not configured on this machine`; `record`, `collect` and `log` refuse loudly; `decide` still writes `Decision:` on the issue and the sweep records the row once mapped. The module owns all git in a store: callers read history through `changes`. Close needs `Learned:` `none`, `lesson: <text>`, `answered: <q> => <a>` or `page-fix: <path>: <text>`; outside review is off for the brain.
+
+## Long-lived sessions
+`issues-cli resume` prints the board plus changes since the last `Checkpoint:` line, which it writes (conveyor.json `resume`). SessionStart hands it to the sessions in machine config `roles`; PreCompact prints it for the summary. After a compaction the board outranks the summary.
 
 ## Layout and permissions
 Installed code finds contract data and the release id only through `agent_skills.layout` (conveyor.json `layout`). `authorizations.json` lists each standing action: bookkeeping `allow`, a go `ask`, `deny` refused; `install.sh` renders it for Claude and Codex and the user installs it.
