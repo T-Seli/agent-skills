@@ -118,7 +118,7 @@ class RunApproved(unittest.TestCase):
             prepare, record = self.prepare()
             go = self.approve('release', 'r1', record['digest'])
             self.assertEqual(self.cli(go)[0], 0)
-        self.assertEqual([permission(c) for c in (prepare, go)], [None, 'ask'])
+        self.assertEqual([permission(c) for c in (prepare, go)], ['allow', 'ask'])  # one ask: the go
         self.assertFalse([c for c in calls if permission(c) or not c.startswith(('git ', 'sh '))], calls)
         log = self.log('r1')
         approved = receipt('approved', log)
@@ -141,6 +141,8 @@ class RunApproved(unittest.TestCase):
             {k: record[k] for k in record if k not in {'digest_input', 'digest', 'used_at'}},
             sort_keys=True, separators=(',', ':')))
         self.assertEqual(record['train'], [{'issue': 11, 'pr': 7, 'head': self.head}])
+        self.assertEqual(record['rollback'], {'main': self.base}, 'the go card Undo reads this')
+        self.assertIn('"rollback":', record['digest_input'])
         for target in ('main; rm -rf /', '--upload-pack=touch x', 'a..b', 'main main'):
             with self.assertRaises(ValueError):
                 release_guard.prepare_action(str(self.repo), 'release', 'r2', train=[f'11:7:{self.head}'],
@@ -256,6 +258,30 @@ class RunApproved(unittest.TestCase):
         newer = self.commit('newer.txt', 'pushed outside the belt\n')
         git(self.repo, 'push', '-q', 'origin', f'{newer}:refs/heads/main')
         self.assertRefused('moved-head', self.approve('rollback', 'b1', undo['digest']), 'b1')
+
+
+class SweepStaysOnTheBelt(unittest.TestCase):
+    def run_sweep(self, fake):
+        with mock.patch.object(safeguard_cli, 'sweep', fake), \
+                mock.patch.object(safeguard_cli, 'machine_config', return_value={}), \
+                mock.patch('sys.stdout'):
+            safeguard_cli.main(['sweep', '/tmp/main', '--base', 'main'])
+
+    def test_live_sweep_asks_closeout_for_belt_worktrees_only(self):
+        seen = {}
+        def belt_aware(main, *, base, apply=False, rebuildable=(), lease_files=(), active_seconds=7200, belt_only=False):
+            seen['belt_only'] = belt_only
+            return {'ok': True}
+        self.run_sweep(belt_aware)
+        self.assertIs(seen['belt_only'], True)
+
+    def test_older_closeout_without_the_option_still_runs(self):
+        seen = {}
+        def older(main, *, base, apply=False, rebuildable=(), lease_files=(), active_seconds=7200):
+            seen['called'] = True
+            return {'ok': True}
+        self.run_sweep(older)
+        self.assertTrue(seen['called'])
 
 
 if __name__ == '__main__':

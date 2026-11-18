@@ -247,7 +247,14 @@ def prepare_action(repo, kind, action_id, *, train, targets, session, minutes, n
         train = [_train_item(item) for item in train]
         tree = _git(repo, 'rev-parse', 'HEAD^{tree}')
     _check_limit(repo, train)
+    if kind == 'rollback':  # undoing a rollback redeploys what it removes
+        rollback = {target: last['commit'] for target in targets}
+    elif kind == 'skills-install':  # the installed version is the main checkout's main
+        rollback = {targets[0]: _git(repo, 'rev-parse', 'refs/heads/main')}
+    else:
+        rollback = {target: _remote_ref(repo, target) for target in targets}
     record = {'kind': kind, 'id': action_id, 'train': train, 'tree': tree, 'targets': list(targets),
+              'rollback': rollback,
               'prepared_by': session, 'prepared_at': now.strftime(_STAMP),
               'expires_at': (now + timedelta(minutes=minutes)).strftime(_STAMP)}
     record['digest_input'] = _canonical(record)

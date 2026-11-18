@@ -1,5 +1,6 @@
 """Fail-closed executable checks for review and release workflows."""
 import argparse
+import inspect
 import json
 import os
 import subprocess
@@ -206,9 +207,10 @@ def main(argv=None):
             print('\n'.join(line for _, line in results))
             return max(code for code, _ in results)
         elif args.action == 'sweep':
+            belt = {'belt_only': True} if 'belt_only' in inspect.signature(sweep).parameters else {}  # T3 closeout
             result = sweep(args.main, base=args.base, apply=args.apply, rebuildable=args.rebuildable,
                            lease_files=machine_config().get('worktree_lease_files', []),
-                           active_seconds=args.active_hours * 3600)
+                           active_seconds=args.active_hours * 3600, **belt)
         else:
             result = main_sync_gate(args.main, base=args.base, repository=args.repository,
                                     fetched_sha=args.fetched_sha, lock_path=args.lock_path)
