@@ -405,44 +405,68 @@
       "go",
       "choice"
     ],
-    "max_lines": 12,
-    "fields": [
-      "goal",
-      "from",
-      "changes",
-      "checked",
-      "if_yes",
-      "if_no",
-      "if_wait",
-      "undo",
-      "recommended",
-      "link"
-    ],
-    "ai_writes": [
-      "changes",
-      "if_yes",
-      "if_no",
-      "if_wait",
-      "recommended"
-    ],
-    "script_fills": {
-      "goal": "goal name and step k of n",
-      "from": "origin text stored at capture",
-      "checked": "Checked: plain labels of receipts present · Not yet: labels of receipts missing, never omitted",
-      "link": "full-page link",
-      "undo": "go: from the action record's rollback"
+    "short": {
+      "shows": "the question as one plain sentence, then at most three sentences and one link",
+      "sentences": [
+        "what changes, and for whom",
+        "what happens on yes, including when anything goes live",
+        "only when it applies: what is not checked, what failed, or what waiting costs"
+      ],
+      "max_sentences": 3,
+      "max_words": 45,
+      "words_counted": "under the question, the link excluded",
+      "ai_writes": "the three sentences",
+      "checks": "by exception; at most 'Tests and review passed'",
+      "refuse": {
+        "issue_number": "#\\d+",
+        "commit_id": "\\b(?=[0-9a-f]*\\d)[0-9a-f]{7,40}\\b",
+        "branch_like": "(?<![\\w:/.])[a-z0-9._-]+/[a-z0-9._/-]*[a-z0-9_-](?![\\w/])",
+        "colon_label": "(?m)^\\s*[A-Z][A-Za-z ]{0,24}:",
+        "test_count": "\\b\\d+\\s+tests?\\b"
+      }
     },
-    "refuse": {
-      "empty_field": true,
-      "opens_with": "^(#|PR ?#?)\\d+\\b|^(?=[0-9a-f]*\\d)[0-9a-f]{7,40}\\b"
+    "detail": {
+      "max_lines": 12,
+      "fields": [
+        "goal",
+        "from",
+        "changes",
+        "checked",
+        "if_yes",
+        "if_no",
+        "if_wait",
+        "undo",
+        "recommended",
+        "link"
+      ],
+      "ai_writes": [
+        "changes",
+        "if_yes",
+        "if_no",
+        "if_wait",
+        "recommended"
+      ],
+      "script_fills": {
+        "goal": "goal name and step k of n",
+        "from": "origin text stored at capture",
+        "checked": "Checked: plain labels of receipts present · Not yet: labels of receipts missing, never omitted",
+        "link": "full-page link",
+        "undo": "go: from the action record's rollback"
+      },
+      "refuse": {
+        "empty_field": true,
+        "opens_with": "^(#|PR ?#?)\\d+\\b|^(?=[0-9a-f]*\\d)[0-9a-f]{7,40}\\b"
+      },
+      "ai_fills_by_kind": {
+        "choice": [
+          "undo"
+        ]
+      },
+      "go_shows": "kind, id and the first 8 characters of the digest, here and in the permission dialog, never in the short form",
+      "where": "written to the issue by ask; shown behind the link and Tell me more; the record, not the question"
     },
-    "tell_me_more": "records asked_more; not a decision; the question returns",
-    "ai_fills_by_kind": {
-      "choice": [
-        "undo"
-      ]
-    },
-    "go_shows": "kind, id and the first 8 characters of the digest"
+    "printed": "ask writes detail to the issue and prints short",
+    "tell_me_more": "records asked_more; not a decision; the question returns"
   },
   "receipt_home": {
     "read_from": "the issue only: body, labels, linked PR, comments",
