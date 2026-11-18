@@ -167,34 +167,51 @@
     "correction": "^Correction: (?P<ref>\\S+) · (?P<field>\\S+) was (?P<wrong>.+) · is (?P<right>.+)$"
   },
   "knowledge": {
-    "note": "Brain CLI reached through § Map `Knowledge`; JSON on stdout, non-zero exit on error, no outside path arguments.",
-    "commands": {
+    "note": "Python module agent_skills.knowledge (Wave 1 T6), imported by issues-cli. Stores named logically in § Map `Knowledge`; local checkouts from workers.json `knowledge_stores`; missing config fails loudly.",
+    "module": "agent_skills.knowledge",
+    "config_key": "knowledge_stores",
+    "functions": {
       "pages": {
-        "args": "--domain <label>",
-        "returns": "[{path, verified, sha}]",
+        "args": "domain",
+        "returns": "[{path, verified, sha, pending}]",
         "used_by": "brief"
       },
       "find": {
-        "args": "\"<words>\"",
-        "returns": "[{id, text, source}] from answered and decisions",
+        "args": "words",
+        "returns": "[{id, text, source, pending}] from answered, decisions and inbox/",
         "used_by": "sort"
       },
+      "domains": {
+        "args": "",
+        "returns": "[domain]",
+        "used_by": "publish label check"
+      },
       "record": {
-        "args": "--kind decision|lesson|answered --id <kebab> --date <date> --source <url> --text <words> [--scope global|tenant:<id>|repo:<name>]",
-        "returns": "{path}",
+        "args": "kind=decision|lesson|answered, id, date, source, text, scope=global|tenant:<id>|repo:<name>",
+        "returns": "{path} of one new inbox/ file; refuses a duplicate id",
         "used_by": "decide, Learned collector"
       },
+      "collect": {
+        "args": "",
+        "returns": "{folded, pr}",
+        "used_by": "daily run or on demand"
+      },
       "log": {
-        "args": "--issue <n> (timeline lines on stdin)",
-        "returns": "{path}",
-        "used_by": "close export"
+        "args": "issue, timeline lines",
+        "returns": "{path}; idempotent per issue",
+        "used_by": "sweep only"
       },
       "stale": {
         "args": "",
         "returns": "[{path, verified, changed}]",
         "used_by": "sweep"
+      },
+      "lint": {
+        "args": "",
+        "returns": "[failure]",
+        "used_by": "repo wiki lint script"
       }
     },
-    "domain_vocabulary": "brain routing table `domain` column; Knowledge none: the repo's domain: labels"
+    "domain_vocabulary": "the store's routing table; conveyor.md lists none"
   }
 }

@@ -77,7 +77,8 @@ class Conveyor(unittest.TestCase):
             self.assertEqual(modes[gate], 'allow', gate)
 
     def test_knowledge_interface_is_named(self):
-        self.assertEqual(set(SCHEMA['knowledge']['commands']), {'pages', 'find', 'record', 'log', 'stale'})
+        self.assertEqual(set(SCHEMA['knowledge']['functions']), {'pages', 'find', 'domains', 'record', 'collect', 'log', 'stale', 'lint'})
+        self.assertNotRegex(CONVEYOR, r'`domain:(?!\*)[a-z]')
         for k in ('none', 'lesson: x', 'page-fix: wiki/a.md: x'):
             self.assertRegex(f'Learned: {k}', SCHEMA['receipts']['learned']['pattern'])
         self.assertNotRegex('Learned: maybe', SCHEMA['receipts']['learned']['pattern'])

@@ -57,11 +57,11 @@ The outside reviewer is asked first, and the request time is recorded on the iss
 It changes nothing except the pull, spool flush and fallback start, each a receipt.
 
 ## Knowledge
-§ Map `Knowledge` names the brain checkout and the repo's wiki. The brain's own CLI implements reads and writes, prints JSON and fails loudly; belt scripts call it as a subprocess and pass no outside path. Interface (conveyor.json `knowledge`):
-- `pages --domain <label>` for the brief · `find "<words>"` for sort · `stale` for the sweep.
-- `record --kind decision|lesson|answered` for `decide` and the `Learned:` collector: one new inbox file per call, never a table edit.
-- `log --issue <n>` takes the closed issue's timeline lines on stdin, verbatim.
-The `domain:*` vocabulary is the brain routing table's `domain` column; with `Knowledge` none, any `domain:` label the repo has. Close is refused without a `Learned:` line: `none`, `lesson: <text>`, `answered: <question> => <answer>` or `page-fix: <path>: <text>`.
+§ Map `Knowledge` names stores logically: the brain as `<owner/repo>` and this repo's wiki directory. Each store's local checkout comes from `knowledge_stores` in `~/.config/agent-skills/workers.json`; a missing entry fails loudly. The tool is the Python module `agent_skills.knowledge`, shipped in this release and imported by `issues-cli` (no subprocess); it serves the brain and every wiki alike. Interface (conveyor.json `knowledge`):
+- `pages(domain)` for the brief (a domain with no pages is said so) · `find(words)` for sort · `domains()` so `publish` validates the label · `stale()` for the sweep. `pages` and `find` also read `inbox/`, marked pending.
+- `record(kind, …)` for `decide` and the `Learned:` collector: one new `inbox/` file per call, never a table edit; only `collect()` edits tables, on demand or daily. Decisions fold without review; lessons, answers and page fixes wait for lint and the local fresh-context review.
+- `log(issue, lines)` stores the closed issue's timeline lines verbatim, idempotent per issue, called only by the sweep.
+The `domain:*` vocabulary lives in the store's routing table; this file lists none. Close is refused without a `Learned:` line: `none`, `lesson: <text>`, `answered: <question> => <answer>` or `page-fix: <path>: <text>`.
 
 ## Permissions
 `authorizations.json` is the standing list, one entry per command: `bookkeeping` entries are `allow` and are never asked; `go` entries are `ask` (the user's one click); `deny` entries are refused. `install.sh` renders it into the Claude settings snippet and Codex rules; the user installs it and no session edits settings. Belt commands take no path outside the worktree as an argument: they resolve notes, spool and knowledge locations from config.
