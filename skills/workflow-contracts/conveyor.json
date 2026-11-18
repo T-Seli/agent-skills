@@ -1,6 +1,6 @@
 {
-  "note": "Machine-readable lanes and receipts for conveyor.md. Gates read receipts by these patterns; limits live in contracts.md § Defaults `Lane limits`, never here.",
-  "version": 1,
+  "note": "Machine-readable belt contract for conveyor.md. Gates read receipts only from the issue (receipt_home); limits, time boxes and the timetable live in contracts.md § Defaults, never here.",
+  "version": 2,
   "labels": {
     "lane": "lane:<name>",
     "domain": "domain:<name>",
@@ -16,11 +16,20 @@
     ],
     "modifiers": [
       "hold",
-      "needs-human"
+      "needs-human",
+      "parked",
+      "stalled"
     ],
     "folds": {
       "ready-for-agent": "lane:backlog"
-    }
+    },
+    "kind": [
+      "kind:bug",
+      "kind:alert",
+      "kind:question",
+      "kind:feature",
+      "kind:chore"
+    ]
   },
   "lanes": [
     {
@@ -28,12 +37,13 @@
       "requires": [
         "capture"
       ],
-      "called_at": "issues-cli capture"
+      "called_at": "issues-cli capture or feed"
     },
     {
       "name": "backlog",
       "requires": [
         "domain",
+        "kind",
         "size"
       ],
       "called_at": "sort pass"
@@ -45,7 +55,7 @@
         "domain",
         "done_when"
       ],
-      "called_at": "issues-cli publish or sweep pull",
+      "called_at": "issues-cli publish (the sweep names candidates and never moves them)",
       "room": "free Build slots"
     },
     {
@@ -55,7 +65,11 @@
         "brief"
       ],
       "limit": "Build",
-      "called_at": "implement Start record"
+      "called_at": "implement Start record",
+      "sizes": [
+        "S",
+        "M"
+      ]
     },
     {
       "name": "in-review",
@@ -78,7 +92,7 @@
       "name": "monitoring",
       "requires": [
         "approved",
-        "deploy",
+        "landed",
         "rollback",
         "schedule",
         "schedule"
@@ -94,115 +108,185 @@
         "monitor_deleted",
         "learned"
       ],
-      "called_at": "monitor end"
+      "called_at": "monitor end; issues-cli close for an item with no release, from any lane",
+      "requires_without_release": [
+        "no_release",
+        "learned"
+      ]
     }
   ],
   "receipts": {
     "capture": {
       "source": "issue_body",
-      "pattern": "^Captured: \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z · source \\S+$"
+      "pattern": "^Captured: \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z · source \\S+$",
+      "label": "captured"
     },
     "domain": {
       "source": "labels",
       "pattern": "^domain:[a-z0-9-]+$",
-      "count": 1
+      "count": 1,
+      "label": "domain label"
+    },
+    "kind": {
+      "source": "labels",
+      "pattern": "^kind:(bug|alert|question|feature|chore)$",
+      "count": 1,
+      "label": "kind label"
     },
     "size": {
       "source": "labels",
       "pattern": "^size:[SML]$",
-      "count": 1
+      "count": 1,
+      "label": "size label"
     },
     "owner": {
       "source": "issue_comment",
-      "pattern": "^Owner: (?P<owner>\\S+) · session (?P<session>\\S+) · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z$",
-      "written_by": "publish"
+      "pattern": "^Owner: (?P<owner>\\S+) · session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z$",
+      "written_by": "publish",
+      "label": "owner set"
     },
     "done_when": {
       "source": "issue_body",
-      "pattern": "^Done when: .+$"
+      "pattern": "^Done when: .+$",
+      "label": "done-when written"
     },
     "claim": {
       "source": "issue_comment",
-      "pattern": "^Claimed: branch `[^`]+` · session (?P<session>\\S+)$"
+      "pattern": "^Claimed: branch `[^`]+` · session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+      "label": "claimed"
     },
     "brief": {
       "source": "timeline",
-      "command": "brief"
+      "command": "brief",
+      "label": "brief rendered"
     },
     "implement_done": {
-      "source": "log",
-      "pattern": "^## \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z — implement: done"
+      "source": "issue_comment",
+      "pattern": "^## \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z — implement: done",
+      "label": "build finished"
     },
     "pr": {
       "source": "linked_pr",
-      "count": 1
+      "count": 1,
+      "label": "pull request linked"
     },
     "reviewed_yes": {
-      "source": "log",
+      "source": "issue_comment",
       "pattern": "^Reviewed: (?P<head>[0-9a-f]{7,40}) YES$",
-      "binds": "pr_head"
+      "binds": "pr_head",
+      "label": "review passed on this head"
     },
     "approved": {
-      "source": "log",
-      "pattern": "^Approved: (?P<kind>release|rollback|skills-install) (?P<id>\\S+) · digest (?P<digest>[0-9a-f]{64}) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · question (?P<question>https?://\\S+) · session (?P<session>\\S+)$",
-      "written_by": "run-approved"
+      "source": "issue_comment",
+      "pattern": "^Approved: (?P<kind>release|rollback|skills-install) (?P<id>\\S+) · digest (?P<digest>[0-9a-f]{64}) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · question (?P<question>https?://\\S+) · session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+      "written_by": "run-approved",
+      "label": "approved by you"
     },
     "deploy": {
-      "source": "log",
-      "pattern": "deploy: (?P<sha>[0-9a-f]{7,40}) to .+"
+      "source": "issue_comment",
+      "pattern": "deploy: (?P<sha>[0-9a-f]{7,40}) to .+",
+      "label": "deployed"
     },
     "rollback": {
-      "source": "log",
-      "pattern": "^Rollback: \\S+: \\S+"
+      "source": "issue_comment",
+      "pattern": "^Rollback: \\S+: \\S+",
+      "label": "undo recorded"
     },
     "schedule": {
-      "source": "log",
-      "pattern": "^Scheduler: \\S+ \\S+$"
+      "source": "issue_comment",
+      "pattern": "^Scheduler: \\S+ \\S+$",
+      "label": "monitor scheduled"
     },
     "learned": {
-      "source": "closing_comment",
-      "pattern": "^Learned: (none|lesson: .+|answered: .+ => .+|page-fix: \\S+: .+)$"
+      "source": "issue_comment",
+      "pattern": "^Learned: (none|lesson: .+|answered: .+ => .+|page-fix: \\S+: .+)$",
+      "label": "lesson recorded"
     },
     "reviewer": {
-      "source": "log",
-      "pattern": "^Reviewer: session (?P<session>\\S+) · head (?P<head>[0-9a-f]{7,40}) · (?P<route>outside|fallback)$",
+      "source": "issue_comment",
+      "pattern": "^Reviewer: session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) · head (?P<head>[0-9a-f]{7,40}) · (?P<route>outside|fallback)$",
       "binds": "pr_head",
-      "not_equal": "claim.session"
+      "not_equal": "claim.session",
+      "label": "independent reviewer"
     },
     "review_requested": {
       "source": "issue_comment",
-      "pattern": "^Review requested: head (?P<head>[0-9a-f]{7,40}) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · session (?P<session>\\S+)$"
+      "pattern": "^Review requested: head (?P<head>[0-9a-f]{7,40}) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+      "label": "outside review asked"
     },
     "monitor_first": {
-      "source": "log",
-      "pattern": "^Monitor verdict: first-traffic (?P<verdict>All working|Working, with issues) · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z$"
+      "source": "issue_comment",
+      "pattern": "^Monitor verdict: first-traffic (?P<verdict>All working|Working, with issues) · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z$",
+      "label": "first-traffic check passed"
     },
     "monitor_24h": {
-      "source": "log",
-      "pattern": "^Monitor verdict: 24h (?P<verdict>All working|Working, with issues) · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z$"
+      "source": "issue_comment",
+      "pattern": "^Monitor verdict: 24h (?P<verdict>All working|Working, with issues) · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z$",
+      "label": "24-hour check passed"
     },
     "monitor_deleted": {
-      "source": "log",
+      "source": "issue_comment",
       "pattern": "^Scheduler deleted: (?P<runtime>\\S+) (?P<id>\\S+)$",
-      "binds": "schedule.id"
+      "binds": "schedule.id",
+      "label": "monitor removed"
     },
     "decision": {
       "source": "issue_comment",
-      "pattern": "^Decision: (?P<text>.+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · question (?P<question>https?://\\S+) · session (?P<session>\\S+)$",
-      "written_by": "decide"
+      "pattern": "^Decision: (?P<text>.+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · question (?P<question>https?://\\S+) · session (?P<session>local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+      "written_by": "decide",
+      "label": "decision recorded"
     },
     "asked_more": {
       "source": "issue_comment",
       "pattern": "^Asked for more: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · question (?P<question>https?://\\S+)$",
-      "written_by": "ask"
+      "written_by": "ask",
+      "label": "more detail asked"
+    },
+    "pushed": {
+      "source": "issue_comment",
+      "pattern": "^Pushed: (?P<sha>[0-9a-f]{7,40}) to (?P<branch>\\S+)$",
+      "written_by": "run-approved",
+      "label": "pushed"
+    },
+    "landed": {
+      "any_of": [
+        "deploy",
+        "pushed"
+      ],
+      "label": "deployed or pushed"
+    },
+    "failed": {
+      "source": "issue_comment",
+      "pattern": "^Failed: (?P<kind>release|rollback|skills-install) (?P<id>\\S+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · (?P<reason>.+)$",
+      "written_by": "run-approved",
+      "label": "release failed"
+    },
+    "no_release": {
+      "source": "issue_comment",
+      "pattern": "^No release: (?P<reason>answered|chore|duplicate|declined|skills) · (?P<text>.+)$",
+      "written_by": "close",
+      "note": "skills: the belt's own skills ticket, closed after its Approved: skills-install",
+      "label": "closed without a release"
+    },
+    "parked": {
+      "source": "issue_comment",
+      "pattern": "^Parked: waiting on (?P<who>.+) · until (?P<until>\\S+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · next (?P<next>.+)$",
+      "written_by": "park or sweep (stalled)",
+      "label": "parked"
+    },
+    "source_key": {
+      "source": "issue_body",
+      "pattern": "^Source-key: (?P<feed>[a-z0-9-]+):(?P<key>[0-9a-f]{12,64})$",
+      "written_by": "feed",
+      "label": "source linked"
     }
   },
   "timeline": {
-    "pattern": "^Conveyor: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · (?P<command>capture|prio|publish|claim|lane|decide|brief|ask|run-approved|sweep|close) · (?P<from>[a-z-]+|-) → (?P<to>[a-z-]+|-) · head (?P<head>[0-9a-f]{7,40}|-) · tests (?P<tests>\\S+) · skills (?P<skills>[0-9a-f]{7,40}) · schedules (?P<schedules>\\S+)$",
+    "pattern": "^Conveyor: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · (?P<command>capture|prio|publish|claim|lane|decide|brief|ask|run-approved|sweep|close|feed|park) · (?P<from>[a-z-]+|-) → (?P<to>[a-z-]+|-) · head (?P<head>[0-9a-f]{7,40}|-) · tests (?P<tests>\\S+) · skills (?P<skills>[0-9a-f]{7,40}) · schedules (?P<schedules>\\S+)$",
     "correction": "^Correction: (?P<ref>\\S+) · (?P<field>\\S+) was (?P<wrong>.+) · is (?P<right>.+)$"
   },
   "knowledge": {
-    "note": "Python module agent_skills.knowledge (Wave 1 T6), imported by issues-cli. Stores named logically in § Map `Knowledge`; local checkouts from workers.json `knowledge_stores`; an unmapped brain is stated on reads and refused on writes.",
+    "note": "Python module agent_skills.knowledge, imported by issues-cli; finds its contract data through layout. Stores named logically in § Map `Knowledge`; local checkouts from workers.json `knowledge_stores`.",
     "module": "agent_skills.knowledge",
     "config_key": "knowledge_stores",
     "functions": {
@@ -213,7 +297,7 @@
       },
       "find": {
         "args": "words",
-        "returns": "[{store, file, id, text, score, pending}] from answered, decisions and inbox/",
+        "returns": "[{store, file, id, text, source, score, pending}] from answered, decisions and inbox/; source is the row's own link",
         "used_by": "sort"
       },
       "domains": {
@@ -223,12 +307,12 @@
       },
       "record": {
         "args": "kind=decision|lesson|answered, id, date, source, text, scope=global|tenant:<id>|repo:<name>",
-        "returns": "{store, path} of one new inbox/ file; refuses a duplicate id",
+        "returns": "{path} of one new inbox/ file; refuses a duplicate id",
         "used_by": "decide, Learned collector"
       },
       "collect": {
         "args": "",
-        "returns": "{folded, branch, pr}",
+        "returns": "{folded, branch}",
         "used_by": "daily run or on demand"
       },
       "log": {
@@ -245,14 +329,20 @@
         "args": "",
         "returns": "[failure]",
         "used_by": "repo wiki lint script"
+      },
+      "changes": {
+        "args": "since",
+        "returns": "[{store, sha, path, summary, at}]",
+        "used_by": "weekly digest"
       }
     },
     "domain_vocabulary": "the store's routing table; conveyor.md lists none",
     "unmapped_brain": {
       "reads": "wiki only, output says `brain: not configured on this machine`",
-      "writes": "record and log refuse loudly"
+      "writes": "record, collect and log refuse loudly",
+      "decide": "still writes Decision: on the issue; the sweep records the row once the brain is mapped"
     },
-    "git": "the module owns every git write in a store (record, collect, log); callers make plain calls and never run git there"
+    "git": "the module owns all git in a store, reads included (changes); callers make plain calls and never run git there"
   },
   "never_a_go": [
     "decision",
@@ -261,9 +351,9 @@
   "action_record": {
     "note": "Written by run-approved's prepare step; each kind runs one fixed code path; the record carries parameters only, never a command line.",
     "kinds": {
-      "release": "safeguard release of the frozen train",
-      "rollback": "safeguard rollback to the recorded Rollback ref",
-      "skills-install": "install.sh at the record's tree; writes the settings snippet file, never applies it (settings stay the user's manual step)"
+      "release": "merge the frozen train's PRs and push the target branches; writes Pushed:, never deploy:; a target that is not a branch is refused until the project names deploy targets",
+      "rollback": "safeguard rollback to the recorded rollback refs",
+      "skills-install": "install.sh from an export of the recorded tree; writes the settings snippet file, never applies it (settings stay the user's manual step)"
     },
     "fields": {
       "kind": "one of kinds",
@@ -277,7 +367,7 @@
       "digest_input": "canonical JSON of every field except digest and used_at",
       "digest": "sha256 of digest_input",
       "used_at": "UTC, set once on use",
-      "rollback": "{target: ref} captured at prepare; the go card's Undo reads it"
+      "rollback": "{target: ref} of each target's current ref at prepare, inside digest_input; the go card's Undo reads it"
     },
     "refusals": [
       "unknown-kind",
@@ -286,10 +376,19 @@
       "reused",
       "digest-mismatch",
       "hold",
-      "train-over-limit"
+      "train-over-limit",
+      "not-ready",
+      "dirty-tree",
+      "non-branch-target"
     ],
     "command_lines": "forbidden",
-    "no_kind": "the belt never runs a gated action without a kind; it stays with the user's own word in the executing session (contracts.md § Consent)"
+    "no_kind": "the belt never runs a gated action without a kind; it stays with the user's own word in the executing session (contracts.md § Consent)",
+    "refusal_meaning": {
+      "not-ready": "a train issue is not in ready-to-release with reviewed_yes on its PR's current head",
+      "dirty-tree": "the working tree differs from the recorded tree",
+      "non-branch-target": "release named a target that is not a branch"
+    },
+    "after_claim_failure": "append Failed: on every train issue; the record stays used"
   },
   "questions": {
     "bookkeeping": "never asked; authorizations.json",
@@ -324,9 +423,9 @@
     "script_fills": {
       "goal": "goal name and step k of n",
       "from": "origin text stored at capture",
-      "checked": "Checked: receipts present · Not yet: receipts missing, never omitted",
+      "checked": "Checked: plain labels of receipts present · Not yet: labels of receipts missing, never omitted",
       "link": "full-page link",
-      "undo": "go: from the action record's Rollback data"
+      "undo": "go: from the action record's rollback"
     },
     "refuse": {
       "empty_field": true,
@@ -339,5 +438,79 @@
       ]
     },
     "go_shows": "kind, id and the first 8 characters of the digest"
+  },
+  "receipt_home": {
+    "read_from": "the issue only: body, labels, linked PR, comments",
+    "log_copies": "a command that writes a log.md line also posts it on the issue; `issues-cli lane <n> <lane> --log <log.md>` copies the stage's receipt lines onto the issue before it checks",
+    "train": "run-approved posts its Approved:, Pushed:/deploy:, Rollback: or Failed: lines on every train issue and in the release log",
+    "build_first": "every command builds all its receipt lines before its first write"
+  },
+  "session_id": {
+    "form": "local_<uuid>",
+    "pattern": "^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    "why": "the id form the archive tool takes"
+  },
+  "registry": {
+    "source": "Owner: and Claimed: sessions on open belt issues",
+    "done": "every issue the session claimed is closed or parked",
+    "guards": {
+      "registry_done": "allow",
+      "registry_unfinished": "deny",
+      "outside_registry": "ask"
+    },
+    "monitors": {
+      "create": "allow an id monitor-<repo>-<slug> whose description carries a Deadline; anything else asks",
+      "delete": "allow a Scheduler: id on a belt issue once its verdict is recorded; deny before; any other id asks"
+    },
+    "guard_failure": "a guard that cannot load or errors denies"
+  },
+  "layout": {
+    "module": "agent_skills.layout",
+    "root": "the directory holding the agent_skills package: a release (has .release-pin.json) or a checkout",
+    "contract": "<root>/skills/workflow-contracts/<file>",
+    "release_id": "the pin's commit; git HEAD only in a checkout with no pin; neither fails loudly",
+    "rule": "no other code computes contract paths or runs git for the release id"
+  },
+  "sweep": {
+    "names_next": "board line `Pull next:`; publish moves",
+    "writes": [
+      "un-park",
+      "spool flush",
+      "fallback start",
+      "knowledge log"
+    ],
+    "fallback_starts": "at most 1 per sweep, none without a free test slot",
+    "reconcile": "a merged PR moves its issue by receipts; a PR with no issue gets one; an unlabelled issue goes to sort; a teammate's issue gets labels and comments only"
+  },
+  "feeds": {
+    "file": "feeds.json in project config, layered; shared code names no source",
+    "fields": {
+      "id": "[a-z0-9-]+",
+      "kind": "sheet|mail|chat|alert|github|monitor|meeting",
+      "query": "fixed",
+      "cadence": "minutes",
+      "priority": "prio:now|next|later (alert: now)",
+      "key_fields": "stable fields hashed into Source-key, never a row number",
+      "store": "verbatim (the user's own words) or summary-link"
+    },
+    "fetch": "GitHub and local files by the script; a connector-only source by a small-model scheduled run that pipes rows to `issues-cli feed <id>`",
+    "intake": "issues-cli feed <id> keys each row, finds the issue by Source-key, captures new rows to inbox, comments `Source updated` on a changed one, never closes",
+    "heartbeat": {
+      "pattern": "^Feed: (?P<id>[a-z0-9-]+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · seen (?P<seen>\\d+) · new (?P<new>\\d+)$",
+      "silent": "two cadences without a heartbeat is a board line; an empty fetch is recorded as empty, a failed fetch as a failure"
+    },
+    "investigate": "a bug, alert or question at prio:now or prio:next gets a read-only blueprint worker inside the Investigate limit; it ends in an answer, a plan or a card",
+    "build_without_asking": "size S with a plan and no open decision is built and reviewed as a draft PR; M and up, or any choice, reach the user as a plan card first"
+  },
+  "flow": {
+    "park": "issues-cli park <n> --waiting-on <who> --until <date|event>: hand-over comment (branch, head, done, next), closeout of the session, slot freed, label parked",
+    "unpark": "sweep, on the date or event, at the front of its priority",
+    "time_boxes": "contracts.md § Defaults `Time boxes`; one box: ask the session for a receipt once; two: park as stalled",
+    "sizes": "only S and M enter Build; L is split first; an item past its size cap or two boxes ships what is done and files the rest",
+    "m_quota": "contracts.md § Defaults `Lane limits`",
+    "review_rounds": "after 2 NO rounds the next step is a choice card",
+    "unanswered_card": "parked after its time box and kept first on the user's list; never decides",
+    "drain_before_fill": "Build pulls nothing while Review is full; Review pulls nothing while a train waits past its time for a GO",
+    "board": "flow time per size (median, worst), parked count and oldest, items past a time box, items finished per day"
   }
 }

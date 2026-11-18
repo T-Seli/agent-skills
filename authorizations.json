@@ -87,6 +87,22 @@
       "why": "refuses without the closed-lane receipts"
     },
     {
+      "id": "issues-feed",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli feed",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "keys, dedupes and captures feed rows; never closes"
+    },
+    {
+      "id": "issues-park",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli park",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "writes the hand-over and frees the slot"
+    },
+    {
       "id": "disk-check",
       "tool": "bash",
       "match": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli disk-check",
@@ -140,7 +156,8 @@
       "match": "mcp__scheduled-tasks__create_scheduled_task",
       "kind": "bookkeeping",
       "mode": "allow",
-      "why": "deploy arms first-traffic and 24 h monitors"
+      "why": "deploy arms first-traffic and 24 h monitors; other ids ask",
+      "guard": "monitor-id-guard"
     },
     {
       "id": "monitor-delete",
@@ -148,7 +165,7 @@
       "match": "mcp__scheduled-tasks__delete_scheduled_task",
       "kind": "bookkeeping",
       "mode": "allow",
-      "why": "a monitor that recorded its verdict",
+      "why": "a belt monitor that recorded its verdict; other ids ask",
       "guard": "monitor-id-guard"
     },
     {
@@ -157,7 +174,7 @@
       "match": "mcp__ccd_session_mgmt__archive_session",
       "kind": "bookkeeping",
       "mode": "allow",
-      "why": "verified-done belt sessions only",
+      "why": "registry sessions with every claimed issue closed or parked; outside the registry asks",
       "guard": "archive-guard"
     },
     {
