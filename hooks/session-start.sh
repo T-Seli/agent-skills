@@ -1,7 +1,17 @@
 #!/bin/sh
-# SessionStart hook: a <=4-line git snapshot added to Claude's context.
-# Info only: never blocks, always exits 0, silent outside a git repo.
+# SessionStart hook: a <=4-line git snapshot added to Claude's context; a session named in workers.json `roles`
+# also gets the `issues-cli resume` picture first (conveyor.json `resume.hooks`).
+# Info only: never blocks, always exits 0, no snapshot outside a git repo.
 # <base> and "pending" follow the definitions in the workflow-contracts skill (contracts.md).
+
+python3 -I -B -c '
+import json, os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(sys.argv[1]))))  # the release this link points into
+from agent_skills.closeout import resume_picture
+picture = resume_picture(json.load(sys.stdin))
+if picture is not None:
+    print(picture)
+' "$0" || echo "WARNING: session-start resume lookup failed; run issues-cli resume if this is a coordinator or release owner."
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
