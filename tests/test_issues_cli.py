@@ -129,16 +129,18 @@ def spec_body(text='## Problem Statement\n\nNo widgets.\n\nDone when: a saved wi
     return str(f)
 
 
-BELT = ('--owner', 'thomas', '--domain', 'deploy', '--session', 'sess-1')
+SESSION = '5e5510a0-0000-4000-8000-000000000001'
+BELT = ('--owner', 'thomas', '--domain', 'deploy', '--session', SESSION)
 
 
 class KnowledgeError(ValueError):
     pass
 
 
-def stub_knowledge(test, notice=None, domains=('deploy', 'policy'), pages=None):
-    """Stands in for agent_skills.knowledge (T6 builds it); records what issues-cli asked of it."""
-    calls = {'open': [], 'record': [], 'log': []}
+def stub_knowledge(test, notice=None, domains=('deploy', 'policy'), pages=None, changes=()):
+    """Stands in for agent_skills.knowledge (T6 builds it) with the return shapes of conveyor.json knowledge.functions;
+    records what issues-cli asked of it."""
+    calls = {'open': [], 'record': [], 'log': [], 'changes': []}
 
     class Knowledge:
         @classmethod
@@ -167,6 +169,15 @@ def stub_knowledge(test, notice=None, domains=('deploy', 'policy'), pages=None):
             calls['log'].append((issue, lines))
             return {'path': 'log/2026-11.md'}
 
+        def collect(self):
+            if notice:
+                raise KnowledgeError(notice)
+            return {'folded': 0, 'branch': None}
+
+        def changes(self, since):
+            calls['changes'].append(since)
+            return list(changes)
+
     module = types.ModuleType('agent_skills.knowledge')
     module.Knowledge, module.KnowledgeError = Knowledge, KnowledgeError
     patcher = unittest.mock.patch.dict(sys.modules, {'agent_skills.knowledge': module})
@@ -176,15 +187,16 @@ def stub_knowledge(test, notice=None, domains=('deploy', 'policy'), pages=None):
 
 
 def belt_project(test, knowledge='brain `acme/brain` · wiki `wiki`', defaults='', config=None):
-    """A project folder set up only through its CLAUDE.md, as the working directory, with a fixed skills sha."""
+    """A project folder set up only through its CLAUDE.md, as the working directory, with a fixed release id."""
     root = Path(tempfile.mkdtemp()).resolve()
     (root / 'CLAUDE.md').write_text(f'# p\n\n## Map\n- Knowledge: {knowledge}\n\n## Defaults\n{defaults}')
     (root / 'workers.json').write_text(json.dumps(config or {}))
     old = os.getcwd()
     os.chdir(root)
     test.addCleanup(os.chdir, old)
-    for patcher in (unittest.mock.patch.object(issues_cli, 'skills_sha', return_value='f' * 7),
-                    unittest.mock.patch.dict(os.environ, {'AGENT_SKILLS_CONFIG': str(root / 'workers.json')})):
+    for patcher in (unittest.mock.patch.object(issues_cli.layout, 'release_id', return_value='f' * 7),
+                    unittest.mock.patch.dict(os.environ, {'AGENT_SKILLS_CONFIG': str(root / 'workers.json'),
+                                                     'AGENT_SKILLS_TEST_SLOTS': str(root / 'slots')})):
         patcher.start()
         test.addCleanup(patcher.stop)
     return root
@@ -344,7 +356,7 @@ def issue(assignees=(), author='me', comments=(), body=''):
 class Claim(unittest.TestCase):
     def claim(self, data, *extra):
         gh = FakeGh(issues={7: data})
-        code, out, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1', *extra)
+        code, out, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', '11111111-1111-4111-8111-111111111111', *extra)
         return code, gh.writes(), err
 
     def test_unassigned_own_issue_is_assigned_and_commented(self):
@@ -353,7 +365,7 @@ class Claim(unittest.TestCase):
         self.assertEqual(writes[0][0], ['issue', 'edit', '7', '-R', REPO, '--add-assignee', '@me'])
         self.assertEqual(writes[1][0][:2], ['issue', 'comment'])
         self.assertIn('`feat/x`', writes[1][1])
-        self.assertIn('s1', writes[1][1])
+        self.assertIn('11111111-1111-4111-8111-111111111111', writes[1][1])
         self.assertRegex(writes[2][1].strip(), r'^Conveyor: .* · claim · ')
 
     def test_someone_elses_assignment_is_refused(self):
@@ -371,97 +383,97 @@ class Claim(unittest.TestCase):
         self.assertEqual(len(writes), 3)  # assign, claim note, timeline line
 
     def test_repeat_claim_writes_nothing(self):
-        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session s1']))
+        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session 11111111-1111-4111-8111-111111111111']))
         self.assertEqual(code, 0)
         self.assertEqual(writes, [])
 
 
     def test_second_session_under_the_same_login_is_refused_when_the_other_note_landed_first(self):
-        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session s2')
-        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session 22222222-2222-4222-8222-222222222222')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', '11111111-1111-4111-8111-111111111111')
         self.assertNotEqual(code, 0)
         self.assertIn('claimed meanwhile', err)
-        self.assertIn('session s2', err)
+        self.assertIn('session 22222222-2222-4222-8222-222222222222', err)
 
     def test_takeover_posts_a_fresh_note_even_when_an_identical_old_one_exists(self):
-        history = ['Claimed: branch `feat/x` · session s1', 'Claimed: branch `feat/y` · session s2']
+        history = ['Claimed: branch `feat/x` · session 11111111-1111-4111-8111-111111111111', 'Claimed: branch `feat/y` · session 22222222-2222-4222-8222-222222222222']
         code, writes, _ = self.claim(issue(assignees=['me'], comments=history), '--takeover')
         self.assertEqual(code, 0)
         self.assertEqual(len(writes), 2)  # claim note, timeline line
         self.assertRegex(writes[1][1].strip(), r'^Conveyor: .* · claim · ')
-        self.assertIn('session s1', writes[0][1])
+        self.assertIn('session 11111111-1111-4111-8111-111111111111', writes[0][1])
 
     def test_a_loser_retracts_and_the_winner_stays_the_owner(self):
         self.assertEqual(issues_cli.claim_owner([
-            {'body': 'Claimed: branch `a` · session s2'}, {'body': 'Claimed: branch `b` · session s1'},
-            {'body': 'Released: session s1 · lost claim to session s2'}]), 's2')
-        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session s2')
-        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+            {'body': 'Claimed: branch `a` · session 22222222-2222-4222-8222-222222222222'}, {'body': 'Claimed: branch `b` · session 11111111-1111-4111-8111-111111111111'},
+            {'body': 'Released: session 11111111-1111-4111-8111-111111111111 · lost claim to session 22222222-2222-4222-8222-222222222222'}]), '22222222-2222-4222-8222-222222222222')
+        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session 22222222-2222-4222-8222-222222222222')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', '11111111-1111-4111-8111-111111111111')
         self.assertNotEqual(code, 0)
-        self.assertIn('Released: session s1', gh.issues[7]['comments'][-1]['body'])
-        self.assertEqual(issues_cli.claim_owner(gh.issues[7]['comments']), 's2')
+        self.assertIn('Released: session 11111111-1111-4111-8111-111111111111', gh.issues[7]['comments'][-1]['body'])
+        self.assertEqual(issues_cli.claim_owner(gh.issues[7]['comments']), '22222222-2222-4222-8222-222222222222')
 
     def test_a_release_note_from_another_login_does_not_free_the_claim(self):
-        comments = [{'author': {'login': 'me'}, 'body': 'Claimed: branch `a` · session s1'},
-                    {'author': {'login': 'hayk'}, 'body': 'Released: session s1 · lost claim to hayk'}]
-        self.assertEqual(issues_cli.claim_owner(comments), 's1')
+        comments = [{'author': {'login': 'me'}, 'body': 'Claimed: branch `a` · session 11111111-1111-4111-8111-111111111111'},
+                    {'author': {'login': 'hayk'}, 'body': 'Released: session 11111111-1111-4111-8111-111111111111 · lost claim to hayk'}]
+        self.assertEqual(issues_cli.claim_owner(comments), '11111111-1111-4111-8111-111111111111')
         comments[1]['author']['login'] = 'me'
         self.assertIsNone(issues_cli.claim_owner(comments))
 
     def test_a_rival_note_from_another_login_between_the_reads_loses_the_claim(self):
-        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session s9', rival_login='hayk')
-        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session 99999999-9999-4999-8999-999999999999', rival_login='hayk')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', '11111111-1111-4111-8111-111111111111')
         self.assertNotEqual(code, 0)
-        self.assertIn('session s9', err)
-        self.assertEqual(issues_cli.claim_owner(gh.issues[7]['comments']), 's9')
+        self.assertIn('session 99999999-9999-4999-8999-999999999999', err)
+        self.assertEqual(issues_cli.claim_owner(gh.issues[7]['comments']), '99999999-9999-4999-8999-999999999999')
 
     def test_a_rival_assignee_appearing_between_the_reads_loses_the_claim(self):
         gh = FakeGh(issues={7: issue()}, rival_assignee='hayk')
-        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', '11111111-1111-4111-8111-111111111111')
         self.assertNotEqual(code, 0)
         self.assertIn('hayk', err)
         self.assertIsNone(issues_cli.claim_owner(gh.issues[7]['comments']))
 
     def test_successor_same_branch_gets_current_session_pointer(self):
-        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session old-session']), '--takeover')
+        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session 00000000-0000-4000-8000-000000000000']), '--takeover')
         self.assertEqual(code, 0)
         self.assertEqual(len(writes), 2)  # claim note, timeline line
         self.assertRegex(writes[1][1].strip(), r'^Conveyor: .* · claim · ')
-        self.assertIn('session s1', writes[0][1])
+        self.assertIn('session 11111111-1111-4111-8111-111111111111', writes[0][1])
 
     def test_existing_claim_by_another_session_is_refused_without_takeover(self):
-        code, writes, err = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/y` · session s2']))
+        code, writes, err = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/y` · session 22222222-2222-4222-8222-222222222222']))
         self.assertNotEqual(code, 0)
         self.assertEqual(writes, [])
-        self.assertIn('session s2', err)
+        self.assertIn('session 22222222-2222-4222-8222-222222222222', err)
         self.assertIn('--takeover', err)
 
     def test_claim_note_from_a_different_login_is_also_refused(self):
         data = issue(assignees=['me'])
-        data['comments'] = [{'author': {'login': 'hayk'}, 'body': 'Claimed: branch `feat/y` · session s9'}]
+        data['comments'] = [{'author': {'login': 'hayk'}, 'body': 'Claimed: branch `feat/y` · session 99999999-9999-4999-8999-999999999999'}]
         code, writes, err = self.claim(data)
         self.assertNotEqual(code, 0)
         self.assertEqual(writes, [])
 
     def test_our_own_latest_claim_is_not_blocked_by_an_older_one(self):
-        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/y` · session s2', 'Claimed: branch `feat/x` · session s1']))
+        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/y` · session 22222222-2222-4222-8222-222222222222', 'Claimed: branch `feat/x` · session 11111111-1111-4111-8111-111111111111']))
         self.assertEqual(code, 0)
         self.assertEqual(writes, [])
 
     def test_session_defaults_to_the_desktop_session_id(self):
         gh = FakeGh(issues={7: issue()})
-        env = {'CLAUDE_CODE_HOST_SESSION_ID': 'local_abc', 'CLAUDE_CODE_SESSION_ID': 'cli-123'}
+        env = {'CLAUDE_CODE_HOST_SESSION_ID': 'local_abcabcab-0000-4000-8000-000000000abc', 'CLAUDE_CODE_SESSION_ID': '12312312-0000-4000-8000-000000000123'}
         with unittest.mock.patch.dict(os.environ, env):
             code, _, _ = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x')
         self.assertEqual(code, 0)
-        self.assertIn('session local_abc', gh.writes()[1][1])
+        self.assertIn('session local_abcabcab-0000-4000-8000-000000000abc', gh.writes()[1][1])
 
     def test_session_falls_back_to_the_cli_id_and_fails_without_either(self):
         gh = FakeGh(issues={7: issue()})
-        with unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_SESSION_ID': 'cli-123'}):
+        with unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_SESSION_ID': '12312312-0000-4000-8000-000000000123'}):
             os.environ.pop('CLAUDE_CODE_HOST_SESSION_ID', None)
             self.assertEqual(run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x')[0], 0)
-        self.assertIn('session cli-123', gh.writes()[1][1])
+        self.assertIn('session 12312312-0000-4000-8000-000000000123', gh.writes()[1][1])
         gh = FakeGh(issues={7: issue()})
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x')

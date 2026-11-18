@@ -1,5 +1,7 @@
 """issues-cli belt commands (conveyor.md) against a fake gh that keeps GitHub's state in memory."""
+import fcntl
 import json
+import os
 import re
 import subprocess
 import sys
@@ -9,14 +11,20 @@ import unittest.mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from agent_skills import issues_cli
+from agent_skills import issues_cli, layout
 from test_issues_cli import REPO, belt_project, draft, run, spec_body, stub_knowledge
 
 T0 = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
 CONVEYOR = json.loads((Path(__file__).resolve().parents[1] / 'skills/workflow-contracts/conveyor.json').read_text())
 TIMELINE = re.compile(CONVEYOR['timeline']['pattern'])
+CHECKPOINT = re.compile(CONVEYOR['resume']['checkpoint']['pattern'])
 HEAD, NEW_HEAD = 'a1b2c3d' + '0' * 33, 'e4f5a6b' + '0' * 33
 Q = 'https://github.com/o/r/issues/1#issuecomment-9'
+COORD = 'local_c0000000-0000-4000-8000-000000000001'  # desktop sessions carry local_
+OWNER2 = 'local_c0000000-0000-4000-8000-000000000002'
+BUILDER = 'b0000000-0000-4000-8000-000000000001'  # headless workers are plain uuids
+REVIEWER, REVIEWER2 = 'e0000000-0000-4000-8000-000000000001', 'e0000000-0000-4000-8000-000000000002'
+RELEASE_OWNER = 'local_d0000000-0000-4000-8000-000000000001'
 
 
 def iso(t):
@@ -93,6 +101,7 @@ class Belt:
             return ''
         if args[:2] == ['issue', 'close']:
             self.issues[int(args[2])]['state'] = 'CLOSED'
+            self.issues[int(args[2])]['reason'] = self.opt(args, '--reason')
             self.comment(int(args[2]), self.opt(args, '--comment').strip())
             return ''
         if args[:2] == ['label', 'list']:
@@ -104,6 +113,8 @@ class Belt:
             return self.prs[int(args[2])] + '\n'
         if args[:2] == ['api', 'user']:
             return 'me\n'
+        if args[:2] == ['repo', 'view']:
+            return REPO + '\n'
         raise AssertionError(f'unexpected gh call {args}')
 
 
@@ -112,7 +123,8 @@ class BeltCase(unittest.TestCase):
 
     def setUp(self):
         self.root = belt_project(self, defaults=self.defaults)
-        (self.root / 'workers.json').write_text(json.dumps({'capture_spool': str(self.root / 'spool.jsonl')}))
+        self.config = {'capture_spool': str(self.root / 'spool.jsonl')}
+        self.configure()
         self.k = stub_knowledge(self, pages={'deploy': [{'store': 'wiki', 'path': 'pages/release.md', 'verified': '2026-11-02',
                                                          'sha': 'abc1234', 'pending': False}]})
         self.t = T0
@@ -126,6 +138,10 @@ class BeltCase(unittest.TestCase):
         self.gh = Belt(lambda: self.t)
         self.log = self.root / 'log.md'
         self.log.write_text('# log\n')
+
+    def configure(self, **extra):
+        self.config.update(extra)
+        (self.root / 'workers.json').write_text(json.dumps(self.config))
 
     def cli(self, *argv, ok=True):
         code, out, err = run(self.gh, *argv)
@@ -148,13 +164,13 @@ class BeltCase(unittest.TestCase):
 
     # one helper per lane: the receipts its entry rule reads
     def ready_backlog(self, n):
-        self.gh.issues[n]['labels'] += [{'name': 'domain:deploy'}, {'name': 'size:S'}]
+        self.gh.issues[n]['labels'] += [{'name': 'domain:deploy'}, {'name': 'kind:bug'}, {'name': 'size:S'}]
 
     def ready_next(self, n):
-        self.gh.comment(n, 'Owner: thomas · session coord-1 · 2026-11-18 11:00Z')
+        self.gh.comment(n, f'Owner: thomas · session {COORD} · 2026-11-18 11:00Z')
 
     def ready_in_progress(self, n):
-        self.gh.comment(n, 'Claimed: branch `feat/w` · session builder-1')
+        self.gh.comment(n, f'Claimed: branch `feat/w` · session {BUILDER}')
         self.cli('brief', '--repo', REPO, str(n))
 
     def ready_in_review(self, n, head=HEAD):
@@ -162,10 +178,11 @@ class BeltCase(unittest.TestCase):
         self.gh.link_pr(n, head)
 
     def ready_release(self, n, head=HEAD):
-        self.write_log(f'Reviewed: {head[:7]} YES', f'Reviewer: session reviewer-1 · head {head[:7]} · outside')
+        self.write_log(f'Reviewed: {head[:7]} YES', f'Reviewer: session {REVIEWER} · head {head[:7]} · outside')
 
-    def ready_monitoring(self):
-        self.write_log(f'Approved: release r-1 · digest {"d" * 64} · 2026-11-18 12:00Z · question {Q} · session coord-1',
+    def ready_monitoring(self, n=None):
+        """The monitoring receipts in the log (lane copies them), or already on issue `n` (it entered monitoring)."""
+        (self.write_log if n is None else lambda *lines: self.gh.comment(n, '\n'.join(lines)))(f'Approved: release r-1 · digest {"d" * 64} · 2026-11-18 12:00Z · question {Q} · session {COORD}',
                        '## 2026-11-18 12:05Z — deploy: a1b2c3d to local', 'Rollback: local: 0123abc',
                        'Scheduler: claude monitor-r-first', 'Scheduler: claude monitor-r-24h')
 
@@ -176,13 +193,13 @@ class BeltCase(unittest.TestCase):
 
     def at(self, lane, labels=()):
         """An issue already in `lane` with every earlier receipt present."""
-        n = self.gh.add(lane=lane, labels=('domain:deploy', 'size:S', *labels),
+        n = self.gh.add(lane=lane, labels=('domain:deploy', 'kind:bug', 'size:S', *labels),
                         body='Fix widgets\n\nCaptured: 2026-11-18 11:00Z · source chat\nDone when: it works\n')
         order = issues_cli.lanes()
         if order.index(lane) >= order.index('next'):
             self.ready_next(n)
         if order.index(lane) >= order.index('in-progress'):
-            self.gh.comment(n, 'Claimed: branch `feat/w` · session builder-1')
+            self.gh.comment(n, f'Claimed: branch `feat/w` · session {BUILDER}')
             self.gh.comment(n, f'Conveyor: 2026-11-18 11:30Z · brief · next → next · head - · tests - · skills {"f" * 7} · schedules -')
         return n
 
@@ -196,13 +213,16 @@ class Lanes(BeltCase):
         self.lane(n, 'inbox')
         self.assertEqual(self.gh.lane(n), 'inbox')
 
-    def test_backlog_needs_one_domain_and_one_size_label(self):
+    def test_backlog_needs_one_domain_one_kind_and_one_size_label(self):
         n = self.at('inbox')
         self.gh.issues[n]['labels'] = [{'name': 'lane:inbox'}]
         out = self.lane(n, 'backlog', ok=False)
-        self.assertIn('domain (label)', out)
-        self.assertIn('size (label)', out)
-        self.ready_backlog(n)
+        for name in ('domain (label)', 'kind (label)', 'size (label)'):
+            self.assertIn(name, out)
+        self.gh.issues[n]['labels'] += [{'name': 'domain:deploy'}, {'name': 'size:S'}]
+        out = self.lane(n, 'backlog', ok=False)
+        self.assertEqual(out.strip().rsplit('missing: ', 1)[1], 'kind (label)')
+        self.gh.issues[n]['labels'].append({'name': 'kind:bug'})
         self.lane(n, 'backlog')
         self.assertEqual(self.gh.lane(n), 'backlog')
 
@@ -239,7 +259,7 @@ class Lanes(BeltCase):
     def test_in_review_needs_implement_done_and_a_linked_pr(self):
         n = self.at('in-progress')
         out = self.lane(n, 'in-review', ok=False)
-        self.assertIn('implement_done (log)', out)
+        self.assertIn('implement_done (issue comment)', out)
         self.assertIn('pr (linked PR)', out)
         self.ready_in_review(n)
         self.lane(n, 'in-review')
@@ -249,33 +269,47 @@ class Lanes(BeltCase):
         self.gh.link_pr(n, NEW_HEAD)
         self.ready_release(n, HEAD)  # reviewed an older head
         out = self.lane(n, 'ready-to-release', ok=False)
-        self.assertIn('reviewed_yes (log `Reviewed:`)', out)
-        self.assertIn('reviewer (log `Reviewer:`)', out)
-        self.write_log(f'Reviewed: {NEW_HEAD[:7]} YES', f'Reviewer: session builder-1 · head {NEW_HEAD[:7]} · fallback')
+        self.assertIn('reviewed_yes (issue comment `Reviewed:`)', out)
+        self.assertIn('reviewer (issue comment `Reviewer:`)', out)
+        self.write_log(f'Reviewed: {NEW_HEAD[:7]} YES', f'Reviewer: session {BUILDER} · head {NEW_HEAD[:7]} · fallback')
         out = self.lane(n, 'ready-to-release', ok=False)
         self.assertNotIn('reviewed_yes', out)
-        self.assertIn('reviewer (log `Reviewer:`)', out)  # the builder may not review its own work
-        self.write_log(f'Reviewer: session reviewer-2 · head {NEW_HEAD[:7]} · fallback')
+        self.assertIn('reviewer (issue comment `Reviewer:`)', out)  # the builder may not review its own work
+        self.write_log(f'Reviewer: session {REVIEWER2} · head {NEW_HEAD[:7]} · fallback')
         self.lane(n, 'ready-to-release')
         self.assertEqual(self.gh.timeline(n)[-1]['head'], NEW_HEAD)
 
-    def test_monitoring_needs_approved_deploy_rollback_and_two_schedules(self):
+    def test_monitoring_needs_approved_landed_rollback_and_two_schedules(self):
         n = self.at('ready-to-release')
         self.gh.link_pr(n)
         out = self.lane(n, 'monitoring', ok=False)
-        for name in ('approved', 'deploy', 'rollback', 'schedule'):
+        for name in ('approved', 'landed (deploy (issue comment `deploy:`))', 'rollback', 'schedule'):
             self.assertIn(name, out)
-        self.write_log(f'Approved: release r-1 · digest {"d" * 64} · 2026-11-18 12:00Z · question {Q} · session coord-1',
+        self.write_log(f'Approved: release r-1 · digest {"d" * 64} · 2026-11-18 12:00Z · question {Q} · session {COORD}',
                        '## 2026-11-18 12:05Z — deploy: a1b2c3d to local', 'Rollback: local: 0123abc',
                        'Scheduler: claude monitor-r-first')
-        self.assertIn('schedule (log `Scheduler:`)', self.lane(n, 'monitoring', ok=False))
+        self.assertIn('schedule (issue comment `Scheduler:`)', self.lane(n, 'monitoring', ok=False))
         self.write_log('Scheduler: claude monitor-r-24h')
         self.lane(n, 'monitoring')
         self.assertEqual(self.gh.timeline(n)[-1]['schedules'], 'monitor-r-24h,monitor-r-first')
 
+    def test_pushed_lands_an_item_only_when_every_deploy_target_is_a_branch(self):
+        n = self.at('ready-to-release')
+        self.gh.link_pr(n)
+        self.write_log(f'Approved: release r-1 · digest {"d" * 64} · 2026-11-18 12:00Z · question {Q} · session {COORD}',
+                       f'Pushed: {HEAD[:7]} to main', 'Rollback: main: 0123abc',
+                       'Scheduler: claude monitor-r-first', 'Scheduler: claude monitor-r-24h')
+        claude = (self.root / 'CLAUDE.md').read_text()
+        (self.root / 'CLAUDE.md').write_text(claude + '\n## Deploy\n- Targets: box — kind `deploy` — ship — check\n')
+        out = self.lane(n, 'monitoring', ok=False)
+        self.assertIn('landed (deploy (issue comment `deploy:`))', out)  # Pushed: is not offered here
+        (self.root / 'CLAUDE.md').write_text(claude + '\n## Deploy\n- Targets: none (the pipeline ends at the merge)\n')
+        self.lane(n, 'monitoring')
+        self.assertEqual(self.gh.lane(n), 'monitoring')
+
     def test_closed_needs_both_verdicts_both_deletions_and_learned(self):
         n = self.at('monitoring')
-        self.ready_monitoring()
+        self.ready_monitoring(n)
         self.write_log('Monitor verdict: first-traffic All working · 2026-11-18 13:00Z', 'Scheduler deleted: claude monitor-r-first')
         out = self.cli('close', '--repo', REPO, str(n), '--log', str(self.log), '--learned', 'none', ok=False)
         self.assertIn('monitor_24h', out)
@@ -283,7 +317,7 @@ class Lanes(BeltCase):
         self.assertNotIn('learned', out)
         self.write_log('Monitor verdict: 24h All working · 2026-11-19 12:00Z', 'Scheduler deleted: claude monitor-r-24h')
         self.assertIn('close needs --learned', self.cli('close', '--repo', REPO, str(n), ok=False))
-        self.assertIn('learned (closing comment `Learned:`)', self.lane(n, 'closed', '--learned', 'maybe', ok=False))
+        self.assertIn('learned (issue comment `Learned:`)', self.lane(n, 'closed', '--learned', 'maybe', ok=False))
         self.cli('close', '--repo', REPO, str(n), '--log', str(self.log), '--learned', 'lesson: widgets need a cache')
         self.assertEqual(self.gh.issues[n]['state'], 'CLOSED')
         self.assertEqual(self.gh.issues[n]['comments'][-1]['body'].split('\n')[0], 'Learned: lesson: widgets need a cache')
@@ -337,55 +371,119 @@ class Lanes(BeltCase):
         self.assertEqual(self.log.read_text(), '# log\n')
 
 
-class Capture(BeltCase):
-    def test_capture_files_the_words_verbatim_in_the_inbox(self):
-        out = self.cli('capture', '--repo', REPO, '--source', 'chat:C1/p2', '--tag', 'now', 'Widgets vanish\nafter reload')
-        self.assertEqual(out.strip(), '#1')
-        i = self.gh.issues[1]
-        self.assertEqual(i['body'], 'Widgets vanish\nafter reload\n\nCaptured: 2026-11-18 12:00Z · source chat:C1/p2\n')
-        self.assertEqual(self.gh.names(1), ['lane:inbox', 'prio:now'])
-        self.assertEqual(self.gh.timeline(1)[0]['command'], 'capture')
+class ReleaseId(BeltCase):
+    """Fix 1 (C3 A1): the release id comes from agent_skills.layout, and every receipt line is built before the first write."""
+    def release(self, pin):
+        root = Path(tempfile.mkdtemp())
+        if pin:
+            (root / '.release-pin.json').write_text(json.dumps({'commit': pin, 'tree': 'b' * 40}))
+        return unittest.mock.patch.object(layout, 'release_id', side_effect=lambda: REAL_RELEASE_ID(root))
 
-    def test_same_text_within_ten_minutes_is_one_issue(self):
-        self.cli('capture', '--repo', REPO, '--source', 'chat', 'Widgets vanish')
-        self.t += timedelta(minutes=9)
-        self.assertIn('#1 (same text', self.cli('capture', '--repo', REPO, '--source', 'chat', 'Widgets vanish'))
-        self.t += timedelta(minutes=2)
-        self.assertEqual(self.cli('capture', '--repo', REPO, '--source', 'chat', 'Widgets vanish').strip(), '#2')
+    def test_an_installed_release_stamps_its_pin_without_git(self):
+        n = self.at('inbox')
+        with self.release('c' * 40):
+            self.lane(n, 'backlog')
+        self.assertEqual(self.gh.timeline(n)[-1]['skills'], 'c' * 40)
 
-    def test_prio_sets_one_label_and_drop_closes_as_not_planned(self):
-        n = self.at('backlog', labels=('prio:later',))
-        self.cli('prio', '--repo', REPO, str(n), 'now')
-        self.assertEqual([x for x in self.gh.names(n) if x.startswith('prio:')], ['prio:now'])
-        self.assertEqual(self.gh.timeline(n)[-1]['command'], 'prio')
-        self.cli('prio', '--repo', REPO, str(n), 'drop')
-        self.assertEqual(self.gh.issues[n]['state'], 'CLOSED')
-        close = next(a for a in self.gh.writes() if a[:2] == ['issue', 'close'])
-        self.assertEqual(close[close.index('--reason') + 1], 'not planned')
-
-
-class Publish(BeltCase):
-    def test_publish_sets_next_domain_owner_and_refuses_without_them(self):
-        d = draft(items=None)
-        for extra, says in ((('--domain', 'deploy'), '--owner'), (('--owner', 'thomas'), '--domain'),
-                            (('--owner', 'thomas', '--domain', 'nope'), "not in the knowledge store")):
-            out = self.cli('publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body(), *extra, ok=False)
-            self.assertIn(says, out)
-        out = self.cli('publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body('No check\n'),
-                       '--owner', 'thomas', '--domain', 'deploy', '--session', 's1', ok=False)
-        self.assertIn('Done when:', out)
+    def test_no_release_id_moves_nothing_and_writes_nothing(self):
+        n = self.at('inbox')
+        with self.release(None):  # neither a pin nor a git checkout
+            out = self.lane(n, 'backlog', ok=False)
+        self.assertIn('no release pin and not a git checkout', out)
         self.assertEqual(self.gh.writes(), [])
-        self.cli('publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body(),
-                 '--owner', 'thomas', '--domain', 'deploy', '--session', 's1')
-        self.assertEqual(sorted(self.gh.names(1)), ['domain:deploy', 'lane:next'])
-        self.assertRegex(self.gh.lines(1)[0], CONVEYOR['receipts']['owner']['pattern'])
-        self.assertEqual(self.gh.timeline(1)[-1]['command'], 'publish')
+        self.assertEqual(self.gh.lane(n), 'inbox')
+        with self.release(None):
+            for argv in (('prio', '--repo', REPO, str(n), 'now'), ('capture', '--repo', REPO, '--source', 'chat', 'x'),
+                         ('close', '--repo', REPO, str(n), '--learned', 'none', '--no-release', 'chore', '--why', 'done')):
+                self.cli(*argv, ok=False)
+        self.assertEqual(self.gh.writes(), [])
 
-    def test_knowledge_none_has_no_domain_vocabulary(self):
-        (self.root / 'CLAUDE.md').write_text('# p\n\n## Map\n- Knowledge: none\n')
-        out = self.cli('publish', '--repo', REPO, str(draft(items=None)), '--title', 'T', '--body-file', spec_body(),
-                       '--owner', 'thomas', '--domain', 'deploy', '--session', 's1', ok=False)
-        self.assertIn('Knowledge: none', out)
+    def test_no_git_and_no_computed_contract_path_in_issues_cli(self):
+        source = Path(issues_cli.__file__).read_text()
+        for banned in ("'git'", 'rev-parse', '__file__', 'parents[1]'):
+            self.assertNotIn(banned, source)
+
+
+REAL_RELEASE_ID = layout.release_id
+
+
+class ReceiptHome(BeltCase):
+    """Fix 2 (C3 A2): gates read receipts from the issue only; `lane --log` copies the stage's lines there first."""
+    def test_a_receipt_only_in_the_log_does_not_count(self):
+        n = self.at('in-progress')
+        self.gh.link_pr(n)
+        self.write_log('## 2026-11-18 12:00Z — implement: done')
+        self.assertIn('implement_done', self.cli('lane', '--repo', REPO, str(n), 'in-review', ok=False))
+        self.assertEqual(self.gh.writes(), [])
+
+    def test_lane_log_copies_the_stage_lines_as_one_comment_then_checks(self):
+        n = self.at('in-review')
+        self.gh.link_pr(n)
+        self.write_log('## 2026-11-18 12:00Z — implement: done', 'some other note', f'Reviewed: {HEAD[:7]} YES',
+                       f'Reviewer: session {REVIEWER} · head {HEAD[:7]} · outside', 'Rollback: local: 0123abc')
+        before = len(self.gh.issues[n]['comments'])
+        self.lane(n, 'ready-to-release')
+        added = [c['body'] for c in self.gh.issues[n]['comments'][before:]]
+        self.assertEqual(added[0], f'Reviewed: {HEAD[:7]} YES\nReviewer: session {REVIEWER} · head {HEAD[:7]} · outside')
+        self.assertRegex(added[1], TIMELINE)
+        self.assertEqual(len(added), 2)
+
+    def test_a_refused_gate_copies_nothing_and_a_rerun_copies_nothing_twice(self):
+        n = self.at('in-review')
+        self.gh.link_pr(n)
+        self.write_log(f'Reviewed: {HEAD[:7]} YES')
+        self.lane(n, 'ready-to-release', ok=False)  # no Reviewer: yet
+        self.assertEqual(self.gh.writes(), [])
+        self.write_log(f'Reviewer: session {REVIEWER} · head {HEAD[:7]} · outside')
+        self.lane(n, 'ready-to-release')
+        self.lane(n, 'in-review', '--reason', 'pushed again')
+        self.lane(n, 'ready-to-release')
+        copies = [c['body'] for c in self.gh.issues[n]['comments'] if c['body'].startswith('Reviewed:')]
+        self.assertEqual(len(copies), 1)
+
+    def test_ask_reads_the_issue_not_the_log(self):
+        n = self.at('in-review')
+        self.gh.link_pr(n)
+        self.write_log('## 2026-11-18 12:00Z — implement: done')
+        card = self.cli('ask', '--repo', REPO, str(n), '--kind', 'choice', '--log', str(self.log), '--changes', 'c',
+                        '--if-yes', 'y', '--if-no', 'n', '--if-wait', 'w', '--undo', 'revert', '--recommended', 'Yes')
+        self.assertIn('Not yet: build finished', card)
+
+
+class NoRelease(BeltCase):
+    """Fix 3 (C3 A5): an item with nothing to release closes from any lane with `No release:` and `Learned:`."""
+    def close(self, n, *extra, ok=True):
+        return self.cli('close', '--repo', REPO, str(n), '--learned', 'answered: colour? => grey', *extra, ok=ok)
+
+    def test_an_answered_question_closes_from_backlog(self):
+        n = self.at('backlog')
+        self.close(n, '--no-release', 'answered', '--why', 'the user chose grey')
+        self.assertEqual(self.gh.issues[n]['state'], 'CLOSED')
+        self.assertEqual(self.gh.issues[n]['reason'], 'completed')
+        body = self.gh.issues[n]['comments'][-1]['body'].split('\n')
+        self.assertEqual(body[:2], ['No release: answered · the user chose grey', 'Learned: answered: colour? => grey'])
+        self.assertEqual((self.gh.timeline(n)[-1]['command'], self.gh.timeline(n)[-1]['from']), ('close', 'backlog'))
+        self.assertEqual(self.gh.lane(n), 'closed')
+
+    def test_a_duplicate_closes_as_not_planned(self):
+        n = self.at('inbox')
+        self.close(n, '--no-release', 'duplicate', '--why', 'same as the first')
+        self.assertEqual(self.gh.issues[n]['reason'], 'not planned')
+
+    def test_refused_once_anything_landed(self):
+        for line in (f'Pushed: {HEAD[:7]} to main', '## 2026-11-18 12:05Z — deploy: a1b2c3d to local'):
+            n = self.at('ready-to-release')
+            self.gh.comment(n, line)
+            out = self.close(n, '--no-release', 'chore', '--why', 'nothing to ship', ok=False)
+            self.assertIn('only the monitored path closes a landed item', out)
+        self.assertEqual(self.gh.writes(), [])
+
+    def test_needs_why_and_a_valid_learned(self):
+        n = self.at('backlog')
+        self.assertIn('--why', self.close(n, '--no-release', 'chore', ok=False))
+        out = self.cli('close', '--repo', REPO, str(n), '--learned', 'maybe', '--no-release', 'chore', '--why', 'x', ok=False)
+        self.assertIn('learned (issue comment `Learned:`)', out)
+        self.assertEqual(self.gh.writes(), [])
 
 
 class Spec5(BeltCase):
@@ -397,11 +495,13 @@ class Spec5(BeltCase):
         self.ready_backlog(n)  # the sort pass adds labels; moves are commands only
         self.lane(n, 'backlog')
         self.assertIn('backlog 1', self.board(self.sweep(), 'Lanes:'))
+        self.assertEqual(self.board(self.sweep(), 'Pull next:'), f'Pull next: #{n} (publish moves them)')
+        self.assertEqual(self.gh.lane(n), 'backlog')  # the sweep names it and never moves it
         self.gh.issues[n]['body'] += 'Done when: a saved widget is still there after a reload\n'
         d = draft(plan=f'# Plan: widgets\nIssue: {REPO}#{n}\n', items=None)
-        self.cli('publish', '--repo', REPO, str(d), '--owner', 'thomas', '--domain', 'deploy', '--session', 'coord-1')
+        self.cli('publish', '--repo', REPO, str(d), '--owner', 'thomas', '--domain', 'deploy', '--session', COORD)
         self.assertIn('next 1/8', self.board(self.sweep(), 'Lanes:'))
-        self.cli('claim', '--repo', REPO, str(n), '--branch', 'feat/w', '--session', 'builder-1')
+        self.cli('claim', '--repo', REPO, str(n), '--branch', 'feat/w', '--session', BUILDER)
         self.cli('brief', '--repo', REPO, str(n))
         self.lane(n, 'in-progress')
         self.assertIn('in-progress 1/8', self.board(self.sweep(), 'Lanes:'))
@@ -468,20 +568,17 @@ class Spec5(BeltCase):
             self.t += timedelta(minutes=16)
             self.assertIn('- spool over 15 min: 1 capture(s) not yet filed', self.sweep())
 
-    def test_7_a_now_item_enters_ahead_of_older_later_items(self):
+    def test_7_a_now_item_is_named_ahead_of_older_later_items_and_nothing_moves(self):
         for _ in range(7):
             self.at('in-progress')
         older = [self.at('backlog', labels=('prio:later',)) for _ in range(2)]
         for n in older:
             self.gh.issues[n]['createdAt'] = iso(T0 - timedelta(days=3))
         urgent = self.at('backlog', labels=('prio:now',))
-        for n in older + [urgent]:
-            self.ready_next(n)
         out = self.sweep()
-        self.assertIn(f'- pulled #{urgent} to next', out)
-        self.assertEqual(self.gh.lane(urgent), 'next')
-        self.assertEqual([self.gh.lane(n) for n in older], ['backlog', 'backlog'])
-        self.assertEqual(self.gh.timeline(urgent)[-1]['command'], 'sweep')
+        self.assertEqual(self.board(out, 'Pull next:'), f'Pull next: #{urgent} (publish moves them)')  # one free slot
+        self.assertEqual([self.gh.lane(n) for n in older + [urgent]], ['backlog'] * 3)
+        self.assertEqual([a for a in self.gh.writes() if a[:2] == ['issue', 'edit']], [])
 
     def test_7_ten_inputs_with_every_slot_full_all_become_issues_and_start_nothing(self):
         for _ in range(8):
@@ -496,15 +593,15 @@ class Spec5(BeltCase):
         n = self.at('next')
         out = self.cli('brief', '--repo', REPO, str(n))
         self.assertIn('- wiki:pages/release.md · verified 2026-11-02 @ abc1234', out)
-        self.cli('decide', '--repo', REPO, str(n), 'Keep the grey colour', '--question', Q, '--session', 'coord-1')
-        self.assertIn(f'Decision: Keep the grey colour · 2026-11-18 12:00Z · question {Q} · session coord-1', self.gh.lines(n))
+        self.cli('decide', '--repo', REPO, str(n), 'Keep the grey colour', '--question', Q, '--session', COORD)
+        self.assertIn(f'Decision: Keep the grey colour · 2026-11-18 12:00Z · question {Q} · session {COORD}', self.gh.lines(n))
         self.assertEqual(self.k['record'], [('decision', f'r-{n}-202611181200', '2026-11-18', Q, 'Keep the grey colour', 'repo:r')])
         self.assertIn('- Decision: Keep the grey colour', self.cli('brief', '--repo', REPO, str(n)))
         self.assertIn('decide needs --question', self.cli('decide', '--repo', REPO, str(n), 'x', '--question', 'nope', ok=False))
 
     def test_8_closing_without_learned_is_refused_and_the_sweep_logs_each_closed_issue_once(self):
         n = self.at('monitoring')
-        self.ready_monitoring()
+        self.ready_monitoring(n)
         self.ready_closed()
         self.assertIn('learned', self.lane(n, 'closed', ok=False))
         self.cli('close', '--repo', REPO, str(n), '--log', str(self.log), '--learned', 'none')
@@ -521,8 +618,8 @@ class Spec5(BeltCase):
     def test_9_a_go_card_is_refused_until_every_field_is_filled(self):
         n = self.at('ready-to-release')
         self.gh.link_pr(n)
-        self.ready_in_review(n)
-        self.ready_release(n)
+        self.gh.comment(n, '## 2026-11-18 12:00Z — implement: done')
+        self.gh.comment(n, f'Reviewed: {HEAD[:7]} YES\nReviewer: session {REVIEWER} · head {HEAD[:7]} · outside')
         self.assertIn('empty changes, if_yes, if_no, if_wait, recommended', self.go_card(n, ok=False))
         full = ('--changes', 'Saved widgets survive a reload for every user', '--if-yes', 'Release 7 ships tonight',
                 '--if-no', 'Widgets keep vanishing', '--if-wait', 'Nothing changes until tomorrow', '--recommended', 'Yes')
@@ -533,16 +630,22 @@ class Spec5(BeltCase):
         self.assertEqual(card[1], 'Goal: Widget · step 6 of 8')
         self.assertEqual(card[2], 'From: Fix widgets')
         self.assertIn('Undo: local: 0123abc', card)
-        self.assertIn('Checked: capture, domain, size, owner, done_when, claim, brief, implement_done, pr, reviewed_yes, reviewer · Not yet: none', card)
+        self.assertIn('Checked: captured, domain label, kind label, size label, owner set, done-when written, claimed, '
+                      'brief rendered, build finished, pull request linked, review passed on this head, '
+                      'independent reviewer · Not yet: none', card)
         self.assertLessEqual(len(card), 12)
 
-    def test_9_a_removed_receipt_is_listed_under_not_yet(self):
+    def test_9_the_card_prints_plain_labels_never_internal_names(self):
         n = self.at('ready-to-release')
         self.gh.link_pr(n)
-        self.ready_release(n)  # implement: done was never logged
+        self.gh.comment(n, f'Reviewed: {HEAD[:7]} YES\nReviewer: session {REVIEWER} · head {HEAD[:7]} · outside')
         card = self.cli('ask', '--repo', REPO, str(n), '--kind', 'choice', '--log', str(self.log), '--changes', 'c',
                         '--if-yes', 'y', '--if-no', 'n', '--if-wait', 'w', '--undo', 'revert', '--recommended', 'Yes')
-        self.assertIn('Not yet: implement_done', card)
+        self.assertIn('Not yet: build finished', card)  # implement: done was never posted
+        checked = self.board(card, 'Checked:')
+        for name in CONVEYOR['receipts']:
+            if '_' in name:
+                self.assertNotIn(name, checked)
 
     def test_9_tell_me_more_is_logged_and_leaves_the_question_waiting(self):
         n = self.at('in-review')
@@ -558,7 +661,7 @@ class Spec5(BeltCase):
         self.assertIn('Need from you: 1', out)
         self.assertIn(f'- #{n} Widget (asked 2026-11-18 12:01Z)', out)
         self.t += timedelta(minutes=1)
-        self.cli('decide', '--repo', REPO, str(n), 'Yes', '--question', Q, '--session', 'coord-1')
+        self.cli('decide', '--repo', REPO, str(n), 'Yes', '--question', Q, '--session', COORD)
         self.assertIn('Need from you: 0', self.sweep())
 
 
@@ -568,19 +671,21 @@ class Sweep(BeltCase):
         self.gh.issues[1]['body'] = 'old\n\nCaptured: 2026-11-17 10:00Z · source chat\n'
         self.at('backlog', labels=('prio:now',))
         self.at('backlog', labels=('prio:later',))
-        self.gh.issues[3]['body'] = 'no spec\n'  # cannot be pulled: no Done when
-        self.gh.issues[2]['comments'] = []  # cannot be pulled: no Owner
         out = self.sweep()
         self.assertIn('Backlog: 2 (now 1 · next 0 · later 1) · oldest unsorted 26h', out)
         self.assertIn('- inbox unsorted over 24 h: #1', out)
-        self.assertIn('- pull refused: #2 cannot enter next; missing: owner', out)
-        self.assertIn('- pull refused: #3 cannot enter next; missing: owner (issue comment `Owner:`); done_when', out)  # a refusal does not end the pull
-        self.assertIn('Not read: sessions, test slots, denial log', out)
+        self.assertIn('Pull next: #2, #3 (publish moves them)', out)
+        self.assertIn('Test slots: 4 of 4 free', out)
+        self.assertNotIn('Not read: sessions', out)
 
-    def test_review_fallback_starts_one_reviewer_after_the_window(self):
+    def stale_review(self):
         n = self.at('in-review')
         self.gh.link_pr(n)
-        self.gh.comment(n, f'Review requested: head {HEAD[:7]} · 2026-11-18 10:30Z · session coord-1')
+        self.gh.comment(n, f'Review requested: head {HEAD[:7]} · 2026-11-18 10:30Z · session {COORD}')
+        return n
+
+    def test_review_fallback_starts_one_reviewer_after_the_window(self):
+        n = self.stale_review()
         self.assertNotIn('review past fallback', self.sweep())
         self.t += timedelta(minutes=31)
         out = self.sweep()
@@ -589,36 +694,104 @@ class Sweep(BeltCase):
         self.sweep()
         self.assertEqual(self.started, [(REPO, n, HEAD[:7], f'https://github.com/{REPO}/pull/{500 + n}')])
 
-    def test_weekly_adds_the_backlog_age_question_and_counts(self):
+    def test_at_most_one_fallback_start_per_sweep(self):
+        first, second = self.stale_review(), self.stale_review()
+        self.t += timedelta(minutes=31)
+        out = self.sweep()
+        self.assertEqual(len(self.started), 1)
+        self.assertIn('(one start per sweep)', out)
+        self.sweep()
+        self.assertEqual(sorted(a[1] for a in self.started), [first, second])
+
+    def test_no_fallback_start_without_a_free_test_slot(self):
+        self.configure(test_slots=2)
+        slots = self.root / 'slots'
+        slots.mkdir()
+        held = []
+        for index in range(2):
+            fd = os.open(slots / f'slot-{index}.lock', os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            held.append(fd)
+        self.stale_review()
+        self.t += timedelta(minutes=31)
+        out = self.sweep()
+        self.assertEqual(self.started, [])
+        self.assertIn('no free test slot: 0 of 2 free', out)
+        self.assertIn('Test slots: 0 of 2 free', out)
+        os.close(held.pop())
+        self.assertIn('fallback reviewer started', self.sweep())
+        os.close(held.pop())
+
+    def test_sessions_come_from_owner_and_claim_receipts_on_open_belt_issues(self):
+        working = self.at('in-progress')
+        parked = self.at('in-progress', labels=('parked',))
+        self.gh.issues[parked]['comments'] = [{'author': {'login': 'me'}, 'body': f'Claimed: branch `feat/p` · session {REVIEWER}'}]
+        self.at('next')
+        self.gh.add(lane='next', comments=('Claimed: branch `x` · session not-a-session-id',))
+        out = self.sweep()
+        self.assertIn('Sessions: 3 on the belt', out)
+        self.assertIn(f'- {BUILDER} · working · claimed #{working} (in-progress)', out)
+        self.assertIn(f'- {REVIEWER} · done · claimed #{parked} (in-progress, parked)', out)
+        self.assertIn(f'- {COORD} · owner · owns #3, owns #{working}', out)
+        self.assertNotIn('not-a-session-id', out)
+
+    def test_weekly_adds_the_backlog_age_question_counts_and_the_knowledge_changes(self):
+        self.k = stub_knowledge(self, changes=[{'store': 'brain', 'sha': 'f' * 40, 'path': 'decisions.md',
+                                                'summary': 'record colour decision', 'at': '2026-11-17T09:00:00Z'}])
         old = self.at('backlog')
         self.gh.issues[old]['createdAt'] = iso(T0 - timedelta(days=31))
-        self.gh.issues[old]['comments'] = []  # stays in backlog
         out = self.sweep('--weekly')
         self.assertIn(f'- Weekly: keep, drop or bump? #{old} (backlog over 30 days)', out)
         self.assertIn('Questions (7 days): asked 0 (0.0/day) · decided 0 · tell me more 0', out)
-        self.assertIn('Knowledge digest: brain: not configured on this machine', out)
+        self.assertIn('Knowledge digest: 1 change(s) this week', out)
+        self.assertIn(f'- brain:decisions.md · record colour decision · undo: revert {"f" * 12} in brain', out)
+        self.assertEqual(self.k['changes'], ['2026-11-11T12:00:00+00:00'])
 
 
 class Knowledge(BeltCase):
-    """T1-a3: the module is imported on use and an unmapped brain follows conveyor.md § Knowledge."""
+    """T1-a3 and fixes 6 and 8: the module is imported on use and an unmapped brain follows conveyor.md § Knowledge."""
     def test_importing_issues_cli_does_not_import_knowledge(self):
         code = 'import sys, agent_skills.issues_cli; print("agent_skills.knowledge" in sys.modules)'
         out = subprocess.run([sys.executable, '-c', code], cwd=Path(issues_cli.__file__).parents[1],
                              capture_output=True, text=True, check=True).stdout
         self.assertEqual(out.strip(), 'False')
 
-    def test_unmapped_brain_reads_say_so_and_writes_refuse(self):
+    def test_unmapped_brain_reads_say_so_decide_still_records_and_log_refuses(self):
         self.k = stub_knowledge(self, notice='brain: not configured on this machine')
         n = self.at('next')
         self.assertIn('brain: not configured on this machine', self.cli('brief', '--repo', REPO, str(n)))
-        out = self.cli('decide', '--repo', REPO, str(n), 'Yes', '--question', Q, '--session', 'c', ok=False)
-        self.assertIn('brain: not configured on this machine', out)
-        self.assertFalse(any(line.startswith('Decision:') for line in self.gh.lines(n)))
+        out = self.cli('decide', '--repo', REPO, str(n), 'Yes', '--question', Q, '--session', COORD)
+        self.assertIn('decision row PENDING: brain: not configured on this machine', out)
+        self.assertIn(f'Decision: Yes · 2026-11-18 12:00Z · question {Q} · session {COORD}', self.gh.lines(n))
+        self.assertEqual(self.k['record'], [])
         m = self.at('monitoring')
-        self.ready_monitoring()
+        self.ready_monitoring(m)
         self.ready_closed()
         self.cli('close', '--repo', REPO, str(m), '--log', str(self.log), '--learned', 'none')
         self.assertIn(f'- knowledge log refused for #{m}: brain: not configured on this machine', self.sweep())
+
+    def test_decision_scope_is_a_parameter(self):
+        n = self.at('next')
+        self.cli('decide', '--repo', REPO, str(n), 'Grey everywhere', '--question', Q, '--session', COORD, '--scope', 'global')
+        self.cli('decide', '--repo', REPO, str(n), 'Grey for acme', '--question', Q, '--session', COORD, '--scope', 'tenant:acme')
+        self.assertEqual([r[-1] for r in self.k['record']], ['global', 'tenant:acme'])
+        out = self.cli('decide', '--repo', REPO, str(n), 'x', '--question', Q, '--session', COORD, '--scope', 'team', ok=False)
+        self.assertIn('--scope is global, tenant:<id> or repo:<name>', out)
+
+    def test_a_session_outside_the_contract_forms_is_refused(self):
+        n = self.at('next')
+        out = self.cli('decide', '--repo', REPO, str(n), 'x', '--question', Q, '--session', 'coord-1', ok=False)
+        self.assertIn('not local_<uuid> or a uuid', out)
+        self.assertEqual(self.gh.writes(), [])
+
+    def test_the_stub_returns_the_contract_shapes(self):
+        k = sys.modules['agent_skills.knowledge'].Knowledge.open()
+        functions = CONVEYOR['knowledge']['functions']
+        self.assertIn('{path}', functions['record']['returns'])
+        self.assertEqual(set(k.record('decision', 'x', '2026-11-18', Q, 't')), {'path'})
+        self.assertEqual(functions['collect']['returns'], '{folded, branch}')
+        self.assertEqual(set(k.collect()), {'folded', 'branch'})
+        self.assertEqual(set(k.log(1, [])), {'path'})
 
     def test_the_stores_come_from_the_project_map(self):
         self.cli('brief', '--repo', REPO, str(self.at('next')))
@@ -627,6 +800,64 @@ class Knowledge(BeltCase):
     def test_no_knowledge_line_is_refused(self):
         (self.root / 'CLAUDE.md').write_text('# p\n\n## Map\n')
         self.assertIn('no `Knowledge:` line', self.cli('brief', '--repo', REPO, str(self.at('next')), ok=False))
+
+
+class Resume(BeltCase):
+    """Fix 9: resume prints the board plus changes since the role's last checkpoint, within the cap, and writes only
+    one Checkpoint: line to that role's log."""
+    def setUp(self):
+        super().setUp()
+        self.role_log = self.root / 'coordinator-log.md'
+        self.role_log.write_text('# coordinator\n')
+        self.configure(roles={'coordinator': COORD, 'release_owner': RELEASE_OWNER},
+                       role_logs={'coordinator': str(self.role_log)})
+
+    def resume(self, *extra, ok=True):
+        return self.cli('resume', '--session', COORD, *extra, ok=ok)
+
+    def test_board_changes_and_one_checkpoint(self):
+        n = self.at('in-review')
+        first = self.resume()
+        self.assertIn('Resume for coordinator · o/r', first)
+        self.assertIn('Lanes: ', first)
+        self.assertIn('Sessions: 2 on the belt', first)
+        self.assertIn(f'Since checkpoint: none earlier in {self.role_log}', first)
+        self.assertEqual(self.gh.writes(), [])  # read-only toward GitHub
+        marks = [line for line in self.role_log.read_text().split('\n') if line.startswith('Checkpoint:')]
+        self.assertEqual(marks, ['Checkpoint: 2026-11-18 12:00Z · tokens - · questions 0 · in-progress 0 · in-review 1 · parked 0'])
+        self.assertRegex(marks[0], CHECKPOINT)
+        self.t += timedelta(minutes=5)
+        self.cli('decide', '--repo', REPO, str(n), 'Ship it on Friday', '--question', Q, '--session', COORD)
+        self.lane(n, 'in-progress', '--reason', 'late NO')
+        before = len(self.gh.writes())
+        self.t += timedelta(minutes=5)
+        second = self.resume('--repo', REPO)
+        self.assertIn('Since checkpoint 2026-11-18 12:00Z: 3 change(s)', second)
+        self.assertIn(f'- #{n} lane in-review → in-progress at 2026-11-18 12:05Z', second)
+        self.assertIn(f'- #{n} Decision: Ship it on Friday', second)
+        self.assertEqual(len(self.gh.writes()), before)
+        self.assertEqual(len([x for x in self.role_log.read_text().split('\n') if CHECKPOINT.match(x)]), 2)
+
+    def test_output_stays_within_the_cap(self):
+        for k in range(80):
+            self.gh.add(lane='in-review', title=f'Widget {k} ' + 'x' * 150)
+        out = self.resume()
+        cap = CONVEYOR['resume']['cap']
+        self.assertLessEqual(len(out.rstrip('\n').split('\n')), cap['lines'])
+        self.assertLess(len(out.rstrip('\n')), cap['chars'])
+        self.assertIn('cut at the resume cap', out)
+        self.assertRegex(out.rstrip('\n').split('\n')[-1], CHECKPOINT)
+
+    def test_only_sessions_named_in_roles(self):
+        out = self.cli('resume', '--session', OWNER2, ok=False)
+        self.assertIn('not in workers.json roles (coordinator, release_owner)', out)
+        out = self.cli('resume', '--session', RELEASE_OWNER, ok=False)
+        self.assertIn('role_logs names no existing log.md for release_owner', out)
+        self.assertEqual(self.role_log.read_text(), '# coordinator\n')
+
+    def test_the_session_defaults_to_the_desktop_session(self):
+        with unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_HOST_SESSION_ID': COORD}):
+            self.assertIn('Resume for coordinator', self.cli('resume'))
 
 
 class Limits(BeltCase):

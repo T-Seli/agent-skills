@@ -5,6 +5,7 @@ The draft folder stays the working copy: `plan.md` records `Issue: <owner/repo>#
 `action-items.md` records `issue #<n>`, so a second run creates nothing.
 """
 import argparse
+import fcntl
 import functools
 import hashlib
 import json
@@ -16,6 +17,8 @@ import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from . import layout
+from .test_slot import configured_reserve, configured_slots, slot_dir
 from .work_trace import validate as validate_work_trace, preview as trace_preview
 
 ITEM = re.compile(r'^- \[[ x]\] \*\*(\d+)\. (.+?)\*\*(.*)$')
@@ -170,6 +173,8 @@ def session_id(session):
     session = session or os.environ.get('CLAUDE_CODE_HOST_SESSION_ID') or os.environ.get('CLAUDE_CODE_SESSION_ID')
     if not session:
         raise Refused('no session id in the environment; pass --session')
+    if not re.fullmatch(belt()['session_id']['pattern'], session):
+        raise Refused(f'session {session!r} is not local_<uuid> or a uuid (conveyor.json session_id)')
     return session
 
 
@@ -186,6 +191,8 @@ def claim(gh, repo, n, branch, session, approved, takeover=False):
     owner = claim_owner(data['comments'])
     if owner and owner != session and not takeover:
         raise Refused(f'#{n} already carries a claim by session {owner}; ask the user, then pass --takeover')
+    cur = lane_of({'number': n, **data})
+    line = conveyor_line('claim', cur, cur) if owner != session else None
     if not data['assignees']:
         gh(['issue', 'edit', str(n), '-R', repo, '--add-assignee', '@me'])
     if owner != session:
@@ -198,8 +205,7 @@ def claim(gh, repo, n, branch, session, approved, takeover=False):
             who = f'session {winner}' if winner != session else ', '.join(rivals)
             gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'], f'Released: session {session} · lost claim to {who}\n')
             raise Refused(f'#{n} was claimed meanwhile by {who}; stop and ask the user')
-        cur = lane_of({'number': n, **data})
-        record(gh, repo, n, conveyor_line('claim', cur, cur))
+        record(gh, repo, n, line)
     print(f'#{n} claimed by {me}')
 
 
@@ -353,13 +359,13 @@ def close(gh, repo, folder, sha, evidence_path):
         print(f'#{n} closed')
 
 
-# The belt (conveyor.md): lanes, receipts and limits come from conveyor.json and contracts.md § Defaults.
-RELEASE_ROOT = Path(__file__).resolve().parents[1]
-CONTRACTS = RELEASE_ROOT / 'skills' / 'workflow-contracts'
+# The belt (conveyor.md): lanes, receipts and limits come from conveyor.json and contracts.md § Defaults; contract
+# paths and the release id come only from agent_skills.layout (conveyor.json `layout`).
 STAMP = '%Y-%m-%d %H:%MZ'
 # conveyor.md § Sweep and the build spec § 2a: capture dedupe window, spool and inbox lateness, weekly backlog age.
 CAPTURE_WINDOW, SPOOL_LATE = timedelta(minutes=10), timedelta(minutes=15)
 INBOX_LATE, BACKLOG_OLD, WEEK = timedelta(hours=24), timedelta(days=30), timedelta(days=7)
+FALLBACK_STARTS = 1  # conveyor.json sweep.fallback_starts: at most one per sweep
 UNREACHABLE = re.compile(r'error connecting to|could not resolve host|dial tcp|i/o timeout|connection (refused|reset)'
                          r'|network is unreachable|TLS handshake timeout|HTTP 50[234]', re.I)
 FIELDS = 'number,title,body,labels,comments,state,createdAt,url,closedByPullRequestsReferences'
@@ -370,11 +376,15 @@ CARD_LABELS = {'goal': 'Goal', 'from': 'From', 'changes': 'Changes', 'checked': 
 
 @functools.lru_cache(maxsize=None)
 def belt():
-    return json.loads((CONTRACTS / 'conveyor.json').read_text())
+    return json.loads(layout.contract('conveyor.json').read_text())
 
 
 def lanes():
     return [lane['name'] for lane in belt()['lanes']]
+
+
+def lane_rule(name):
+    return next(lane for lane in belt()['lanes'] if lane['name'] == name)
 
 
 def receipt(name):
@@ -395,13 +405,6 @@ def parse_stamp(text):
 
 def parse_iso(text):
     return datetime.fromisoformat(text.replace('Z', '+00:00'))
-
-
-@functools.lru_cache(maxsize=None)
-def skills_sha():
-    """The skills release this helper runs from: the timeline's `skills` field."""
-    return subprocess.run(['git', '-C', str(RELEASE_ROOT), 'rev-parse', 'HEAD'],
-                          capture_output=True, text=True, check=True).stdout.strip()
 
 
 def machine_config():
@@ -425,7 +428,7 @@ def section(text, name):
 def defaults():
     """contracts.md § Defaults, each line overridable by the project's § Defaults."""
     out = {}
-    for text in ((CONTRACTS / 'contracts.md').read_text(), project()[1]):
+    for text in (layout.contract('contracts.md').read_text(), project()[1]):
         out.update(re.findall(r'^- ([^:\n]+): (.+)$', section(text, 'Defaults'), re.M))
     return out
 
@@ -445,6 +448,13 @@ def review_fallback():
     if not m:
         raise Refused('§ Defaults has no `Review fallback: <n> hours`')
     return timedelta(hours=float(m[1]))
+
+
+def branch_targets_only():
+    """conveyor.json receipts.landed: `Pushed:` lands an item only when the project's § Deploy `Targets` is `none`
+    (the pipeline ends at the push); any named target needs `deploy:`."""
+    m = re.search(r'^- Targets: (.+)$', section(project()[1], 'Deploy'), re.M)
+    return bool(m) and m[1].strip().startswith('none')
 
 
 def knowledge_names():
@@ -521,13 +531,13 @@ def pr_head(gh, repo, number):
 
 
 class Facts:
-    """What the gates read for one issue: labels, body, comments, the task log, the linked PR's head and the claim."""
-    def __init__(self, gh, repo, d, log_lines=(), learned=None):
-        raw = comment_lines(d)
-        self.labels, self.learned = label_names(d), learned
+    """What the gates read for one issue, from the issue only (conveyor.json receipt_home): labels, body, comments,
+    the linked PR's head and the claim. `pending` are lines this command is about to post on the issue."""
+    def __init__(self, gh, repo, d, pending=()):
+        raw = comment_lines(d) + list(pending)
+        self.labels = label_names(d)
         self.body = [line.strip() for line in d.get('body', '').replace('\r\n', '\n').split('\n')]
-        self.comments = corrected(raw, raw + list(log_lines))
-        self.log = corrected(list(log_lines), raw + list(log_lines))
+        self.comments = corrected(raw, raw)
         self.timeline = timeline_of(self.comments)
         self.prs = d.get('closedByPullRequestsReferences') or []
         self.head = pr_head(gh, repo, self.prs[0]['number']) if len(self.prs) == 1 else None
@@ -535,12 +545,19 @@ class Facts:
 
 
 def schedule_ids(f):
-    return {m[0].split()[-1] for line in f.log if (m := re.search(receipt('schedule')['pattern'], line))}
+    return {m[0].split()[-1] for line in f.comments if (m := re.search(receipt('schedule')['pattern'], line))}
+
+
+def counts_toward(r, name):
+    """An any_of member with a `<name>_only_if` condition counts only when it holds (receipts.landed: pushed)."""
+    return f'{name}_only_if' not in r or branch_targets_only()
 
 
 def have(name, k, f):
     """True when receipt `name` is present `k` times (conveyor.json receipts)."""
     r = receipt(name)
+    if 'any_of' in r:
+        return any(have(x, k, f) for x in r['any_of'] if counts_toward(r, x))
     source = r['source']
     if source == 'labels':
         return sum(bool(re.fullmatch(r['pattern'], x)) for x in f.labels) == r['count']
@@ -548,9 +565,7 @@ def have(name, k, f):
         return len(f.prs) == r['count']
     if source == 'timeline':
         return any(t['command'] == r['command'] for t in f.timeline)
-    if source == 'closing_comment':
-        return bool(f.learned) and bool(re.fullmatch(r['pattern'], f'Learned: {f.learned}'))
-    lines = {'issue_body': f.body, 'issue_comment': f.comments, 'log': f.log}[source]
+    lines = {'issue_body': f.body, 'issue_comment': f.comments}[source]
     found = [m for line in lines if (m := re.search(r['pattern'], line))]
     if r.get('binds') == 'pr_head':
         found = [m for m in found if f.head and f.head.startswith(m['head'])]
@@ -564,15 +579,28 @@ def have(name, k, f):
 
 def describe(name):
     r = receipt(name)
+    if 'any_of' in r:
+        return f"{name} ({' or '.join(describe(x) for x in r['any_of'] if counts_toward(r, x))})"
     token = re.match(r'\^?([A-Za-z][A-Za-z -]*:)', r.get('pattern', ''))
-    where = {'labels': 'label', 'linked_pr': 'linked PR', 'timeline': f"Conveyor {r.get('command')} line",
-             'closing_comment': 'closing comment'}.get(r['source'], r['source'].replace('_', ' '))
+    where = {'labels': 'label', 'linked_pr': 'linked PR', 'timeline': f"Conveyor {r.get('command')} line"}.get(
+        r['source'], r['source'].replace('_', ' '))
     return f"{name} ({where}{' `' + token[1] + '`' if token and r['source'] != 'labels' else ''})"
 
 
-def missing_for(f, target):
-    need = Counter(next(lane for lane in belt()['lanes'] if lane['name'] == target)['requires'])
-    return [describe(name) for name, k in need.items() if not have(name, k, f)]
+def missing_for(f, names):
+    return [describe(name) for name, k in Counter(names).items() if not have(name, k, f)]
+
+
+def stage_lines(log_lines, target, on_issue):
+    """The log's receipt lines for entering `target`, and its corrections, not yet on the issue (receipt_home.log_copies)."""
+    names = []
+    for name in lane_rule(target)['requires']:
+        names += receipt(name).get('any_of', [name])
+    patterns = [receipt(x)['pattern'] for x in names if receipt(x)['source'] == 'issue_comment']
+    patterns.append(belt()['timeline']['correction'])
+    have_lines = set(on_issue)
+    return list(dict.fromkeys(line for line in log_lines
+                              if line not in have_lines and any(re.search(p, line) for p in patterns)))
 
 
 def lane_count(gh, repo, lane):
@@ -618,27 +646,33 @@ def relabel(gh, repo, n, add=(), remove=()):
 
 
 def conveyor_line(command, frm, to, head=None, tests=None, schedules=()):
+    """The timeline line; built before a command's first write (receipt_home.build_first)."""
     line = (f"Conveyor: {stamp(now())} · {command} · {frm or '-'} → {to or '-'} · head {head or '-'} · "
-            f"tests {tests or '-'} · skills {skills_sha()} · schedules {','.join(sorted(schedules)) or '-'}")
+            f"tests {tests or '-'} · skills {layout.release_id()} · schedules {','.join(sorted(schedules)) or '-'}")
     if not re.fullmatch(belt()['timeline']['pattern'], line):
         raise Refused(f'malformed timeline line: {line}')
     return line
 
 
+def comment(gh, repo, n, lines):
+    gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'], '\n'.join(lines) + '\n')
+
+
 def record(gh, repo, n, line, log=None, before=(), close_reason=None):
     """One issue comment (or the closing comment) carrying the receipt lines; the timeline line also goes to the task log."""
-    body = '\n'.join([*before, line]) + '\n'
     if close_reason:
-        gh(['issue', 'close', str(n), '-R', repo, '--reason', close_reason, '--comment', body])
+        gh(['issue', 'close', str(n), '-R', repo, '--reason', close_reason, '--comment', '\n'.join([*before, line]) + '\n'])
     else:
-        gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'], body)
+        comment(gh, repo, n, [*before, line])
     if log and not isinstance(gh, DryRun):
         with log.open('a') as fh:
             fh.write(line + '\n')
 
 
 def move(gh, repo, n, target, reason=None, log=None, tests=None, learned=None, command='lane'):
-    """`lane`: check the entry rule and refuse naming each missing receipt; a move back needs --reason."""
+    """`lane`: copy the stage's receipt lines from --log onto the issue, check the entry rule on the issue and refuse
+    naming each missing receipt; a move back needs --reason. Every line is built and checked before the first write,
+    so a refusal writes nothing."""
     order = lanes()
     if target not in order:
         raise Refused(f"unknown lane {target!r}; lanes: {', '.join(order)}")
@@ -649,27 +683,30 @@ def move(gh, repo, n, target, reason=None, log=None, tests=None, learned=None, c
     if cur == target:
         return f'#{n} is already in {target}'
     log_path, log_lines = task_log(log)
-    f = Facts(gh, repo, d, log_lines, learned)
-    before = []
-    if cur is not None and order.index(target) < order.index(cur):
+    copied, before = [], []
+    back = cur is not None and order.index(target) < order.index(cur)
+    if back:
         if not reason:
             raise Refused(f'#{n} {cur} → {target} is a move back; pass --reason (its receipt)')
         before = [f'Moved back: {cur} → {target} · {reason}']
     else:
-        if 'hold' in f.labels:
+        if 'hold' in label_names(d):
             raise Refused(f'#{n} carries hold; forward moves stop')
         skipped = order[(order.index(cur) + 1 if cur else 0):order.index(target)]
         if skipped and order.index(target) > order.index('next'):
             raise Refused(f"#{n} {cur or '-'} → {target} skips {', '.join(skipped)}; after next no lane is skipped")
-        missing = missing_for(f, target) + room_missing(gh, repo, target, f.labels)
+        copied = stage_lines(log_lines, target, comment_lines(d))
+        before = [f'Learned: {learned}'] if target == 'closed' and learned else []
+    f = Facts(gh, repo, d, copied + before)
+    if not back:
+        missing = missing_for(f, lane_rule(target)['requires']) + room_missing(gh, repo, target, f.labels)
         if missing:
             raise Refused(f"#{n} cannot enter {target}; missing: {'; '.join(missing)}")
-    relabel(gh, repo, n, [f'lane:{target}'], [f'lane:{cur}'] if cur else [])
     line = conveyor_line(command, cur, target, f.head, tests, schedule_ids(f))
-    if target == 'closed':
-        record(gh, repo, n, line, log_path, [f'Learned: {learned}'], close_reason='completed')
-    else:
-        record(gh, repo, n, line, log_path, before)
+    if copied:
+        comment(gh, repo, n, copied)
+    relabel(gh, repo, n, [f'lane:{target}'], [f'lane:{cur}'] if cur else [])
+    record(gh, repo, n, line, log_path, before, close_reason='completed' if target == 'closed' else None)
     return f"#{n} {cur or '-'} → {target}"
 
 
@@ -730,6 +767,7 @@ def capture(gh, repo, text, source, tag=None, at=None, offline_ok=True):
         raise Refused('capture needs the words to capture')
     if not re.fullmatch(r'\S+', source or ''):
         raise Refused('capture needs --source <link or name without spaces>')
+    line = conveyor_line('capture', None, 'inbox')
     try:
         n = recent_capture(gh, repo, text, at)
         if n:
@@ -741,7 +779,7 @@ def capture(gh, repo, text, source, tag=None, at=None, offline_ok=True):
         if not offline_ok or not UNREACHABLE.search(e.stderr or ''):
             raise
         return spool_add(gh, repo, text, source, tag, at)
-    record(gh, repo, n, conveyor_line('capture', None, 'inbox'))
+    record(gh, repo, n, line)
     return n, f'#{n}'
 
 
@@ -774,17 +812,19 @@ def prio(gh, repo, n, level, log=None):
     want, held = f'prio:{level}', [x for x in label_names(d) if x.startswith('prio:')]
     if held == [want]:
         return f'#{n} is already {want}'
+    line = conveyor_line('prio', cur, cur)
     relabel(gh, repo, n, [want], [x for x in held if x != want])
-    record(gh, repo, n, conveyor_line('prio', cur, cur), log_path)
+    record(gh, repo, n, line, log_path)
     return f'#{n} {want}'
 
 
 def publish_preflight(gh, repo, parent, body_file, owner, domain, session):
-    """Everything publish's belt step needs, checked before any write (conveyor.md § Lanes, `next`)."""
+    """Everything publish's belt step needs, its receipt lines included, built before any write (conveyor.md § Lanes, `next`)."""
     if not re.fullmatch(r'\S+', owner or ''):
         raise Refused('publish needs --owner <name without spaces>: lane next needs the Owner: line')
     if not domain:
         raise Refused('publish needs --domain: one domain:<name> label from the knowledge store')
+    session = session_id(session)
     k = knowledge()
     if k is None:
         raise Refused('§ Map says Knowledge: none, so there is no domain vocabulary to publish against')
@@ -807,8 +847,11 @@ def publish_preflight(gh, repo, parent, body_file, owner, domain, session):
         missing = room_missing(gh, repo, 'next', label_names(current) if current else [])
         if missing:
             raise Refused(f"cannot enter next; missing: {'; '.join(missing)}")
-    return {'owner': owner, 'session': session_id(session), 'from': frm, 'current': current,
-            'labels': ['lane:next', f'domain:{domain}']}
+    owner_line = f'Owner: {owner} · session {session} · {stamp(now())}'
+    if not re.fullmatch(receipt('owner')['pattern'], owner_line):
+        raise Refused(f'malformed owner line: {owner_line}')
+    return {'owner': owner, 'owner_line': owner_line, 'line': conveyor_line('publish', frm, 'next'), 'from': frm,
+            'current': current, 'labels': ['lane:next', f'domain:{domain}']}
 
 
 def publish_belt(gh, repo, n, p):
@@ -821,23 +864,30 @@ def publish_belt(gh, repo, n, p):
     lines = comment_lines(cur) if cur else []
     owners = [m['owner'] for line in lines if (m := re.match(receipt('owner')['pattern'], line))]
     if not owners or owners[-1] != p['owner']:
-        gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'],
-           f"Owner: {p['owner']} · session {p['session']} · {stamp(now())}\n")
+        comment(gh, repo, n, [p['owner_line']])
     if p['from'] != 'next' or not any(t['command'] == 'publish' for t in timeline_of(lines)):
-        record(gh, repo, n, conveyor_line('publish', p['from'], 'next'))
+        record(gh, repo, n, p['line'])
 
 
-def decide(gh, repo, n, text, question, session, log=None):
-    """Record the user's answer on the issue with its question link and the calling session, and as a decision row."""
+def decision_scope(scope, repo):
+    """knowledge.record's scope: global, tenant:<id> or repo:<name>; default this repo (conveyor.json knowledge.functions.record)."""
+    if scope is None:
+        return 'repo:' + re.sub(r'[^a-z0-9]+', '-', repo.split('/')[1].lower()).strip('-')
+    if not re.fullmatch(r'global|(tenant|repo):[A-Za-z0-9._-]+', scope):
+        raise Refused(f'--scope is global, tenant:<id> or repo:<name>, not {scope!r}')
+    return scope
+
+
+def decide(gh, repo, n, text, question, session, log=None, scope=None):
+    """Record the user's answer on the issue with its question link and the calling session, then as a decision row;
+    with the brain unmapped the line is still written and the row is pending (conveyor.json knowledge.unmapped_brain)."""
     text = (text or '').strip()
     if not re.fullmatch(r'https?://\S+', question or ''):
         raise Refused('decide needs --question <link to the question>')
     if not text or '\n' in text or '|' in text:
         raise Refused("a decision is one line of the user's words, without |")
-    session = session_id(session)
+    session, scope = session_id(session), decision_scope(scope, repo)
     k = knowledge()
-    if k is not None and k.notice:
-        raise Refused(f'{k.notice}: decide records its decision row in the brain (conveyor.md § Knowledge)')
     d = load(gh, repo, n)
     cur, (log_path, _), at = lane_of(d), task_log(log), now()
     line = f'Decision: {text} · {stamp(at)} · question {question} · session {session}'
@@ -846,8 +896,9 @@ def decide(gh, repo, n, text, question, session, log=None):
     record(gh, repo, n, conveyor_line('decide', cur, cur), log_path, [line])
     if k is None:
         return f'#{n} decision recorded; Knowledge: none, so no decision row'
+    if k.notice:
+        return f'#{n} decision recorded; decision row PENDING: {k.notice}'
     ident = re.sub(r'[^a-z0-9]+', '-', f"{repo.split('/')[1]}-{n}-{at:%Y%m%d%H%M}".lower()).strip('-')
-    scope = 'repo:' + re.sub(r'[^a-z0-9]+', '-', repo.split('/')[1].lower()).strip('-')
     out = k.record('decision', ident, at.strftime('%Y-%m-%d'), question, text, scope=scope)
     return f"#{n} decision recorded; decision row {out['path']}"
 
@@ -877,7 +928,7 @@ def action_record(path):
 def ask(gh, repo, n, kind, given, record_file=None, log=None, more=None):
     """Build the decision card (conveyor.json card), or record `Asked for more` with --more."""
     d = load(gh, repo, n)
-    cur, (log_path, log_lines) = lane_of(d), task_log(log)
+    cur, (log_path, _) = lane_of(d), task_log(log)
     if more is not None:
         if not re.fullmatch(r'https?://\S+', more):
             raise Refused('--more needs the question link')
@@ -892,11 +943,11 @@ def ask(gh, repo, n, kind, given, record_file=None, log=None, more=None):
         raise Refused(f"the script fills {', '.join(stray)} on a {kind} card")
     if cur is None:
         raise Refused(f'#{n} has no lane label')
-    f, order = Facts(gh, repo, d, log_lines), lanes()
+    f, order = Facts(gh, repo, d), lanes()
     present, missing = [], []
     for lane in belt()['lanes'][:order.index(cur) + 1]:
         for name, k in Counter(lane['requires']).items():
-            (present if have(name, k, f) else missing).append(name)
+            (present if have(name, k, f) else missing).append(receipt(name)['label'])
     fields = {'goal': f"{d['title']} · step {order.index(cur) + 1} of {len(order)}", 'from': origin(d),
               'checked': f"{', '.join(dict.fromkeys(present)) or 'none'} · Not yet: {', '.join(dict.fromkeys(missing)) or 'none'}",
               'link': d['url'], **{k: (v or '').strip() for k, v in given.items() if k in ai}}
@@ -942,11 +993,34 @@ def brief(gh, repo, n, log=None):
     return '\n'.join(out)
 
 
-def close_belt(gh, repo, n, learned, log=None):
-    """Close a belt issue: the `closed` lane's receipts, including the `Learned:` closing line."""
+def close_belt(gh, repo, n, learned, log=None, no_release=None, why=None):
+    """Close a belt issue: the `closed` lane's receipts with the `Learned:` closing line, or, with --no-release, from
+    any lane when nothing landed (`No release:` and `Learned:`; refused once `Pushed:` or `deploy:` is on the issue)."""
     if not learned:
         raise Refused('close needs --learned: none, lesson: <text>, answered: <q> => <a> or page-fix: <path>: <text>')
-    return move(gh, repo, n, 'closed', log=log, learned=learned, command='close')
+    if no_release is None:
+        return move(gh, repo, n, 'closed', log=log, learned=learned, command='close')
+    if not why:
+        raise Refused('close --no-release needs --why <one line>')
+    d = load(gh, repo, n)
+    if d['state'] != 'OPEN':
+        raise Refused(f'#{n} is closed')
+    cur, (log_path, _) = lane_of(d), task_log(log)
+    rule = receipt('no_release')
+    f = Facts(gh, repo, d)
+    landed = [x for x in rule['refused_if'] if have(x, 1, f)]
+    if landed:
+        raise Refused(f"#{n} carries {', '.join(describe(x) for x in landed)}; only the monitored path closes a landed item")
+    lines = [f'No release: {no_release} · {why}', f'Learned: {learned}']
+    f = Facts(gh, repo, d, lines)
+    missing = missing_for(f, lane_rule('closed')['requires_without_release'])
+    if missing:
+        raise Refused(f"#{n} cannot close without a release; missing: {'; '.join(missing)}")
+    line = conveyor_line('close', cur, 'closed', f.head)
+    relabel(gh, repo, n, ['lane:closed'], [f'lane:{cur}'] if cur else [])
+    record(gh, repo, n, line, log_path, lines,
+           close_reason='not planned' if no_release in ('duplicate', 'declined') else 'completed')
+    return f"#{n} {cur or '-'} → closed (no release: {no_release})"
 
 
 def open_belt(gh, repo):
@@ -964,7 +1038,7 @@ def since(i):
 
 
 def pull_order(backlog):
-    """prio:now, prio:next, prio:later, then deadline, then age (conveyor.md § Limits and pull)."""
+    """prio:now, prio:next, prio:later, then deadline, then age (conveyor.md § Flow)."""
     def key(i):
         rank = min((PRIO_RANK[x] for x in label_names(i) if x in PRIO_RANK), default=len(PRIO_RANK))
         m = re.search(r'^Deadline: (\d{4}-\d{2}-\d{2})', i.get('body', ''), re.M)
@@ -972,50 +1046,78 @@ def pull_order(backlog):
     return sorted(backlog, key=key)
 
 
+def registry(issues):
+    """conveyor.json registry: {session: [(issue, 'owner'|'claim')]} from the latest `Owner:` and the holding `Claimed:`
+    session on each open belt issue, in the session_id forms only."""
+    form, out = re.compile(belt()['session_id']['pattern']), {}
+    for i in issues:
+        lines = comment_lines(i)
+        owners = [m['session'] for line in corrected(lines, lines) if (m := re.match(receipt('owner')['pattern'], line))]
+        held = [(s, role) for s, role in ((owners[-1] if owners else None, 'owner'),
+                                          (claim_owner(i.get('comments', [])), 'claim')) if s and form.fullmatch(s)]
+        for s, role in held:
+            out.setdefault(s, []).append((i, role))
+    return out
+
+
+def registry_lines(issues):
+    reg = registry(issues)
+    out = [f'Sessions: {len(reg)} on the belt']
+    for s, held in sorted(reg.items()):
+        claims = [i for i, role in held if role == 'claim']
+        state = 'working' if any('parked' not in label_names(i) for i in claims) else 'done' if claims else 'owner'
+        parts = [f"claimed #{i['number']} ({lane_of(i)}{', parked' if 'parked' in label_names(i) else ''})" for i in claims]
+        parts += [f"owns #{i['number']}" for i, role in held if role == 'owner']
+        out.append(f"- {s} · {state} · {', '.join(parts)}")
+    return out
+
+
+def test_slots():
+    """(free, total, reserve) of the machine-wide test slots (`safeguard-cli test-slot`): a slot is free when nothing
+    holds its lock file; probing takes a shared lock for an instant and creates no file."""
+    config = machine_config()
+    total = configured_slots(config)[0]
+    reserve, directory, free = configured_reserve(config, total), slot_dir(), 0
+    for index in range(total):
+        path = directory / f'slot-{index}.lock'
+        if not path.exists():
+            free += 1
+            continue
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            free += 1
+        except BlockingIOError:
+            pass
+        finally:
+            os.close(fd)
+    return free, total, reserve
+
+
 def start_reviewer(repo, n, head, pr_url):
     """The review fallback: a fresh-context reviewer session through delegate.py runs test-review on that head."""
     prompt = (f'Run /test-review on {pr_url} at head {head} ({repo}#{n}). You are the fresh-context reviewer started '
-              f'after Review fallback. Record `Reviewer: session <your session id> · head {head} · fallback` and '
-              f'`Reviewed: {head} YES|NO` in the task log.\n')
-    subprocess.run([sys.executable, str(RELEASE_ROOT / 'skills' / 'agent-coordination' / 'scripts' / 'delegate.py'),
+              f'after Review fallback. Post `Reviewer: session <your session id> · head {head} · fallback` and '
+              f'`Reviewed: {head} YES|NO` on the issue.\n')
+    subprocess.run([sys.executable, str(layout.ROOT / 'skills' / 'agent-coordination' / 'scripts' / 'delegate.py'),
                     'start', '--prompt-file', '-', '--cwd', str(project()[0]), '--name', f'review-fallback-{n}',
                     '--reason', 'review fallback', '--legacy-unbound'], input=prompt, text=True, capture_output=True, check=True)
 
 
 def knowledge_digest(t):
-    """Weekly: what changed in the brain this week, one undo per change."""
-    names = knowledge_names()
-    if names is None:
+    """Weekly: what changed in the knowledge stores this week, one undo per change, read through knowledge.changes."""
+    k = knowledge()
+    if k is None:
         return ['Knowledge digest: Knowledge: none in § Map']
-    path = (machine_config().get('knowledge_stores') or {}).get(names[1]) if names[1] else None
-    if not path or not Path(path).expanduser().is_dir():
-        return ['Knowledge digest: brain: not configured on this machine']
-    changes = [c for c in subprocess.run(['git', '-C', str(Path(path).expanduser()), 'log', f'--since={(t - WEEK).isoformat()}',
-                                          '--format=%h %s'], capture_output=True, text=True, check=True).stdout.split('\n') if c]
-    return [f'Knowledge digest: {len(changes)} change(s) this week'] + [
-        f'- {s} · undo: revert {h} in {names[1]}' for h, _, s in (c.partition(' ') for c in changes)]
+    changes = k.changes((t - WEEK).isoformat())
+    return [*([k.notice] if k.notice else []), f'Knowledge digest: {len(changes)} change(s) this week'] + [
+        f"- {c['store']}:{c['path']} · {c['summary']} · undo: revert {c['sha'][:12]} in {c['store']}" for c in changes]
 
 
-def sweep(gh, repo, weekly=False):
-    """The board (conveyor.md § Sweep). Writes only the pull, spool flush, fallback start and knowledge log, each with a receipt."""
-    t, lim, fallback = now(), limits(), review_fallback()
-    asks, violations, wrote, notes = [], [], [], []
-    filed, waiting = flush_spool(gh, repo)
-    wrote += [f'filed spooled capture #{x}' for x in filed]
-    _, by = open_belt(gh, repo)
-    room = lim['Build'] - len(by['in-progress']) - len(by['next'])
-    for i in pull_order(by['backlog']):
-        if room <= 0:
-            break
-        try:
-            move(gh, repo, i['number'], 'next', command='sweep')
-        except Refused as e:
-            violations.append(f'pull refused: {e}')
-            continue
-        wrote.append(f"pulled #{i['number']} to next")
-        room -= 1
-    if any(w.startswith('pulled') for w in wrote):
-        _, by = open_belt(gh, repo)
+def fallback_reviews(gh, repo, by, t, write, violations, wrote):
+    """Review past `Review fallback` with no verdict: a board line each; with `write`, start at most FALLBACK_STARTS
+    fresh-context reviewers, none without a free test slot (conveyor.json sweep.fallback_starts)."""
+    fallback, started = review_fallback(), 0
     for i in by['in-review']:
         f = Facts(gh, repo, i)
         req = [m for line in f.comments if (m := re.match(receipt('review_requested')['pattern'], line))]
@@ -1023,13 +1125,60 @@ def sweep(gh, repo, weekly=False):
             continue
         head = req[-1]['head']
         violations.append(f"review past fallback: #{i['number']} head {head} requested {req[-1]['time']}")
-        if not any(x['command'] == 'sweep' and x['to'] == 'in-review' and x['head'] == head for x in f.timeline):
-            if isinstance(gh, DryRun):
-                print(f"would start a fallback reviewer for #{i['number']} at {head}")
-            else:
-                start_reviewer(repo, i['number'], head, f.prs[0]['url'] if f.prs else i['url'])
-            record(gh, repo, i['number'], conveyor_line('sweep', 'in-review', 'in-review', head))
-            wrote.append(f"fallback reviewer started for #{i['number']} at {head}")
+        if not write or any(x['command'] == 'sweep' and x['to'] == 'in-review' and x['head'] == head for x in f.timeline):
+            continue
+        if started >= FALLBACK_STARTS:
+            violations.append(f"fallback start waits: #{i['number']} (one start per sweep)")
+            continue
+        free, total, reserve = test_slots()
+        if free <= reserve:
+            violations.append(f"fallback start waits: #{i['number']} (no free test slot: {free} of {total} free)")
+            continue
+        line = conveyor_line('sweep', 'in-review', 'in-review', head)
+        if isinstance(gh, DryRun):
+            print(f"would start a fallback reviewer for #{i['number']} at {head}")
+        else:
+            start_reviewer(repo, i['number'], head, f.prs[0]['url'] if f.prs else i['url'])
+        record(gh, repo, i['number'], line)
+        started += 1
+        wrote.append(f"fallback reviewer started for #{i['number']} at {head}")
+
+
+def log_closed(gh, repo, closed, violations, wrote, notes):
+    """Knowledge `log` for each closed belt issue not yet logged; its sweep line is built before the write."""
+    k = False
+    for i in closed:
+        lines = comment_lines(i)
+        if any(x['command'] == 'sweep' and x['to'] == 'closed' for x in timeline_of(lines)):
+            continue
+        k = knowledge() if k is False else k
+        if k is None:
+            notes.append('knowledge log: Knowledge: none in § Map')
+            return
+        keep = [x for x in lines if timeline_of([x]) or re.match(belt()['timeline']['correction'], x)]
+        line = conveyor_line('sweep', 'closed', 'closed')
+        try:
+            out = k.log(i['number'], keep)
+        except ValueError as e:
+            violations.append(f"knowledge log refused for #{i['number']}: {e}")
+            continue
+        record(gh, repo, i['number'], line)
+        wrote.append(f"knowledge log #{i['number']}: {out['path']}")
+
+
+def board(gh, repo, weekly=False, write=True):
+    """The board (conveyor.md § Sweep) as (lines, counts). With `write` it also flushes the spool, starts review
+    fallbacks and logs closed issues, each with a receipt; without, it is read-only. It names the next items to pull
+    (`Pull next:`) and never moves them: publish does."""
+    t, lim = now(), limits()
+    asks, violations, wrote, notes = [], [], [], []
+    if write:
+        filed, waiting = flush_spool(gh, repo)
+        wrote += [f'filed spooled capture #{x}' for x in filed]
+    else:
+        waiting = [e for e in spool_read(spool_path()) if e['repo'] == repo]
+    issues, by = open_belt(gh, repo)
+    fallback_reviews(gh, repo, by, t, write, violations, wrote)
     for i in by['ready-to-release']:
         f = Facts(gh, repo, i)
         moved = [x for x in f.timeline if x['to'] == 'ready-to-release']
@@ -1048,7 +1197,7 @@ def sweep(gh, repo, weekly=False):
     violations += [f"inbox unsorted over 24 h: #{i['number']}" for i in late]
     if waiting and t - min(parse_stamp(e['at']) for e in waiting) > SPOOL_LATE:
         violations.append(f'spool over 15 min: {len(waiting)} capture(s) not yet filed')
-    for i in [x for group in by.values() for x in group]:
+    for i in issues:
         lines = comment_lines(i)
         asked = [x['time'] for x in timeline_of(lines) if x['command'] == 'ask']
         decided = [m['time'] for line in lines if (m := re.match(receipt('decision')['pattern'], line))]
@@ -1058,28 +1207,13 @@ def sweep(gh, repo, weekly=False):
             asks.append(f"- #{i['number']} {i['title']} (asked {asked[-1]})")
     closed = json.loads(gh(['issue', 'list', '-R', repo, '--state', 'closed', '--label', 'lane:closed', '--limit', '100',
                             '--json', 'number,comments']))
-    k = False
-    for i in closed:
-        lines = comment_lines(i)
-        if any(x['command'] == 'sweep' and x['to'] == 'closed' for x in timeline_of(lines)):
-            continue
-        k = knowledge() if k is False else k
-        if k is None:
-            notes.append('knowledge log: Knowledge: none in § Map')
-            break
-        keep = [x for x in lines if timeline_of([x]) or re.match(belt()['timeline']['correction'], x)]
-        try:
-            out = k.log(i['number'], keep)
-        except ValueError as e:
-            violations.append(f"knowledge log refused for #{i['number']}: {e}")
-            continue
-        record(gh, repo, i['number'], conveyor_line('sweep', 'closed', 'closed'))
-        wrote.append(f"knowledge log #{i['number']}: {out['path']}")
+    if write:
+        log_closed(gh, repo, closed, violations, wrote, notes)
     if weekly:
         old = [i for i in by['backlog'] if t - parse_iso(i['createdAt']) > BACKLOG_OLD]
         if old:
             asks.append(f"- Weekly: keep, drop or bump? {', '.join('#' + str(i['number']) for i in old)} (backlog over 30 days)")
-        recent = [x for i in [*[x for g in by.values() for x in g], *closed] for x in comment_lines(i)]
+        recent = [x for i in [*issues, *closed] for x in comment_lines(i)]
         in_week = lambda when: t - parse_stamp(when) <= WEEK  # noqa: E731
         more = [m for x in recent if (m := re.match(receipt('asked_more')['pattern'], x)) and in_week(m['time'])]
         cards = len([x for x in timeline_of(recent) if x['command'] == 'ask' and in_week(x['time'])]) - len(more)
@@ -1087,21 +1221,91 @@ def sweep(gh, repo, weekly=False):
         notes.append(f'Questions (7 days): asked {cards} ({cards / 7:.1f}/day) · decided {len(decided)} · tell me more {len(more)}')
         notes += knowledge_digest(t)
     from .disk_check import check
+    slots = test_slots()
     notes += [check(str(Path.cwd()), machine_config())[1],
-              'Not read: sessions, test slots, denial log (their belt sources are not built yet)']
-    backlog = by['backlog']
+              f"Test slots: {slots[0]} of {slots[1]} free{f' ({slots[2]} kept for release runs)' if slots[2] else ''}",
+              'Not read: denial log (its belt source is not built yet)']
+    backlog, parked = by['backlog'], [i for i in issues if 'parked' in label_names(i)]
     count = lambda level: len([i for i in backlog if f'prio:{level}' in label_names(i)])  # noqa: E731
     oldest = f"{int((t - min(since(i) for i in by['inbox'])).total_seconds() // 3600)}h" if by['inbox'] else '-'
     shown = {'next': free, 'in-progress': lim['Build'], 'in-review': lim['Review'], 'ready-to-release': lim['Train']}
     coming = [f"- #{i['number']} {i['title']} ({lane})" for lane in ('in-review', 'ready-to-release') for i in by[lane]]
-    return '\n'.join([
+    pull = pull_order(backlog)[:max(free - len(by['next']), 0)]
+    why = {i['number']: m for i in parked for line in comment_lines(i) if (m := re.match(receipt('parked')['pattern'], line))}
+    lines = [
         f'Need from you: {len(asks)}', *asks,
         'Lanes: ' + ' · '.join(f"{lane} {len(by[lane])}{'/' + str(shown[lane]) if lane in shown else ''}"
                                for lane in lanes() if lane != 'closed'),
         f"Backlog: {len(backlog)} (now {count('now')} · next {count('next')} · later {count('later')}) · oldest unsorted {oldest}",
+        f"Pull next: {', '.join('#' + str(i['number']) for i in pull) or 'none'} (publish moves them)",
         f"Coming to you next: {len(coming)}", *coming,
+        f'Parked: {len(parked)}', *[f"- #{i['number']} {i['title']}" + (
+            f" · waiting on {why[i['number']]['who']} until {why[i['number']]['until']} since {why[i['number']]['time']}"
+            if i['number'] in why else '') for i in parked],
+        *registry_lines(issues),
         f'Violations: {len(violations)}', *[f'- {v}' for v in violations],
-        f'Wrote: {len(wrote)}', *[f'- {w}' for w in wrote], *notes])
+        f'Wrote: {len(wrote)}', *[f'- {w}' for w in wrote], *notes]
+    counts = {'questions': len(asks), 'in-progress': len(by['in-progress']), 'in-review': len(by['in-review']),
+              'parked': len(parked)}
+    return lines, counts, [*issues, *closed]
+
+
+def sweep(gh, repo, weekly=False):
+    return '\n'.join(board(gh, repo, weekly)[0])
+
+
+def default_repo(gh):
+    return gh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner']).strip()
+
+
+def role_log(session):
+    """(role, log path) of the calling session: its name in workers.json `roles` and that role's log.md in `role_logs`."""
+    config = machine_config()
+    roles = config.get('roles') or {}
+    role = next((name for name, sid in roles.items() if sid == session), None)
+    if role is None:
+        raise Refused(f"session {session} is not in workers.json roles ({', '.join(roles) or 'none set'}); "
+                      'resume serves the long-lived sessions named there')
+    path = (config.get('role_logs') or {}).get(role)
+    if not path or not Path(path).expanduser().is_file():
+        raise Refused(f'workers.json role_logs names no existing log.md for {role}: {path}')
+    return role, Path(path).expanduser()
+
+
+def resume(gh, repo, session=None):
+    """The sweep's board, read-only, plus what changed since the last `Checkpoint:` in the role's log, within the cap;
+    then one `Checkpoint:` line appended to that log, its only write (conveyor.json resume)."""
+    spec = belt()['resume']
+    role, path = role_log(session_id(session))
+    pattern = re.compile(spec['checkpoint']['pattern'])
+    marks = [m for line in path.read_text().split('\n') if (m := pattern.match(line.strip()))]
+    lines, counts, issues = board(gh, repo, write=False)
+    after = parse_stamp(marks[-1]['time']) if marks else None
+    changed = []
+    for i in issues if after else []:
+        own = corrected(comment_lines(i), comment_lines(i))
+        changed += [f"- #{i['number']} {x['command']} {x['from']} → {x['to']} at {x['time']}"
+                    for x in timeline_of(own) if parse_stamp(x['time']) >= after and x['command'] != 'sweep']
+        changed += [f"- #{i['number']} {line}" for line in own
+                    if (m := re.match(receipt('decision')['pattern'], line)) and parse_stamp(m['time']) >= after]
+    head = [f'Resume for {role} · {repo}']
+    lines = head + lines + ([f"Since checkpoint {marks[-1]['time']}: {len(changed)} change(s)", *changed] if marks
+                            else [f'Since checkpoint: none earlier in {path}'])
+    mark = (f"Checkpoint: {stamp(now())} · tokens - · questions {counts['questions']} · in-progress {counts['in-progress']}"
+            f" · in-review {counts['in-review']} · parked {counts['parked']}")
+    if not pattern.fullmatch(mark):
+        raise Refused(f'malformed checkpoint line: {mark}')
+    cap, out = spec['cap'], []
+    for k, line in enumerate(lines):
+        rest = f'… {len(lines) - k} more line(s) cut at the resume cap; run issues-cli sweep for the full board'
+        if len(out) + 3 > cap['lines'] or len('\n'.join([*out, line, rest, mark])) >= cap['chars']:
+            out.append(rest)
+            break
+        out.append(line)
+    if not isinstance(gh, DryRun):
+        with path.open('a') as fh:
+            fh.write(mark + '\n')
+    return '\n'.join([*out, mark])
 
 
 def main(argv=None, gh=None):
@@ -1116,7 +1320,8 @@ def main(argv=None, gh=None):
     p.add_argument('--session', help='default: the desktop session id, else the CLI session id')
     log = argparse.ArgumentParser(add_help=False)
     log.add_argument('--repo', required=True)
-    log.add_argument('--log', help="the task's log.md inside the working directory: log receipts are read and the timeline line appended")
+    log.add_argument('--log', help="the task's log.md inside the working directory: the timeline line is appended; "
+                     'lane and close copy the stage\'s receipt lines from it onto the issue')
     cap = subs.add_parser('capture', parents=[log], help='capture first: the words verbatim as an inbox issue')
     cap.add_argument('--source', required=True); cap.add_argument('--tag', choices=['now', 'next'])
     cap.add_argument('text', help="the words verbatim; '-' reads stdin")
@@ -1130,6 +1335,7 @@ def main(argv=None, gh=None):
     dc = subs.add_parser('decide', parents=[log], help="record the user's answer with its question link")
     dc.add_argument('number', type=int); dc.add_argument('text')
     dc.add_argument('--question', required=True); dc.add_argument('--session')
+    dc.add_argument('--scope', help='decision row scope: global | tenant:<id> | repo:<name> (default: this repo)')
     ak = subs.add_parser('ask', parents=[log], help='print the decision card, or record Asked for more')
     ak.add_argument('number', type=int); ak.add_argument('--kind', choices=['go', 'choice'])
     for field in ('changes', 'if_yes', 'if_no', 'if_wait', 'recommended', 'undo'):
@@ -1138,9 +1344,12 @@ def main(argv=None, gh=None):
     ak.add_argument('--more', metavar='QUESTION_LINK', help='"Tell me more": record Asked for more; not a decision')
     br = subs.add_parser('brief', parents=[log], help="render the station's brief")
     br.add_argument('number', type=int)
-    sw = subs.add_parser('sweep', help='the board; pulls, flushes the spool, starts review fallbacks, logs closed issues')
+    sw = subs.add_parser('sweep', help='the board; flushes the spool, starts review fallbacks, logs closed issues')
     sw.add_argument('--repo', required=True)
     sw.add_argument('--weekly', action='store_true', help='add the backlog-age question, question counts and knowledge digest')
+    rs = subs.add_parser('resume', help="the board plus changes since the role's last Checkpoint:, then one Checkpoint: line")
+    rs.add_argument('--repo', help="default: the working directory's GitHub repo")
+    rs.add_argument('--session', help='default: the desktop session id, else the CLI session id')
     c = subs.add_parser('claim')
     c.add_argument('--repo', required=True); c.add_argument('number', type=int)
     c.add_argument('--branch', required=True)
@@ -1163,6 +1372,9 @@ def main(argv=None, gh=None):
     x.add_argument('draft', help='issue number (belt) or draft folder (trunk flow)'); x.add_argument('--sha')
     x.add_argument('--evidence-file', help='versioned deployment and per-issue closure evidence JSON; required to write')
     x.add_argument('--learned', help='belt: none | lesson: … | answered: … => … | page-fix: <path>: …')
+    x.add_argument('--no-release', choices=['answered', 'chore', 'duplicate', 'declined', 'skills'],
+                   help='belt: close from any lane when nothing landed')
+    x.add_argument('--why', help='with --no-release: one line on why')
     args = parser.parse_args(argv)
     gh = gh or real_gh
     if args.dry_run:
@@ -1178,7 +1390,7 @@ def main(argv=None, gh=None):
         elif args.action == 'lane':
             print(move(gh, args.repo, args.number, args.lane, args.reason, args.log, args.tests, args.learned))
         elif args.action == 'decide':
-            print(decide(gh, args.repo, args.number, args.text, args.question, args.session, args.log))
+            print(decide(gh, args.repo, args.number, args.text, args.question, args.session, args.log, args.scope))
         elif args.action == 'ask':
             given = {k: getattr(args, k) for k in ('changes', 'if_yes', 'if_no', 'if_wait', 'recommended', 'undo')}
             print(ask(gh, args.repo, args.number, args.kind, given, args.record, args.log, args.more))
@@ -1186,8 +1398,10 @@ def main(argv=None, gh=None):
             print(brief(gh, args.repo, args.number, args.log))
         elif args.action == 'sweep':
             print(sweep(gh, args.repo, args.weekly))
+        elif args.action == 'resume':
+            print(resume(gh, args.repo or default_repo(gh), args.session))
         elif args.action == 'close' and args.draft.isdigit():
-            print(close_belt(gh, args.repo, int(args.draft), args.learned, args.log))
+            print(close_belt(gh, args.repo, int(args.draft), args.learned, args.log, args.no_release, args.why))
         elif args.action == 'close' and not args.sha:
             raise Refused('trunk-flow close needs --sha')
         elif args.action == 'claim':
@@ -1204,7 +1418,7 @@ def main(argv=None, gh=None):
             print(json.dumps(result, indent=2))
         else:
             closes(Path(args.draft))
-    except (Refused, subprocess.CalledProcessError, OSError, ValueError) as e:
+    except (Refused, subprocess.CalledProcessError, OSError, ValueError, RuntimeError) as e:
         print(f'issues-cli: {getattr(e, "stderr", None) or e}', file=sys.stderr)
         return 1
     return 0
