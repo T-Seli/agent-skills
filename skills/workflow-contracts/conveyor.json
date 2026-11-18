@@ -178,7 +178,7 @@
       },
       "find": {
         "args": "words",
-        "returns": "[{id, text, source, pending}] from answered, decisions and inbox/",
+        "returns": "[{file, id, text, source, score, pending}] from answered, decisions and inbox/",
         "used_by": "sort"
       },
       "domains": {
