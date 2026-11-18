@@ -421,7 +421,7 @@
         "issue_number": "#\\d+",
         "commit_id": "\\b(?=[0-9a-f]*\\d)[0-9a-f]{7,40}\\b",
         "branch_like": "(?<![\\w:/.])[a-z0-9._-]+/[a-z0-9._/-]*[a-z0-9_-](?![\\w/])",
-        "colon_label": "(?m)^\\s*[A-Z][A-Za-z ]{0,24}:",
+        "colon_label": "(?m)^\\s*[A-Z][A-Za-z ]{0,24}:(?=\\s|$)(?!\\s*https?://)",
         "test_count": "\\b\\d+\\s+tests?\\b"
       }
     },

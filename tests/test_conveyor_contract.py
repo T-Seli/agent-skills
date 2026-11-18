@@ -175,6 +175,8 @@ class ActionsAndCards(unittest.TestCase):
                           'branch_like': 'Built on feat/conveyor-t1 today.', 'colon_label': 'Changes: the wording.',
                           'test_count': 'All 75 tests pass.'}.items():
             self.assertRegex(bad, sh['refuse'][name], name)
+        for link_line in ('See https://x.test/p/1', 'Before and after: https://x.test/p/1'):
+            self.assertNotRegex(link_line, sh['refuse']['colon_label'], link_line)
         self.assertIn('never in the short form', SCHEMA['card']['detail']['go_shows'])
 
     def test_knowledge_interface_is_named(self):
