@@ -1,5 +1,5 @@
 {
-  "note": "Standing permissions for the belt (skills/workflow-contracts/conveyor.md § Permissions). tool: bash (command prefix), mcp (tool name, * wildcard), edit (path glob). guard names the hook that narrows an allow (T3). install.sh renders this for Claude and Codex (T5); the user installs it.",
+  "note": "Standing permissions for the belt (skills/workflow-contracts/conveyor.md § Permissions). tool: bash (command prefix), mcp (tool name, * wildcard), edit (path glob). guard is the basename of the hooks/<guard>.sh file that narrows an allow (T3); rendering fails loudly if it is missing. install.sh renders this for Claude and Codex (T5); the user installs it. An entry with `held` is not rendered until the hold is lifted by a reviewed change.",
   "version": 2,
   "invocation": {
     "issues-cli": "~/.agents/skills/workflow-contracts/scripts/issues-cli",
@@ -87,6 +87,30 @@
       "why": "refuses without the closed-lane receipts"
     },
     {
+      "id": "issues-feed",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli feed",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "keys, dedupes and captures feed rows; never closes"
+    },
+    {
+      "id": "issues-park",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli park",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "writes the hand-over and frees the slot"
+    },
+    {
+      "id": "issues-resume",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli resume",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "read-only board since the last checkpoint; writes only the Checkpoint: line"
+    },
+    {
       "id": "disk-check",
       "tool": "bash",
       "match": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli disk-check",
@@ -140,8 +164,9 @@
       "match": "mcp__scheduled-tasks__create_scheduled_task",
       "kind": "bookkeeping",
       "mode": "allow",
-      "why": "deploy arms first-traffic and 24 h monitors",
-      "guard": "monitor-id"
+      "why": "deploy arms first-traffic and 24 h monitors; other ids ask",
+      "guard": "monitor-id-guard",
+      "held": "until the T3 guards and T2 run-approved pass their C3 rerun; install.sh renders no held entry"
     },
     {
       "id": "monitor-delete",
@@ -149,8 +174,9 @@
       "match": "mcp__scheduled-tasks__delete_scheduled_task",
       "kind": "bookkeeping",
       "mode": "allow",
-      "why": "a monitor that recorded its verdict",
-      "guard": "monitor-id"
+      "why": "a belt monitor that recorded its verdict; other ids ask",
+      "guard": "monitor-id-guard",
+      "held": "until the T3 guards and T2 run-approved pass their C3 rerun; install.sh renders no held entry"
     },
     {
       "id": "archive-done",
@@ -158,8 +184,17 @@
       "match": "mcp__ccd_session_mgmt__archive_session",
       "kind": "bookkeeping",
       "mode": "allow",
-      "why": "verified-done belt sessions only",
-      "guard": "closeout"
+      "why": "registry sessions with every claimed issue closed or parked; outside the registry asks",
+      "guard": "archive-guard",
+      "held": "until the T3 guards and T2 run-approved pass their C3 rerun; install.sh renders no held entry"
+    },
+    {
+      "id": "prepare-action",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli prepare-action",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "writes the action record (parameters only); the go stays run-approved"
     },
     {
       "id": "run-approved",
@@ -175,7 +210,8 @@
       "match": "gh pr merge",
       "kind": "deny",
       "mode": "deny",
-      "why": "merges go through run-approved"
+      "why": "merges go through run-approved",
+      "held": "until the T3 guards and T2 run-approved pass their C3 rerun; install.sh renders no held entry"
     },
     {
       "id": "no-email-send",
