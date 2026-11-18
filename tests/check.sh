@@ -25,8 +25,8 @@ def lines(p): return text(p).count("\n")
 CONTRACTS = "skills/workflow-contracts/contracts.md"
 TEMPLATE = "skills/workflow-contracts/project-CLAUDE-template.md"
 
-# Budgets (README § Change the framework). CONTRACTS 92: +2 for § Defaults Lane limits and Review fallback (conveyor Wave 0); T4 removes § Scheduler.
-budgets = [("global/CLAUDE.md", words, 600), (CONTRACTS, lines, 92), (TEMPLATE, words, 1000),
+# Budgets (README § Change the framework). CONTRACTS 93: +3 for § Defaults Lane limits, Review fallback and Time boxes (conveyor Wave 0, 0b); T4 removes § Scheduler. TEMPLATE 1050 words: + the Knowledge field and # Compact instructions (conveyor 0b, spec 2f).
+budgets = [("global/CLAUDE.md", words, 600), (CONTRACTS, lines, 93), (TEMPLATE, words, 1050),
            ("CLAUDE.md", words, 1000), ("output-styles/orchestrator.md", lines, 25), ("agents/scout.md", lines, 25)]
 budgets += [(p, lines, 100) for p in tracked if re.fullmatch(r"skills/[^/]+/SKILL\.md", p)]
 budgets += [(p, lines, 80) for p in tracked if re.fullmatch(r"skills/[^/]+/references/[^/]+\.md", p)]
