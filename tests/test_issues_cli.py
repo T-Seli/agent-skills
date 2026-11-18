@@ -354,6 +354,7 @@ class Claim(unittest.TestCase):
         self.assertEqual(writes[1][0][:2], ['issue', 'comment'])
         self.assertIn('`feat/x`', writes[1][1])
         self.assertIn('s1', writes[1][1])
+        self.assertRegex(writes[2][1].strip(), r'^Conveyor: .* · claim · ')
 
     def test_someone_elses_assignment_is_refused(self):
         code, writes, err = self.claim(issue(assignees=['hayk']), '--approved')
@@ -367,7 +368,7 @@ class Claim(unittest.TestCase):
         self.assertEqual(writes, [])
         code, writes, _ = self.claim(issue(author='hayk'), '--approved')
         self.assertEqual(code, 0)
-        self.assertEqual(len(writes), 2)
+        self.assertEqual(len(writes), 3)  # assign, claim note, timeline line
 
     def test_repeat_claim_writes_nothing(self):
         code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session s1']))
@@ -386,7 +387,8 @@ class Claim(unittest.TestCase):
         history = ['Claimed: branch `feat/x` · session s1', 'Claimed: branch `feat/y` · session s2']
         code, writes, _ = self.claim(issue(assignees=['me'], comments=history), '--takeover')
         self.assertEqual(code, 0)
-        self.assertEqual(len(writes), 1)
+        self.assertEqual(len(writes), 2)  # claim note, timeline line
+        self.assertRegex(writes[1][1].strip(), r'^Conveyor: .* · claim · ')
         self.assertIn('session s1', writes[0][1])
 
     def test_a_loser_retracts_and_the_winner_stays_the_owner(self):
@@ -423,7 +425,8 @@ class Claim(unittest.TestCase):
     def test_successor_same_branch_gets_current_session_pointer(self):
         code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session old-session']), '--takeover')
         self.assertEqual(code, 0)
-        self.assertEqual(len(writes), 1)
+        self.assertEqual(len(writes), 2)  # claim note, timeline line
+        self.assertRegex(writes[1][1].strip(), r'^Conveyor: .* · claim · ')
         self.assertIn('session s1', writes[0][1])
 
     def test_existing_claim_by_another_session_is_refused_without_takeover(self):

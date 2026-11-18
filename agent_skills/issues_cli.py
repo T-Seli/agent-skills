@@ -176,7 +176,7 @@ def session_id(session):
 def claim(gh, repo, n, branch, session, approved, takeover=False):
     session = session_id(session)
     me = gh(['api', 'user', '--jq', '.login']).strip()
-    data = view(gh, repo, n, 'assignees,author,comments')
+    data = view(gh, repo, n, 'assignees,author,comments,labels')
     others = [a['login'] for a in data['assignees'] if a['login'] != me]
     if others:
         raise Refused(f'#{n} is assigned to {", ".join(others)}; ask the user before taking it over')
@@ -198,6 +198,8 @@ def claim(gh, repo, n, branch, session, approved, takeover=False):
             who = f'session {winner}' if winner != session else ', '.join(rivals)
             gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'], f'Released: session {session} · lost claim to {who}\n')
             raise Refused(f'#{n} was claimed meanwhile by {who}; stop and ask the user')
+        cur = lane_of({'number': n, **data})
+        record(gh, repo, n, conveyor_line('claim', cur, cur))
     print(f'#{n} claimed by {me}')
 
 

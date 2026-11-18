@@ -339,10 +339,10 @@ class Lanes(BeltCase):
 
 class Capture(BeltCase):
     def test_capture_files_the_words_verbatim_in_the_inbox(self):
-        out = self.cli('capture', '--repo', REPO, '--source', 'slack:C1/p2', '--tag', 'now', 'Widgets vanish\nafter reload')
+        out = self.cli('capture', '--repo', REPO, '--source', 'chat:C1/p2', '--tag', 'now', 'Widgets vanish\nafter reload')
         self.assertEqual(out.strip(), '#1')
         i = self.gh.issues[1]
-        self.assertEqual(i['body'], 'Widgets vanish\nafter reload\n\nCaptured: 2026-11-18 12:00Z · source slack:C1/p2\n')
+        self.assertEqual(i['body'], 'Widgets vanish\nafter reload\n\nCaptured: 2026-11-18 12:00Z · source chat:C1/p2\n')
         self.assertEqual(self.gh.names(1), ['lane:inbox', 'prio:now'])
         self.assertEqual(self.gh.timeline(1)[0]['command'], 'capture')
 
