@@ -103,7 +103,7 @@ class ActionsAndCards(unittest.TestCase):
     def test_action_record_is_parameters_only(self):
         a = SCHEMA['action_record']
         self.assertEqual(set(a['kinds']), {'release', 'rollback', 'skills-install'})
-        for f in ('kind', 'id', 'train', 'tree', 'targets', 'prepared_by', 'prepared_at', 'expires_at', 'digest_input', 'digest', 'used_at'):
+        for f in ('kind', 'id', 'train', 'tree', 'targets', 'rollback', 'prepared_by', 'prepared_at', 'expires_at', 'digest_input', 'digest', 'used_at'):
             self.assertIn(f, a['fields'])
         self.assertEqual(set(a['refusals']), {'unknown-kind', 'moved-head', 'expired', 'reused', 'digest-mismatch', 'hold', 'train-over-limit'})
         self.assertEqual(a['command_lines'], 'forbidden')
@@ -154,6 +154,7 @@ class Authorizations(unittest.TestCase):
         for gate in ('capture', 'prio', 'publish', 'claim', 'lane', 'decide', 'ask', 'brief', 'sweep', 'close'):
             self.assertEqual(mode[f'{icli} {gate}'], 'allow', gate)
         self.assertEqual(mode[f'{scli} run-approved'], 'ask')
+        self.assertEqual(mode[f'{scli} prepare-action'], 'allow')
         self.assertEqual([e['id'] for e in AUTH['entries'] if e['mode'] == 'ask'], ['run-approved'])
         self.assertTrue(any(e['mode'] == 'deny' and 'email' in e['why'] for e in AUTH['entries']))
 

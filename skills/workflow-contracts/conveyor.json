@@ -275,7 +275,8 @@
       "expires_at": "UTC",
       "digest_input": "canonical JSON of every field except digest and used_at",
       "digest": "sha256 of digest_input",
-      "used_at": "UTC, set once on use"
+      "used_at": "UTC, set once on use",
+      "rollback": "{target: ref} captured at prepare; the go card's Undo reads it"
     },
     "refusals": [
       "unknown-kind",

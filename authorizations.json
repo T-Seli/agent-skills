@@ -162,6 +162,14 @@
       "guard": "closeout"
     },
     {
+      "id": "prepare-action",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli prepare-action",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "writes the action record (parameters only); the go stays run-approved"
+    },
+    {
       "id": "run-approved",
       "tool": "bash",
       "match": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli run-approved",
