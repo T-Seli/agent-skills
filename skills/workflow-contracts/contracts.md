@@ -69,8 +69,10 @@ Every skill reads this file first, then [behavior.md](behavior.md) for Depth, no
 ## Commits
 - Record commit = a commit that touches only `<tasks>/`. Subject per § Map's commit convention with type `docs`. `<tasks>` is `none`: no record commits.
 - Only `/deploy`'s record commit on `<base>` adds § Deploy `Skip-deploy marker` (if set), so the log commit does not redeploy. Never put the marker on a commit that ships code.
+
 ## Plan scope
 Outside the plan = a file, dependency, schema, config, external call or behaviour that the approved plan and action items do not name. For behavior changes, decisions and completion, use [behavior.md](behavior.md): one current approved matrix/source identity, explicit customer-flow steps, exclusions, reply holds and separate completion conditions.
+
 ## Scheduler
 - Claude: load via ToolSearch `select:mcp__scheduled-tasks__create_scheduled_task,mcp__scheduled-tasks__list_scheduled_tasks,mcp__scheduled-tasks__update_scheduled_task`; tasks run only while the app is open, so say so. Codex: its automation tool. Id `monitor-<repo>-<slug>` in both; cron in this machine's zone; the description carries `Deadline: <UTC ISO>` (`YYYY-MM-DDTHH:MMZ`).
 - Record `Scheduler: <runtime> <id>` in the log. An ended schedule is disabled, never deleted: list the schedules and report `disabled` only if the id lists as disabled. A daily janitor run (/monitor § 7) disables every enabled schedule past its `Deadline:`.

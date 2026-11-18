@@ -1,67 +1,72 @@
 # Conveyor: the belt
 
-The one home for the belt: roles, lanes, receipts, station contract, limits and sweep. Lanes and receipt formats are machine-readable in [conveyor.json](conveyor.json); standing permissions in `authorizations.json` at the repo root; the numbers in contracts.md § Defaults `Lane limits`. Issue mechanics stay in [issues.md](issues.md); decisions and question rounds in [decisions.md](decisions.md).
+The one home for the belt. Lanes, receipts, action records, decision cards and the knowledge interface are machine-readable in [conveyor.json](conveyor.json); standing permissions in `authorizations.json` at the repo root; numbers in contracts.md § Defaults. Issue mechanics: [issues.md](issues.md); question rounds: [decisions.md](decisions.md).
 
 ## Roles
 | Who | Does | Never does |
 |---|---|---|
-| AI | Thinking and complex building: specs, code, tests, review, judging monitor evidence | Bookkeeping, counting, moving cards by hand, deciding it is approved |
-| Scripts | Consistency and tracking: gates, limits, board, records, cleanup checks | Judgment calls |
+| AI | Specs, code, tests, review, judging monitor evidence | Bookkeeping, counting, moving cards by hand, deciding it is approved |
+| Scripts | Gates, limits, board, records, cleanup checks | Judgment calls |
 | The user | Direction, decisions and approvals, all at the coordinator | Typing in workers, chores, housekeeping |
 
-A new rule that is fixed, a count, a state change or a check is a script; one that needs judgment is a skill; a choice of direction or a go is a question to the user.
+A fixed rule, count, state change or check is a script; judgment is a skill; a direction or a go is a question to the user.
 
 ## Scope
-The belt acts only on sessions and worktrees in its own registry (started by the coordinator or `delegate.py`). The user's own side sessions are outside it: never archived, messaged, cleaned up or counted against lane limits. Machine limits (test slots, disk) read real load, so a side session's test run holds a slot like any other.
+The belt acts only on sessions and worktrees in its registry: the two standing sessions (coordinator, release owner) and those started through `delegate.py`. The user's side sessions are outside it: never archived, messaged, cleaned up or counted against limits. Machine limits (test slots, disk) read real load.
 
 ## Labels
-Each open belt issue carries exactly one `lane:<name>`, one `domain:<name>` and, once sorted, one `size:S|M|L`. Priority is `prio:now`, `prio:next` or `prio:later`, separate from the lane `next`. Modifiers: `hold` (no gate moves it forward) and `needs-human` (waits for the user). `ready-for-agent` folds into `lane:backlog`. A gate command that needs a missing belt label creates it (lane, `prio:`, `size:`, modifiers from conveyor.json; `domain:` from the knowledge store's domains): additive only, never renamed or deleted, one receipt.
+One `lane:<name>`, one `domain:<name>` and, once sorted, one `size:S|M|L` per open belt issue. Priority `prio:now|next|later` is separate from lane `next`. `hold` stops forward moves; `needs-human` waits for the user. `ready-for-agent` folds into `lane:backlog`. A gate needing a missing belt label creates it (`domain:` values from the knowledge store): additive only, one receipt.
 
 ## Lanes
-Every move is `issues-cli lane <n> <lane>`, which checks the entry rule against receipts and refuses loudly, naming each missing one. Forward moves skip no lane after `next`. A move back (a review NO, a failed deploy) is allowed with a `--reason`, which becomes its receipt.
+Every move is `issues-cli lane <n> <lane>`: it checks the entry rule (conveyor.json `lanes`) and refuses loudly, naming each missing receipt. Forward moves skip no lane after `next`; a move back needs `--reason`, its receipt.
 
-| Lane | Entry rule: receipts the gate reads | Called at |
+| Lane | Entry receipts | Called at |
 |---|---|---|
-| `inbox` | `capture`: verbatim text, source link, UTC time | `issues-cli capture` |
-| `backlog` | `domain`, `size` labels | the sort pass |
-| `next` | owner assigned, `domain`, `Done when:` line; room in `next` | `issues-cli publish` or the sweep's pull |
-| `in-progress` | `claim`, `brief`; Build below its limit (the last slot only for `prio:now`) | implement's Start record |
-| `in-review` | `implement: done` on a head, a linked PR | implement's done record |
-| `ready-to-release` | `Reviewed: <head> YES` where head = the PR's current head, from the independent review | test-review on YES |
-| `monitoring` | `Approved:`, `deploy:`, `Rollback:`, two `Scheduler:` ids | deploy, via `safeguard-cli run-approved` |
-| `closed` | a final `monitor:` verdict, a `Learned:` line (§ Knowledge) | monitor's end |
+| `inbox` | `Captured:` | `capture` |
+| `backlog` | `domain`, `size` labels | sort pass |
+| `next` | `Owner:` (written by `publish`), `domain`, `Done when:` | `publish`, sweep pull |
+| `in-progress` | `Claimed:`, brief; Build below limit (last slot `prio:now` only) | implement Start |
+| `in-review` | `implement: done`, linked PR | implement done |
+| `ready-to-release` | `Reviewed: <head> YES` on the PR's current head, `Reviewer:` session ≠ `Claimed:` session | test-review YES |
+| `monitoring` | `Approved:`, `deploy:`, `Rollback:`, two `Scheduler:` ids | `run-approved` |
+| `closed` | first-traffic and 24 h `Monitor verdict:`, both schedules deleted, `Learned:` | monitor end |
 
 ## Receipts
-Each gate command (`capture`, `prio`, `lane`, `decide`, `brief`, `ask`, `run-approved`) writes one timeline line, on the issue and in the task's `log.md`:
+Each gate command writes one timeline line on the issue and in the task's `log.md`:
 
 `Conveyor: <UTC time> · <command> · <from> → <to> · head <sha|-> · tests <ref|-> · skills <sha> · schedules <ids|->`
 
-Only commands write these lines. The AI writes only the judgment fields that already exist at a station's record step (What changed, Decisions (why), Watch for). A receipt is never edited: a wrong one gets `Correction: <receipt link> · <field> was <wrong> · is <right>`, and gates read the correction in its place. Formats and patterns: conveyor.json `receipts`.
+Only commands write receipts; the AI writes only a station's existing judgment fields (What changed, Decisions (why), Watch for). A receipt is never edited: a wrong one gets a `Correction:` that gates read in its place. `decide` needs the question's link and records the calling session. No gate treats `Decision:` or `Asked for more` as a go: the only go is `Approved:`.
+
+## Approvals
+`safeguard-cli run-approved <kind> <id> --digest <d>` is the only route for a go. Each kind in conveyor.json `action_record.kinds` maps to one fixed code path; the record carries parameters only, never a command line. The record names the train's issues and heads, tree, targets, preparer, expiry and digest input; it refuses on each `action_record.refusals` reason and writes `Approved:` with the digest and no quoted words.
+
+## Questions
+Three kinds: bookkeeping (never asked; covered by `authorizations.json`), go and choice. A go or choice carries the card `issues-cli ask <n> --kind go|choice` builds (conveyor.json `card`: ten fields, ≤12 lines; refused with an empty field or when it opens with a PR number or sha). "Tell me more" records `Asked for more` and the question returns.
 
 ## Station contract
-Same for every skill. **Input:** the issue plus the fixed brief `issues-cli brief <n>` renders (issue body, recorded decisions, the knowledge pages for its `domain:*` label with their verified dates), so a station can be rerun from the issue alone. **Output:** the existing `log.md` entry with its parsed tokens (contracts.md § Task log) plus the skills release sha. **Gate:** `issues-cli lane`, which reads that output.
+**Input:** the issue plus the brief `issues-cli brief <n>` renders (body, decisions, the domain's knowledge pages with verified dates), so a station reruns from the issue alone. **Output:** the existing `log.md` entry and its tokens (contracts.md § Task log) plus the skills release sha. **Gate:** `issues-cli lane`.
 
 ## Limits and pull
-Limits are counted over belt-registry sessions and open belt issues only; numbers in contracts.md § Defaults, which a project's § Defaults may override by the same label. One Build slot stays free for `prio:now`. When `next` has room the sweep pulls from `backlog`: `prio:now`, then `prio:next`, then `prio:later`; inside a level by deadline, then oldest first. The full spec is written only when an item is about to enter `next`. A release train is frozen when its GO is asked; a PR that turns ready later waits for the next train.
+Counted over belt sessions and open belt issues only; numbers in contracts.md § Defaults `Lane limits`, overridable by a project's § Defaults. `next` holds at most as many items as Build has free slots. The sweep pulls `backlog` by `prio:now`, `prio:next`, `prio:later`, then deadline, then age; the full spec is written only on entry to `next`. A train freezes when its GO is asked.
 
 ## Independent review
-The outside reviewer is asked first, and the request time is recorded on the issue. With no verdict on the exact head after `Review fallback` (contracts.md § Defaults), the sweep starts a fresh-context reviewer session running test-review on that head, and its verdict counts as the independent review. A late outside verdict on the same head is still read; a late NO reopens the item (`needs-human` if already released). No session polls.
+The outside reviewer is asked first (`Review requested:`). With no verdict on the exact head after `Review fallback`, the sweep starts a fresh-context reviewer session running test-review on that head; its verdict counts. A late outside verdict is still read; a late NO reopens the item (`needs-human` if released).
 
 ## Sweep
-`issues-cli sweep` reads GitHub, git, disk, test slots, the denial log and the belt registry, and prints the board:
-- The count of questions waiting on the user (the opening line of the orchestrator output style), then one line each.
-- Lane counts against limits; `Backlog: N (now a · next b · later c) · oldest unsorted Xh`.
-- `Coming to you next`: one line per item in `in-review` or `ready-to-release`, so a question is never the first mention of its goal.
-- One line per violation: reviewed head ≠ PR head; a lane over its limit; `monitoring` without two schedule ids; `inbox` unsorted over 24 h; a capture spool older than 15 minutes; a review request past the fallback with no reviewer started; a belt session refused, waiting on an unanswered question, or with no result.
-- Weekly: `backlog` items over 30 days, as one batch question (keep, drop or bump); question counts against the baseline in decisions.md.
-It changes nothing except the pull, spool flush and fallback start, each a receipt.
+`issues-cli sweep` reads GitHub, git, disk, test slots, the denial log and the registry, and prints:
+- questions waiting on the user, one line each; lane counts against limits; `Backlog: N (now a · next b · later c) · oldest unsorted Xh`; `Coming to you next` (items in review or ready to release);
+- one line per violation (reviewed head ≠ PR head, lane over limit, `monitoring` without two schedules, inbox unsorted >24 h, spool >15 min, review past fallback, a session refused, waiting or silent);
+- weekly, backlog >30 days as one batch question, and question counts.
+
+It writes only the pull, spool flush, fallback start and knowledge `log`, each with a receipt.
 
 ## Knowledge
-§ Map `Knowledge` names stores logically: the brain as `<owner/repo>` and this repo's wiki directory. Each store's local checkout comes from `knowledge_stores` in `~/.config/agent-skills/workers.json`; a missing entry fails loudly. The tool is the Python module `agent_skills.knowledge`, shipped in this release and imported by `issues-cli` (no subprocess); it serves the brain and every wiki alike. Interface (conveyor.json `knowledge`):
-- `pages(domain)` for the brief (a domain with no pages is said so) · `find(words)` for sort · `domains()` so `publish` validates the label · `stale()` for the sweep. `pages` and `find` also read `inbox/`, marked pending.
-- `record(kind, …)` for `decide` and the `Learned:` collector: one new `inbox/` file per call, never a table edit; only `collect()` edits tables, on demand or daily. Decisions fold without review; lessons, answers and page fixes wait for lint and the local fresh-context review.
-- `log(issue, lines)` stores the closed issue's timeline lines verbatim, idempotent per issue, called only by the sweep.
-The `domain:*` vocabulary lives in the store's routing table; this file lists none. Close is refused without a `Learned:` line: `none`, `lesson: <text>`, `answered: <question> => <answer>` or `page-fix: <path>: <text>`.
+`agent_skills.knowledge` ships in this release and is imported by `issues-cli`; it serves the brain and every repo wiki, pointed at a store by config. § Map `Knowledge` holds logical names (brain `<owner/repo>`, wiki directory); checkouts come from `knowledge_stores` in `~/.config/agent-skills/workers.json`. With no mapping for the brain, reads serve the wiki and say `brain: not configured on this machine`; `record` and `log` refuse loudly.
+
+Functions (conveyor.json `knowledge`): `pages`, `find` (both read pending `inbox/` rows), `domains` for `publish`, `record` (one new inbox file), `collect` (on demand or daily; only it edits tables; decisions fold unreviewed), `log` (idempotent, sweep only), `stale`, `lint`.
+
+Lessons, answers and page fixes merge after lint and the local fresh-context review; outside review is off for the brain by config. `domain:*` values live in the store's routing table. Close needs `Learned:` `none`, `lesson: <text>`, `answered: <q> => <a>` or `page-fix: <path>: <text>`.
 
 ## Permissions
-`authorizations.json` is the standing list, one entry per command: `bookkeeping` entries are `allow` and are never asked; `go` entries are `ask` (the user's one click); `deny` entries are refused. `install.sh` renders it into the Claude settings snippet and Codex rules; the user installs it and no session edits settings. Belt commands take no path outside the worktree as an argument: they resolve notes, spool and knowledge locations from config.
+`authorizations.json` lists each standing action with its tool: bookkeeping is `allow`, a go is `ask` (one click), `deny` is refused. `install.sh` renders it for Claude and Codex; the user installs it, no session edits settings. Belt commands take no outside path: notes, spool and stores come from config.
