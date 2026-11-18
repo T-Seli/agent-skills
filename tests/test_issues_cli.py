@@ -5,7 +5,9 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -71,7 +73,15 @@ class FakeGh:
             raise subprocess.CalledProcessError(1, ['gh', *args], stderr='HTTP 502: Bad Gateway')
         if args[:2] == ['issue', 'create']:
             self.next += 1
+            labels = args[args.index('--label') + 1].split(',') if '--label' in args else []
+            self.issues[self.next - 1] = {'number': self.next - 1, 'title': args[args.index('--title') + 1], 'body': stdin,
+                                          'labels': [{'name': x} for x in labels], 'comments': [], 'state': 'OPEN',
+                                          'assignees': [], 'author': {'login': self.viewer}}
             return f'https://github.com/{REPO}/issues/{self.next - 1}\n'
+        if args[:2] == ['label', 'list']:
+            return ''
+        if args[:2] == ['issue', 'list']:
+            return '[]'
         if args[:2] == ['api', 'user']:
             return self.viewer + '\n'
         if args[0] == 'api' and re.fullmatch(rf'repos/{REPO}/issues/\d+', args[1]):
@@ -113,10 +123,71 @@ def run(gh, *argv):
     return code, out.getvalue(), err.getvalue()
 
 
-def spec_body():
+def spec_body(text='## Problem Statement\n\nNo widgets.\n\nDone when: a saved widget reads back\n'):
     f = Path(tempfile.mkdtemp()) / 'spec.md'
-    f.write_text('## Problem Statement\n\nNo widgets.\n')
+    f.write_text(text)
     return str(f)
+
+
+BELT = ('--owner', 'thomas', '--domain', 'deploy', '--session', 'sess-1')
+
+
+class KnowledgeError(ValueError):
+    pass
+
+
+def stub_knowledge(test, notice=None, domains=('deploy', 'policy'), pages=None):
+    """Stands in for agent_skills.knowledge (T6 builds it); records what issues-cli asked of it."""
+    calls = {'open': [], 'record': [], 'log': []}
+
+    class Knowledge:
+        @classmethod
+        def open(cls, brain=None, wiki=None, config_path=None):
+            calls['open'].append((brain, wiki))
+            return cls()
+
+        def __init__(self):
+            self.notice = notice
+
+        def domains(self):
+            return list(domains)
+
+        def pages(self, domain):
+            return (pages or {}).get(domain, [])
+
+        def record(self, kind, ident, date, source, text, scope='global'):
+            if notice:
+                raise KnowledgeError(notice)
+            calls['record'].append((kind, ident, date, source, text, scope))
+            return {'path': f'inbox/20261118T120000Z-{kind}-{ident}.md'}
+
+        def log(self, issue, lines):
+            if notice:
+                raise KnowledgeError(notice)
+            calls['log'].append((issue, lines))
+            return {'path': 'log/2026-11.md'}
+
+    module = types.ModuleType('agent_skills.knowledge')
+    module.Knowledge, module.KnowledgeError = Knowledge, KnowledgeError
+    patcher = unittest.mock.patch.dict(sys.modules, {'agent_skills.knowledge': module})
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    return calls
+
+
+def belt_project(test, knowledge='brain `acme/brain` · wiki `wiki`', defaults='', config=None):
+    """A project folder set up only through its CLAUDE.md, as the working directory, with a fixed skills sha."""
+    root = Path(tempfile.mkdtemp()).resolve()
+    (root / 'CLAUDE.md').write_text(f'# p\n\n## Map\n- Knowledge: {knowledge}\n\n## Defaults\n{defaults}')
+    (root / 'workers.json').write_text(json.dumps(config or {}))
+    old = os.getcwd()
+    os.chdir(root)
+    test.addCleanup(os.chdir, old)
+    for patcher in (unittest.mock.patch.object(issues_cli, 'skills_sha', return_value='f' * 7),
+                    unittest.mock.patch.dict(os.environ, {'AGENT_SKILLS_CONFIG': str(root / 'workers.json')})):
+        patcher.start()
+        test.addCleanup(patcher.stop)
+    return root
 
 
 SHA = 'a' * 40
@@ -153,9 +224,13 @@ def evidence(issues, deployment=False):
 
 
 class Publish(unittest.TestCase):
+    def setUp(self):
+        belt_project(self)
+        stub_knowledge(self)
+
     def test_spec_then_tickets_as_sub_issues_with_blocked_by(self):
         d, gh = draft(), FakeGh()
-        code, out, _ = run(gh, 'publish', '--repo', REPO, str(d), '--title', 'Spec: widgets',
+        code, out, _ = run(gh, 'publish', '--repo', REPO, str(d), *BELT, '--title', 'Spec: widgets',
                            '--body-file', spec_body(), '--label', 'ready-for-agent')
         self.assertEqual(code, 0)
         creates = [(a, s) for a, s in gh.writes() if a[:2] == ['issue', 'create']]
@@ -190,17 +265,19 @@ class Publish(unittest.TestCase):
 
     def test_republish_creates_nothing(self):
         d, gh = draft(), FakeGh()
-        run(gh, 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        run(gh, 'publish', '--repo', REPO, str(d), *BELT, '--title', 'T', '--body-file', spec_body())
         before = len(gh.calls)
-        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d))
+        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d), *BELT)
         self.assertEqual(code, 0)
         self.assertEqual([a for a, _ in gh.calls[before:] if issues_cli.is_write(a)], [])
 
     def test_partly_published_reuses_existing_issue_numbers(self):
         items = ITEMS.replace('**1. Store widgets** · M', '**1. Store widgets** · M · issue #50')
         d, gh = draft(plan=f'# Plan: add widgets\nIssue: {REPO}#40\n', items=items,
-                      text=TEXT.replace('## 1.', '## 9.')), FakeGh()  # a published ticket needs no issue text
-        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d))
+                      text=TEXT.replace('## 1.', '## 9.')), FakeGh(issues={40: {
+                          'number': 40, 'title': 'Spec', 'body': 'Done when: widgets show\n', 'labels': [],
+                          'comments': [], 'state': 'OPEN'}})  # a published ticket needs no issue text
+        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d), *BELT)
         self.assertEqual(code, 0)
         creates = [s for a, s in gh.writes() if a[:2] == ['issue', 'create']]
         self.assertEqual(len(creates), 2)
@@ -213,12 +290,12 @@ class Publish(unittest.TestCase):
     def test_rerun_after_a_failed_link_adds_the_link_and_creates_nothing(self):
         d = draft()
         gh = FakeGh(fail=lambda a: a[:3] == ['api', '-X', 'POST'] and a[3].endswith('/issues/102/dependencies/blocked_by'))
-        code, _, err = run(gh, 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        code, _, err = run(gh, 'publish', '--repo', REPO, str(d), *BELT, '--title', 'T', '--body-file', spec_body())
         self.assertEqual(code, 1)
         self.assertIn('502', err)
         self.assertIn('**2. Show widgets** · S · after #1 · issue #102', (d / 'action-items.md').read_text())
         before = len(gh.calls)
-        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d))
+        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d), *BELT)
         self.assertEqual(code, 0)
         rerun_creates = [a[a.index('--title') + 1] for a, _ in gh.calls[before:] if a[:2] == ['issue', 'create']]
         self.assertEqual(rerun_creates, ['Count saved widgets'])  # only the ticket never reached; #101 and #102 not repeated
@@ -228,9 +305,9 @@ class Publish(unittest.TestCase):
 
     def test_single_task_without_tickets_gets_one_issue(self):
         d, gh = draft(items=None), FakeGh()
-        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d), '--title', 'Fix X', '--body-file', spec_body())
+        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d), *BELT, '--title', 'Fix X', '--body-file', spec_body())
         self.assertEqual(code, 0)
-        self.assertEqual(len(gh.writes()), 1)
+        self.assertEqual(len([a for a, _ in gh.writes() if a[:2] == ['issue', 'create']]), 1)
 
     def test_fails_loudly_before_any_write(self):
         cases = [
@@ -243,7 +320,7 @@ class Publish(unittest.TestCase):
         ]
         for d, extra in cases:
             gh = FakeGh()
-            code, _, err = run(gh, 'publish', '--repo', REPO, str(d), *extra)
+            code, _, err = run(gh, 'publish', '--repo', REPO, str(d), *BELT, *extra)
             self.assertNotEqual(code, 0)
             self.assertTrue(err.strip())
             self.assertEqual(gh.writes(), [])
@@ -251,7 +328,7 @@ class Publish(unittest.TestCase):
     def test_dry_run_prints_writes_and_changes_nothing(self):
         d, gh = draft(), FakeGh()
         before = (d / 'plan.md').read_text(), (d / 'action-items.md').read_text()
-        code, out, _ = run(gh, '--dry-run', 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        code, out, _ = run(gh, '--dry-run', 'publish', '--repo', REPO, str(d), *BELT, '--title', 'T', '--body-file', spec_body())
         self.assertEqual(code, 0)
         self.assertEqual(gh.writes(), [])
         self.assertEqual(out.count('gh issue create'), 4)
@@ -412,9 +489,13 @@ class Tick(unittest.TestCase):
 
 class Close(unittest.TestCase):
     """Trunk flow has no PR to close issues: after the deploy record, the session closes the task's own issues."""
+    def setUp(self):
+        belt_project(self)
+        stub_knowledge(self)
+
     def published(self):
         d = draft()
-        run(FakeGh(), 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        run(FakeGh(), 'publish', '--repo', REPO, str(d), *BELT, '--title', 'T', '--body-file', spec_body())
         return d  # spec #100, tickets #101-#103
 
     def test_closes_every_open_task_issue_with_the_deployed_sha(self):
@@ -504,9 +585,13 @@ class EvidenceGuards(unittest.TestCase):
 
 
 class Closes(unittest.TestCase):
+    def setUp(self):
+        belt_project(self)
+        stub_knowledge(self)
+
     def test_lists_the_spec_and_every_ticket(self):
         d = draft()
-        run(FakeGh(), 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        run(FakeGh(), 'publish', '--repo', REPO, str(d), *BELT, '--title', 'T', '--body-file', spec_body())
         code, out, _ = run(FakeGh(), 'closes', str(d))
         self.assertEqual(code, 0)
         self.assertEqual(out.split('\n')[:4], ['Closes o/r#100', 'Closes o/r#101', 'Closes o/r#102', 'Closes o/r#103'])
