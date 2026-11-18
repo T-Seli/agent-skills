@@ -32,6 +32,16 @@ scheduling are defined once in contracts.md (§ Layers, § Chain, § Consent,
 - Codex hook trust belongs to the user, via `/hooks`. Never bypass it or write
   trust records yourself.
 
+## Rules
+`install.sh` renders `authorizations.json` to `~/.codex/agent-skills/rules.toml`
+and never applies it; the user does. Each `[[rules]]` has `id`, `tool`, `match`,
+`decision` (allow, prompt or forbidden for the modes allow, ask, deny), `why`, a
+bash rule's `pattern` (command-prefix tokens) and any `guard`. Each guard is also a
+`[[hooks.PreToolUse]]` group running `hooks/<guard>.sh`, the Claude hook itself.
+Apply a guarded allow only together with its hook. Claude-only: the
+`PermissionDenied` denial log (Codex has no such event). Rules passed by
+`--settings` apply without a trust click; project-file rules wait for folder trust.
+
 ## Connections and data
 - Verify a connector works before relying on it; configuration alone proves
   nothing.

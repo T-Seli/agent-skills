@@ -277,6 +277,86 @@ build() {
   CURRENT_TEMP=
 }
 
+# render_to <claude|codex>: print authorizations.json rendered as the Claude settings
+# snippet (on top of settings.snippet.json) or as Codex rules (codex/compatibility.md § Rules).
+# Each guard registers hooks/<guard>.sh as a PreToolUse hook; any hook the output names
+# that is missing from hooks/ fails the render.
+render_to() {
+  python3 -I -B -c '
+import json, os, sys
+kind, root = sys.argv[1], sys.argv[2]
+auth = json.load(open(os.path.join(root, "authorizations.json")))
+def need(name, who):
+    hook = os.path.join(root, "hooks", name)
+    if not os.access(hook, os.X_OK):
+        sys.exit("render: {}: hook {} is missing or not executable".format(who, hook))
+claude_rule = {"bash": "Bash({}:*)", "mcp": "{}", "edit": "Edit({})"}
+codex_decision = {"allow": "allow", "ask": "prompt", "deny": "forbidden"}
+hook_dir = "~/.claude/hooks" if kind == "claude" else os.path.join(root, "hooks")
+rules, guards = [], []
+for e in auth["entries"]:
+    if e["tool"] not in claude_rule or e["mode"] not in codex_decision:
+        sys.exit("render: {}: unknown tool {!r} or mode {!r}".format(e["id"], e["tool"], e["mode"]))
+    rules.append(e)
+    if "guard" in e:
+        need(e["guard"] + ".sh", e["id"])
+        matcher = {"bash": "Bash", "mcp": e["match"], "edit": "Edit"}[e["tool"]]
+        guards.append({"matcher": matcher, "hooks": [{"type": "command", "command": hook_dir + "/" + e["guard"] + ".sh", "timeout": 10}]})
+if kind == "claude":
+    out = json.load(open(os.path.join(root, "settings.snippet.json")))
+    for e in rules:
+        listed = out.setdefault("permissions", {}).setdefault(e["mode"], [])
+        rule = claude_rule[e["tool"]].format(e["match"])
+        if rule in listed:
+            sys.exit("render: {}: {} is already in settings.snippet.json".format(e["id"], rule))
+        listed.append(rule)
+    out.setdefault("hooks", {}).setdefault("PreToolUse", []).extend(guards)
+    for groups in out["hooks"].values():
+        for h in (h for g in groups for h in g["hooks"]):
+            if h["command"].startswith("~/.claude/hooks/"):
+                need(os.path.basename(h["command"]), "settings.snippet.json")
+    print(json.dumps(out, indent=2))
+    sys.exit()
+q = json.dumps
+print("# Rendered by install.sh from authorizations.json. Inert: the user applies it (codex/compatibility.md, Rules).")
+print("version = {}".format(auth["version"]))
+for e in rules:
+    print("\n[[rules]]")
+    for key in ("id", "tool", "match"):
+        print("{} = {}".format(key, q(e[key])))
+    if e["tool"] == "bash":
+        print("pattern = [{}]".format(", ".join(q(t) for t in e["match"].split())))
+    print("decision = {}".format(q(codex_decision[e["mode"]])))
+    if "guard" in e:
+        print("guard = {}".format(q(e["guard"])))
+    print("why = {}".format(q(e["why"])))
+for g in guards:
+    h = g["hooks"][0]
+    print("\n[[hooks.PreToolUse]]\nmatcher = {}\n\n[[hooks.PreToolUse.hooks]]".format(q(g["matcher"])))
+    print("type = {}\ncommand = {}\ntimeout = {}".format(q(h["type"]), q(h["command"]), h["timeout"]))
+' "$1" "$R"
+}
+
+# render <claude|codex> <target>: write the rendered file inert at <target>; it is never
+# applied to live settings (the user installs it). --dry-run renders to check, then discards.
+render() {
+  ensure_dir "$(dirname "$2")"
+  echo "render $2 from: $R/authorizations.json"
+  if [ "$DRY" = 1 ]; then render_to "$1" > /dev/null; return; fi
+  bt=$(mktemp "$(dirname "$2")/.agent-skills-render.XXXXXX")
+  CURRENT_TEMP=$bt
+  render_to "$1" > "$bt"
+  chmod 644 "$bt"
+  if [ -f "$2" ] && [ ! -L "$2" ] && cmp -s "$bt" "$2"; then
+    echo "keep $2 (content already current)"
+    rm -f "$bt"
+  else
+    snapshot_target "$2"
+    mv "$bt" "$2"
+  fi
+  CURRENT_TEMP=
+}
+
 # Claude Code
 if [ "$TARGET" = all ] || [ "$TARGET" = claude ]; then
 INSTALL_STAGE=claude
@@ -294,6 +374,7 @@ if [ ! -e "$cfg" ]; then
   run cp "$R/agent_skills/delegate_config.example.json" "$cfg"
   run chmod 600 "$cfg"
 fi
+render claude "$INSTALL_HOME/.claude/agent-skills/settings.snippet.json"
 INSTALL_STAGE=claude-complete
 fi
 
@@ -305,6 +386,7 @@ link "$R/ENGINEERING-COORDINATOR.md" "$INSTALL_HOME/.agents/ENGINEERING-COORDINA
 for f in "$R"/codex/agents/*.toml; do copy_role "$f" "$INSTALL_HOME/.codex/agents/$(basename "$f")"; done
 build "$INSTALL_HOME/.codex/AGENTS.md" "$R/codex/AGENTS.md" "$R/global/CLAUDE.md" \
   "$R/output-styles/orchestrator.md" "$R/codex/compatibility.md"
+render codex "$INSTALL_HOME/.codex/agent-skills/rules.toml"
 INSTALL_STAGE=codex-complete
 fi
 
@@ -319,7 +401,8 @@ for l in "$INSTALL_HOME"/.claude/workflow "$INSTALL_HOME"/.claude/skills/* "$INS
 done
 
 echo "Settings are not edited by this script. Merge by hand:"
-echo "  Claude: $R/settings.snippet.json into ~/.claude/settings.json"
-echo "  Codex:  add $R/codex/hooks/session-start.py as a SessionStart hook in ~/.codex/hooks.json, then trust it with /hooks"
+echo "  Claude: $INSTALL_HOME/.claude/agent-skills/settings.snippet.json into ~/.claude/settings.json"
+echo "  Codex:  $INSTALL_HOME/.codex/agent-skills/rules.toml per codex/compatibility.md § Rules, and"
+echo "          add $R/codex/hooks/session-start.py as a SessionStart hook in ~/.codex/hooks.json, then trust it with /hooks"
 INSTALL_STAGE=complete
 [ "$DRY" = 1 ] || commit_transaction

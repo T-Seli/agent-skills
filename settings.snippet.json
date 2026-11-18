@@ -36,6 +36,18 @@
           }
         ]
       }
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/denial-log.sh",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
