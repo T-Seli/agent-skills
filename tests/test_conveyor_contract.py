@@ -186,7 +186,7 @@ class Authorizations(unittest.TestCase):
         ids = [e['id'] for e in AUTH['entries']]
         self.assertEqual(len(ids), len(set(ids)))
         for e in AUTH['entries']:
-            self.assertTrue({'id', 'tool', 'match', 'kind', 'mode', 'why'} <= set(e) <= {'id', 'tool', 'match', 'kind', 'mode', 'why', 'guard'}, e['id'])
+            self.assertTrue({'id', 'tool', 'match', 'kind', 'mode', 'why'} <= set(e) <= {'id', 'tool', 'match', 'kind', 'mode', 'why', 'guard', 'held'}, e['id'])
             self.assertIn(e['tool'], {'bash', 'mcp', 'edit'}, e['id'])
             self.assertIn((e['kind'], e['mode']), {('bookkeeping', 'allow'), ('go', 'ask'), ('deny', 'deny')}, e['id'])
             if 'guard' in e:
@@ -213,6 +213,8 @@ class Authorizations(unittest.TestCase):
         self.assertEqual(guard['monitor-arm'], 'monitor-id-guard')
         self.assertEqual(guard['monitor-delete'], 'monitor-id-guard')
         self.assertEqual(guard['archive-done'], 'archive-guard')
+        held = sorted(e['id'] for e in AUTH['entries'] if 'held' in e)
+        self.assertEqual(held, ['archive-done', 'monitor-arm', 'monitor-delete', 'no-merge-outside-release'])
 
     def test_installed_code_finds_contract_data_one_way(self):
         self.assertEqual(SCHEMA['layout']['module'], 'agent_skills.layout')
