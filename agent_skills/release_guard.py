@@ -1,12 +1,16 @@
 """Exact immutable release identity and write-once rollback receipt."""
 import hashlib
+import io
 import json
 import os
 import re
+import tarfile
 import tempfile
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
+
+from . import layout
 
 
 _SHA = re.compile(r'[0-9a-f]{40}|[0-9a-f]{64}', re.ASCII)
@@ -86,18 +90,19 @@ def capture_rollback(path, rollback, *, task='local-task', release='local-releas
 
 
 # --- Conveyor action records: prepare once, run once under the user's one click (conveyor.md § Approvals).
-_ROOT = Path(__file__).resolve().parents[1]
-_CONTRACTS = _ROOT / 'skills' / 'workflow-contracts'
-_CONVEYOR = json.loads((_CONTRACTS / 'conveyor.json').read_text(encoding='utf-8'))
+_CONVEYOR = json.loads(layout.contract('conveyor.json').read_text(encoding='utf-8'))
 ACTION = _CONVEYOR['action_record']
 _DIGESTED = tuple(field for field in ACTION['fields'] if field not in {'digest_input', 'digest', 'used_at'})
 _NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}', re.ASCII)
+_SESSION = re.compile(_CONVEYOR['session_id']['pattern'])
 _BRANCH = re.compile(r'(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._/-]{0,127}', re.ASCII)
+_READY = _CONVEYOR['labels']['lane'].replace('<name>', 'ready-to-release')
+_REVIEWED = re.compile(_CONVEYOR['receipts']['reviewed_yes']['pattern'], re.M)
 _INSTALL_TARGETS = {'all', 'claude', 'codex'}
 _SETTINGS = ('.claude/settings.json', '.claude/settings.local.json', '.codex/config.toml', '.codex/hooks.json')
 _REMOTE = 'origin'
 _STAMP = '%Y-%m-%dT%H:%M:%SZ'
-_ENTRY = re.compile(r'^## (?P<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}Z) — deploy: [0-9a-f]{7,40} to .+$', re.M)
+_ENTRY = re.compile(r'^## (?P<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}Z) — release: [0-9a-f]{7,40} to .+$', re.M)
 _CORRECTION = re.compile(_CONVEYOR['timeline']['correction'], re.M)
 
 
@@ -122,9 +127,10 @@ def _canonical(record):
     return json.dumps({field: record[field] for field in _DIGESTED}, sort_keys=True, separators=(',', ':'))
 
 
-def _gh(repo, *args):
-    """The one external call: GitHub state for hold labels and PR heads (mocked in tests)."""
-    return json.loads(subprocess.check_output(['gh', *args], cwd=repo, text=True))
+def _gh(repo, *args, stdin=None):
+    """The one external call: GitHub reads (parsed --json) and issue comments (a fake gh in tests)."""
+    out = subprocess.run(['gh', *args], cwd=repo, input=stdin, capture_output=True, text=True, check=True).stdout
+    return json.loads(out) if '--json' in args else out
 
 
 def _drafts(repo):
@@ -150,7 +156,7 @@ def train_limit(repo):
     """Release train size from § Defaults `Lane limits`: the project's line wins over contracts.md."""
     project = Path(repo) / 'CLAUDE.md'
     line = (project.exists() and _section_line(project.read_text(encoding='utf-8'), 'Lane limits')) \
-        or _section_line((_CONTRACTS / 'contracts.md').read_text(encoding='utf-8'), 'Lane limits')
+        or _section_line(layout.contract('contracts.md').read_text(encoding='utf-8'), 'Lane limits')
     found = re.search(r'Release 1 train of ≤(\d+) PRs', line or '')
     if not found:
         raise ValueError('§ Defaults Lane limits names no Release train size')
@@ -177,16 +183,19 @@ def _log_entries(log):
 
 
 def _rollback_refs(log):
-    """The deploy entry's Rollback refs, each replaced by its Correction: lines in order."""
+    """The release entry's Rollback refs, each replaced by its Correction: lines in order."""
     text, entries = _log_entries(log)
-    deploys = [entry for entry in entries if _ENTRY.match(entry)]
-    if not deploys:
+    releases = [entry for entry in entries if _ENTRY.match(entry)]
+    if not releases:
         return None
-    if len(deploys) > 1:
-        raise ValueError(f'{log} has {len(deploys)} deploy entries')
-    line = re.search(r'^Rollback: (.+)$', deploys[0], re.M)
+    if len(releases) > 1:
+        raise ValueError(f'{log} has {len(releases)} release entries')
+    line = re.search(r'^Rollback: (.+)$', releases[0], re.M)
     if not line:
-        raise ValueError(f'{log} deploy entry has no Rollback line')
+        raise ValueError(f'{log} release entry has no Rollback line')
+    commit = re.search(r'^Commit: ([0-9a-f]{40})$', releases[0], re.M)
+    if not commit:
+        raise ValueError(f'{log} release entry has no Commit line')
     refs = dict(pair.split(': ', 1) for pair in line.group(1).split(' · '))
     for fix in _CORRECTION.finditer(text):
         if fix['ref'] != 'Rollback':
@@ -194,12 +203,11 @@ def _rollback_refs(log):
         if refs.get(fix['field']) != fix['wrong']:
             raise ValueError(f'correction for {fix["field"]} does not match its Rollback ref')
         refs[fix['field']] = fix['right']
-    deployed = re.search(r'^Commit: ([0-9a-f]{40})$', deploys[0], re.M).group(1)
-    return {'time': _ENTRY.match(deploys[0])['time'], 'commit': deployed, 'refs': refs}
+    return {'time': _ENTRY.match(releases[0])['time'], 'commit': commit.group(1), 'refs': refs}
 
 
 def _last_deploy(repo, targets):
-    """Newest release deploy covering the targets (contracts.md § Task log: the last deploy)."""
+    """Newest release covering the targets (contracts.md § Task log: the last deploy)."""
     found = []
     for folder in _drafts(repo).glob('????-??-??-release-*'):
         record = json.loads((folder / 'action.json').read_text(encoding='utf-8'))
@@ -207,10 +215,10 @@ def _last_deploy(repo, targets):
         if deploy:
             found.append({**deploy, 'record': record})
     if not found:
-        raise ValueError(f'no recorded deploy covers {targets}')
+        raise ValueError(f'no recorded release covers {targets}')
     found.sort(key=lambda item: item['time'])
     if len(found) > 1 and found[-1]['time'] == found[-2]['time']:
-        raise ValueError('two deploys share the newest minute; correct the logs first')
+        raise ValueError('two releases share the newest minute; correct the logs first')
     return found[-1]
 
 
@@ -232,13 +240,17 @@ def prepare_action(repo, kind, action_id, *, train, targets, session, minutes, n
     if kind == 'skills-install':
         if len(targets) != 1 or targets[0] not in _INSTALL_TARGETS:
             raise ValueError(f'skills-install takes one target of {sorted(_INSTALL_TARGETS)}')
-    elif not targets or len(set(targets)) != len(targets) or not all(_BRANCH.fullmatch(t) for t in targets):
-        raise ValueError('targets must be distinct plain branch names')
+    elif not targets or len(set(targets)) != len(targets):
+        raise ValueError('targets must be distinct branch names')
+    else:
+        for target in targets:
+            if not _BRANCH.fullmatch(target):
+                raise Refused('non-branch-target', f'{target!r} is not a branch name')
     if _folder(repo, action_id):
         raise Refused('reused', f'action id {action_id} already has a record')
     if kind == 'rollback':
         if train:
-            raise ValueError('a rollback takes the train of the deploy it undoes')
+            raise ValueError('a rollback takes the train of the release it undoes')
         last, tree = _rollback_tree(repo, targets)
         train = last['record']['train']
     else:
@@ -247,7 +259,7 @@ def prepare_action(repo, kind, action_id, *, train, targets, session, minutes, n
         train = [_train_item(item) for item in train]
         tree = _git(repo, 'rev-parse', 'HEAD^{tree}')
     _check_limit(repo, train)
-    if kind == 'rollback':  # undoing a rollback redeploys what it removes
+    if kind == 'rollback':  # undoing a rollback re-releases what it removes
         rollback = {target: last['commit'] for target in targets}
     elif kind == 'skills-install':  # the installed version is the main checkout's main
         rollback = {targets[0]: _git(repo, 'rev-parse', 'refs/heads/main')}
@@ -269,40 +281,62 @@ def prepare_action(repo, kind, action_id, *, train, targets, session, minutes, n
 
 
 def _remote_ref(repo, target):
-    return _git(repo, 'ls-remote', '--exit-code', _REMOTE, f'refs/heads/{target}').split()[0]
+    """The branch's sha on origin; a name origin has no branch for is a non-branch target."""
+    found = subprocess.run(['git', '-C', str(repo), 'ls-remote', '--exit-code', _REMOTE, f'refs/heads/{target}'],
+                           capture_output=True, text=True)
+    if found.returncode == 2:
+        raise Refused('non-branch-target', f'{target} is not a branch on {_REMOTE}')
+    found.check_returncode()
+    return found.stdout.split()[0]
 
 
-def _moved(repo, record):
-    """Refuse when anything the user approved no longer holds; return the commit to act on."""
+def _train_state(repo, record):
+    """Each train item with its PR's head and labels and its issue's labels and comments (the receipt home)."""
+    return [(item, _gh(repo, 'pr', 'view', str(item['pr']), '--json', 'headRefOid,labels'),
+             None if item['issue'] is None else _gh(repo, 'issue', 'view', str(item['issue']), '--json', 'labels,comments'))
+            for item in record['train']]
+
+
+def _labels(view):
+    return {label['name'] for label in view['labels']}
+
+
+def _held(state):
+    for item, pr, issue in state:
+        for noun, number, view in (('pr', item['pr'], pr), ('issue', item['issue'], issue)):
+            if view is not None and 'hold' in _labels(view):
+                raise Refused('hold', f'{noun} {number} carries hold')
+
+
+def _not_ready(state):
+    for item, pr, issue in state:
+        if issue is None:
+            continue
+        heads = {found['head'] for comment in issue['comments'] for found in _REVIEWED.finditer(comment['body'])}
+        if _READY not in _labels(issue) or not any(pr['headRefOid'].startswith(head) for head in heads):
+            raise Refused('not-ready', f'issue {item["issue"]} needs {_READY} and Reviewed: YES on PR {item["pr"]} head')
+
+
+def _moved(repo, record, state):
+    """Refuse when the commit or tree the user approved no longer holds; return the commit to act on."""
     if record['kind'] == 'rollback':
         last, tree = _rollback_tree(repo, record['targets'])
         if tree != record['tree']:
             raise Refused('moved-head', 'the recorded Rollback refs changed since the record was prepared')
-        for target in record['targets']:
-            if _remote_ref(repo, target) != last['commit']:
-                raise Refused('moved-head', f'{target} no longer runs the deploy being rolled back')
         return last['refs'][record['targets'][0]]
     head = _git(repo, 'rev-parse', 'HEAD')
     if _git(repo, 'rev-parse', 'HEAD^{tree}') != record['tree']:
         raise Refused('moved-head', 'HEAD tree differs from the recorded tree')
-    for item in record['train']:
-        if _gh(repo, 'pr', 'view', str(item['pr']), '--json', 'headRefOid')['headRefOid'] != item['head']:
+    for item, pr, _ in state:
+        if pr['headRefOid'] != item['head']:
             raise Refused('moved-head', f'PR {item["pr"]} head moved')
         if subprocess.run(['git', '-C', str(repo), 'merge-base', '--is-ancestor', item['head'], head]).returncode:
             raise Refused('moved-head', f'PR {item["pr"]} head is not in the release')
     return head
 
 
-def _held(repo, record):
-    for item in record['train']:
-        refs = [('pr', item['pr'])] + ([('issue', item['issue'])] if item['issue'] is not None else [])
-        for noun, number in refs:
-            labels = {label['name'] for label in _gh(repo, noun, 'view', str(number), '--json', 'labels')['labels']}
-            if 'hold' in labels:
-                raise Refused('hold', f'{noun} {number} carries hold')
-
-
 def _check(repo, record, kind, digest, now):
+    """Every refusal before anything is written; return the commit and each pushed target's current ref."""
     if record['kind'] != kind or record['digest'] != digest or record['digest_input'] != _canonical(record) \
             or hashlib.sha256(record['digest_input'].encode()).hexdigest() != digest:
         raise Refused('digest-mismatch', 'the record does not match the approved digest')
@@ -311,9 +345,18 @@ def _check(repo, record, kind, digest, now):
     if now >= datetime.strptime(record['expires_at'], _STAMP).replace(tzinfo=timezone.utc):
         raise Refused('expired', f'expired at {record["expires_at"]}')
     _check_limit(repo, record['train'])
-    if kind != 'rollback':  # hold stops forward moves; it never blocks undoing one
-        _held(repo, record)
-    return _moved(repo, record)
+    state = [] if kind == 'rollback' else _train_state(repo, record)
+    _held(state)  # hold stops forward moves; it never blocks undoing one
+    commit = _moved(repo, record, state)
+    _not_ready(state)
+    if kind == 'skills-install':
+        if _git(repo, 'status', '--porcelain'):
+            raise Refused('dirty-tree', 'the working tree differs from the recorded tree')
+        return commit, {}
+    before = {target: _remote_ref(repo, target) for target in record['targets']}
+    if before != record['rollback']:
+        raise Refused('moved-head', 'a target moved since the record was prepared; its Undo no longer holds')
+    return commit, before
 
 
 def _claim(folder, record, now):
@@ -332,31 +375,55 @@ def _append(folder, lines):
         stream.write('\n' + '\n'.join(lines) + '\n')
 
 
-def _push(repo, folder, record, commit, leases):
-    """Capture current target refs, move each target to commit, prove each landed."""
-    before = {target: _remote_ref(repo, target) for target in record['targets']}
-    if leases and before != leases:
+def _write(repo, folder, issues, lines):
+    """Append the lines to the release log, then post the same lines on every train issue."""
+    _append(folder, lines)
+    for issue in issues:
+        _gh(repo, 'issue', 'comment', str(issue), '--body-file', '-', stdin='\n'.join(lines) + '\n')
+
+
+def _push(repo, folder, record, commit, before):
+    """Move each target to commit (a rollback leases the refs it replaces), prove each landed."""
+    if {target: _remote_ref(repo, target) for target in record['targets']} != before:
         raise RuntimeError('a target moved after the checks')
     capture_rollback(folder / 'rollback.json', before, task=record['id'], release=commit,
                      repository=_drafts(repo).parents[1].name)
-    lease = [f'--force-with-lease=refs/heads/{t}:{sha}' for t, sha in leases.items()]
+    lease = [f'--force-with-lease=refs/heads/{t}:{sha}' for t, sha in before.items()] if record['kind'] == 'rollback' else []
     subprocess.run(['git', '-C', str(repo), 'push', '--atomic', '--quiet', *lease, _REMOTE,
                     *[f'{commit}:refs/heads/{t}' for t in record['targets']]], check=True)
     proofs = {t: verify_release(repo, commit, _remote_ref(repo, t)) for t in record['targets']}
     if not all(proof['ok'] for proof in proofs.values()):
         raise RuntimeError('a target does not run the approved commit')
-    return before
 
 
 def _settings(home):
     return {name: (home / name).read_bytes() if (home / name).exists() else None for name in _SETTINGS}
 
 
-def _install(repo, record):
-    """install.sh at the record's tree; settings stay the user's manual step."""
+def _export(repo, tree, commit, destination):
+    """The recorded tree as plain files plus the release pin layout.release_id reads."""
+    archive = subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', tree],
+                             check=True, capture_output=True).stdout
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        members = tar.getmembers()
+        for member in members:
+            path = PurePosixPath(member.name)
+            if path.is_absolute() or '..' in path.parts or not (member.isfile() or member.isdir()):
+                raise ValueError(f'export holds contained regular files only: {member.name}')
+        destination.mkdir()
+        tar.extractall(destination, members=members)
+    with (destination / '.release-pin.json').open('x', encoding='utf-8') as stream:
+        json.dump({'commit': commit, 'tree': tree}, stream, indent=2)
+        stream.write('\n')
+
+
+def _install(repo, folder, record, commit):
+    """install.sh from an export of the record's tree; settings stay the user's manual step."""
+    export = folder / 'release'
+    _export(repo, record['tree'], commit, export)
     home = Path.home()
     before = _settings(home)
-    subprocess.run(['sh', 'install.sh', f'--target={record["targets"][0]}'], cwd=repo, check=True,
+    subprocess.run(['sh', 'install.sh', f'--target={record["targets"][0]}'], cwd=export, check=True,
                    stdout=subprocess.DEVNULL)
     changed = [name for name, data in _settings(home).items() if data != before[name]]
     for name in changed:
@@ -366,8 +433,23 @@ def _install(repo, record):
             (home / name).write_bytes(before[name])
     if changed:
         raise RuntimeError(f'install changed settings, restored: {", ".join(changed)}')
-    snippet = Path(repo) / 'settings.snippet.json'
-    return f'settings snippet {snippet.name} sha256 {hashlib.sha256(snippet.read_bytes()).hexdigest()} written, not applied'
+    snippet = export / 'settings.snippet.json'
+    return f'export {export} · settings snippet {snippet.name} sha256 {hashlib.sha256(snippet.read_bytes()).hexdigest()} written, not applied'
+
+
+def _lines(record, commit, before, digest, question, session, stamp):
+    """Every line run-approved writes, built before its first write (conveyor.json receipt_home build_first)."""
+    kind, action_id, targets = record['kind'], record['id'], record['targets']
+    approved = [f'## {stamp} — run-approved: {kind} {action_id}',
+                f'Conveyor: {stamp} · run-approved · - → - · head {commit} · tests - · skills {layout.release_id()} · schedules -',
+                f'Approved: {kind} {action_id} · digest {digest} · {stamp} · question {question} · session {session}']
+    done = [f'## {stamp} — {kind}: {commit[:9]} to {", ".join(targets)}', f'Commit: {commit}']
+    if kind != 'skills-install':
+        done += [f'Evidence: {" · ".join(f"{t} at {commit}" for t in targets)}',
+                 *[f'Pushed: {commit} to {t}' for t in targets],
+                 f'Rollback: {" · ".join(f"{t}: {sha}" for t, sha in before.items())}']
+    failed = [f'## {stamp} — failed: {kind} {action_id}', f'Failed: {kind} {action_id} · {stamp} · ']
+    return approved, done, failed
 
 
 def run_approved(repo, kind, action_id, digest, *, question, session, now=None):
@@ -375,31 +457,28 @@ def run_approved(repo, kind, action_id, digest, *, question, session, now=None):
     now = _now(now)
     if kind not in ACTION['kinds']:
         raise Refused('unknown-kind', kind)
-    if not re.fullmatch(r'https?://\S+', question) or not _NAME.fullmatch(session):
-        raise ValueError('question must be a link and session a plain name')
+    if not re.fullmatch(r'https?://\S+', question) or not _SESSION.fullmatch(session):
+        raise ValueError('question must be a link and session a session id (conveyor.json session_id)')
     folder = _folder(repo, action_id)
     if folder is None:
         raise ValueError(f'no action record for {action_id}; prepare it first')
     record = json.loads((folder / 'action.json').read_text(encoding='utf-8'))
-    commit = _check(repo, record, kind, digest, now)
-    leases = {t: _remote_ref(repo, t) for t in record['targets']} if kind == 'rollback' else {}
+    commit, before = _check(repo, record, kind, digest, now)
+    approved, done, failed = _lines(record, commit, before, digest, question, session, _minute(now))
+    issues = list(dict.fromkeys(item['issue'] for item in record['train'] if item['issue'] is not None))
     _claim(folder, record, now)
-    stamp, skills = _minute(now), _git(_ROOT, 'rev-parse', 'HEAD')
-    _append(folder, [f'## {stamp} — run-approved: {kind} {action_id}',
-                     f'Conveyor: {stamp} · run-approved · - → - · head {commit} · tests - · skills {skills} · schedules -',
-                     f'Approved: {kind} {action_id} · digest {digest} · {stamp} · question {question} · session {session}'])
-    targets = ', '.join(record['targets'])
-    if kind == 'skills-install':
-        evidence = _install(repo, record)
-        _append(folder, [f'## {_minute(_now(None))} — skills-install: {commit[:9]} to {targets}',
-                         f'Commit: {commit}', f'Evidence: {evidence}'])
-        return {'kind': kind, 'id': action_id, 'commit': commit, 'evidence': evidence}
-    before = _push(repo, folder, record, commit, leases)
-    rollback = ' · '.join(f'{t}: {sha}' for t, sha in before.items())
-    stage = 'deploy' if kind == 'release' else 'rollback'
-    _append(folder, [f'## {_minute(_now(None))} — {stage}: {commit[:9]} to {targets}', f'Commit: {commit}',
-                     f'Evidence: {" · ".join(f"{t} at {commit}" for t in record["targets"])}',
-                     f'Rollback: {rollback}'])
+    try:
+        _write(repo, folder, issues, approved)
+        if kind == 'skills-install':
+            evidence = _install(repo, folder, record, commit)
+            _write(repo, folder, issues, done + [f'Evidence: {evidence}'])
+            return {'kind': kind, 'id': action_id, 'commit': commit, 'evidence': evidence}
+        _push(repo, folder, record, commit, before)
+        _write(repo, folder, issues, done)
+    except Exception as exc:  # after the claim: record the failure everywhere, keep the record used, re-raise
+        reason = ' '.join(str(exc).split()) or type(exc).__name__
+        _write(repo, folder, issues, failed[:-1] + [failed[-1] + reason])
+        raise
     return {'kind': kind, 'id': action_id, 'commit': commit, 'rollback': before}
 
 
@@ -410,7 +489,7 @@ def correct_rollback(repo, action_id, target, wrong, right, *, now=None):
         raise ValueError(f'no action record for {action_id}')
     deploy = _rollback_refs(folder / 'log.md')
     if deploy is None:
-        raise ValueError(f'{action_id} has no deploy entry to correct')
+        raise ValueError(f'{action_id} has no release entry to correct')
     refs = deploy['refs']
     if refs.get(target) != wrong:
         raise ValueError(f'{target} Rollback ref is {refs.get(target)}, not {wrong}')

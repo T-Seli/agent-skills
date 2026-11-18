@@ -83,7 +83,7 @@ def main(argv=None):
     approved.add_argument('id')
     approved.add_argument('--digest', required=True)
     approved.add_argument('--question', required=True, help='Link to the go question')
-    approved.add_argument('--session', required=True, help='Session running the approved action')
+    approved.add_argument('--session', required=True, help='Session running the approved action: local_<uuid> or <uuid>')
     correction = subs.add_parser('correct-rollback', help='Append a Correction: for a wrong Rollback ref; never edits it')
     correction.add_argument('id')
     correction.add_argument('target')
