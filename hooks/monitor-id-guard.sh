@@ -1,8 +1,9 @@
 #!/bin/sh
 # Claude PreToolUse (matcher: mcp__scheduled-tasks__create_scheduled_task|mcp__scheduled-tasks__delete_scheduled_task),
 # per conveyor.json `registry.monitors`. Create: allows an id `monitor-<repo>-<slug>` whose description carries a
-# `Deadline:`, else asks. Delete: allows a `Scheduler:` id on an open belt issue once its verdict is recorded (first id
-# first-traffic, second 24 h), denies before, asks for any other id. A guard that cannot load or errors denies.
+# `Deadline:`, else asks. Delete: searches open and closed belt issues for the id; allows a `Scheduler:` id once its
+# verdict is recorded (first id first-traffic, second 24 h), denies before, asks for any other id. A guard that cannot
+# load, errors or times out denies.
 python3 -I -B -c '
 import json, os, sys
 try:

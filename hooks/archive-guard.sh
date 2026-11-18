@@ -1,8 +1,8 @@
 #!/bin/sh
-# Claude PreToolUse (matcher: mcp__ccd_session_mgmt__archive_session): the belt registry is the sessions in
-# `Owner:` and `Claimed:` receipts on open belt issues (conveyor.json `registry`). Allows one whose claimed issues
-# are all closed or parked, denies one with unfinished work or a plain-uuid headless worker, asks about anything
-# outside the registry. `session_id` "self" means the calling session. A guard that cannot load or errors denies.
+# Claude PreToolUse (matcher: mcp__ccd_session_mgmt__archive_session), per conveyor.json `registry`: one search for
+# the session's `Owner:` and `Claimed:` receipts over open and closed belt issues. Allows one whose issues are all
+# closed or parked, denies one with an open unparked issue or a plain-uuid headless worker, asks when it is on none.
+# `session_id` "self" means the calling session. A guard that cannot load, errors or times out denies.
 python3 -I -B -c '
 import json, os, sys
 try:
