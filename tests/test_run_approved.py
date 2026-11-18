@@ -25,6 +25,10 @@ UUID = '0f6c2d4e-1a2b-4c3d-8e9f-0a1b2c3d4e5f'
 DESKTOP, HEADLESS = f'local_{UUID}', UUID
 PIN = 'c' * 40
 READY = 'lane:ready-to-release'
+REPOSITORY = 'o/skills'
+# conveyor.json at PR #24: the rollback kind's receipt and the issueless train item refusal.
+ROLLED_BACK = r'^Rolled back: (?P<sha>[0-9a-f]{7,40}) to (?P<branch>\S+)$'
+REFUSALS = sorted(set(CONVEYOR['action_record']['refusals']) | {'no-issue'})
 
 # A stand-in for the gh CLI: reads and writes one JSON state file; posts append issue comments.
 FAKE_GH = f'''#!{sys.executable}
@@ -33,13 +37,17 @@ path = os.environ['FAKE_GH_STATE']
 with open(path) as stream:
     state = json.load(stream)
 noun, verb, number = sys.argv[1:4]
+if (noun, verb) == ('repo', 'view'):
+    print(json.dumps({{'nameWithOwner': state['repo']}}))
+    sys.exit()
 item = state[noun][number]
 if verb == 'view':
     print(json.dumps({{f: item[f] for f in sys.argv[sys.argv.index('--json') + 1].split(',')}}))
 elif noun == 'issue' and verb == 'comment' and sys.argv[4:] == ['--body-file', '-']:
-    if state.get('fail_comments'):
+    body = sys.stdin.read()
+    if state.get('fail_body') and state['fail_body'] in body:
         sys.exit('gh: comment refused')
-    item['comments'].append({{'body': sys.stdin.read()}})
+    item['comments'].append({{'body': body}})
     with open(path, 'w') as stream:
         json.dump(state, stream)
     print('https://x.test/issues/' + number)
@@ -68,7 +76,7 @@ class RunApproved(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
-        self.remote, self.repo = self.tmp / 'remote.git', self.tmp / 'work'
+        self.remote, self.repo = self.tmp / f'{REPOSITORY}.git', self.tmp / 'work'
         git(self.tmp, 'init', '-q', '--bare', '-b', 'main', str(self.remote))
         git(self.tmp, 'init', '-q', '-b', 'main', str(self.repo))
         for key, value in (('user.email', 'test@example.invalid'), ('user.name', 'Test'), ('commit.gpgsign', 'false')):
@@ -91,7 +99,7 @@ class RunApproved(unittest.TestCase):
         (bin_dir / 'gh').write_text(FAKE_GH)
         (bin_dir / 'gh').chmod(0o755)
         self.gh_state = self.tmp / 'gh.json'
-        self.gh = {'pr': {}, 'issue': {}}
+        self.gh = {'repo': REPOSITORY, 'pr': {}, 'issue': {}}
         for pr in (7, 8):
             self.pr(pr, self.head)
         for issue in (11, 12):
@@ -100,6 +108,11 @@ class RunApproved(unittest.TestCase):
                                            'PATH': f'{bin_dir}{os.pathsep}{os.environ["PATH"]}'})
         env.start()
         self.addCleanup(env.stop)
+        self.releases = self.tmp / 'releases'
+        for patch in (mock.patch.object(safeguard_cli, 'machine_config', return_value={'releases_root': str(self.releases)}),
+                      mock.patch.dict(release_guard.ACTION, {'refusals': REFUSALS})):  # until PR #24 lands no-issue
+            patch.start()
+            self.addCleanup(patch.stop)
         cwd = os.getcwd()
         os.chdir(self.repo)
         self.addCleanup(os.chdir, cwd)
@@ -197,7 +210,7 @@ class RunApproved(unittest.TestCase):
         self.assertTrue(json.loads((self.folder('r1') / 'action.json').read_text())['used_at'])
 
     def test_every_train_issue_and_the_release_log_carry_the_same_lines(self):
-        _, record = self.prepare(train=('11:7', '12:8', '-:8'))
+        _, record = self.prepare(train=('11:7', '12:8'))
         self.assertEqual(self.cli(self.approve('release', 'r1', record['digest']))[0], 0, self.stderr)
         log = self.log('r1')
         for issue in (11, 12):
@@ -234,6 +247,32 @@ class RunApproved(unittest.TestCase):
             self.assertEqual(receipt('failed', ''.join(self.comments(issue)))[0], failed[0])
         self.assertTrue((self.folder('r1') / 'used').exists())
         self.assertEqual(self.cli(go)[1]['refused'], 'reused')
+
+    def test_every_train_item_names_an_issue_at_prepare_and_at_run(self):
+        code, result = self.cli(f'{CLI} prepare-action release r0 --session s --expires-in-minutes 5 '
+                                f'--train=11:7:{self.head} --train=-:8:{self.head} --target main')
+        self.assertEqual((code, result['refused']), (1, 'no-issue'))
+        self.assertFalse((self.repo / '.claude/drafts').exists() and list((self.repo / '.claude/drafts').iterdir()))
+        with mock.patch.object(release_guard, '_named'):  # a record written before the rule
+            _, record = self.prepare(train=('11:7', '-:8'))
+        self.assertEqual(record['train'][1]['issue'], None)
+        self.assertRefused('no-issue', self.approve('release', 'r1', record['digest']))
+        self.assertEqual(git(self.remote, 'rev-parse', 'main'), self.base)
+
+    def test_a_post_that_fails_after_the_push_keeps_the_landed_push_in_the_log(self):
+        _, record = self.prepare(train=('11:7', '12:8'))
+        self.gh['fail_body'] = 'Pushed: '
+        self.save()
+        code, result = self.cli(self.approve('release', 'r1', record['digest']))
+        self.assertEqual((code, result['unposted']), (0, [11, 12]), self.stderr)
+        self.assertEqual(git(self.remote, 'rev-parse', 'main'), self.head)
+        log = self.log('r1')
+        self.assertEqual((receipt('pushed', log)['sha'], receipt('rollback', log)[0]), (self.head, f'Rollback: main: {self.base}'))
+        self.assertIsNone(receipt('failed', log), 'a landed push is never reported as failed')
+        for issue in (11, 12):
+            posted = ''.join(self.comments(issue))
+            self.assertTrue(receipt('approved', posted))
+            self.assertIsNone(receipt('pushed', posted) or receipt('failed', posted))
 
     def test_record_holds_parameters_only_never_a_command_line(self):
         _, record = self.prepare()
@@ -296,7 +335,7 @@ class RunApproved(unittest.TestCase):
         later = datetime.now(timezone.utc) + timedelta(minutes=6)
         with self.assertRaises(release_guard.Refused) as refused:
             release_guard.run_approved(str(self.repo), 'release', 'r1', record['digest'],
-                                       question=QUESTION, session=DESKTOP, now=later)
+                                       question=QUESTION, session=DESKTOP, releases=self.releases, now=later)
         self.assertEqual(refused.exception.reason, 'expired')
         self.assertUnused('r1')
 
@@ -320,7 +359,7 @@ class RunApproved(unittest.TestCase):
         self.assertRefused('digest-mismatch', self.approve('release', 'r1', record['digest']))
 
     def test_refuses_hold_on_issue_or_pr(self):
-        _, record = self.prepare(train=('11:7', '-:8'))
+        _, record = self.prepare(train=('11:7', '12:8'))
         self.ready(11, self.head, labels=(READY, 'hold'))
         self.assertRefused('hold', self.approve('release', 'r1', record['digest']))
         self.ready(11, self.head)
@@ -330,7 +369,7 @@ class RunApproved(unittest.TestCase):
     def test_refuses_train_over_limit_from_defaults(self):
         self.assertEqual(release_guard.train_limit(self.repo), 6)
         code, result = self.cli(f'{CLI} prepare-action release r0 --session s --expires-in-minutes 5 --target main '
-                                + ' '.join(f'--train=-:{n}:{self.head}' for n in range(1, 8)))
+                                + ' '.join(f'--train={n}:{n}:{self.head}' for n in range(1, 8)))
         self.assertEqual(result['refused'], 'train-over-limit')
         _, record = self.prepare(train=('11:7', '12:8'))
         (self.repo / '.git/info/exclude').write_text('.claude/drafts/\nCLAUDE.md\n')
@@ -338,7 +377,14 @@ class RunApproved(unittest.TestCase):
         self.assertRefused('train-over-limit', self.approve('release', 'r1', record['digest']))
 
     def install_script(self, text):
-        self.head = self.commit('install.sh', text)
+        """A skills source the packaging step accepts; install.sh links from its own directory like the real one."""
+        for name in ('agent_skills/catalog.json', 'skills/workflow-contracts/contracts.md', 'global/CLAUDE.md'):
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).write_text('{}\n')
+        (self.repo / 'settings.snippet.json').write_text('{"permissions": {}}\n')
+        git(self.repo, 'add', '.')
+        link = 'R=$(cd "$(dirname "$0")" && pwd -P)\nmkdir -p "$HOME/.claude"\nln -sfn "$R/skills" "$HOME/.claude/skills"\n'
+        self.head = self.commit('install.sh', link + text)
         self.pr(7, self.head)
         self.ready(11, self.head)
 
@@ -346,16 +392,24 @@ class RunApproved(unittest.TestCase):
         settings = self.tmp / 'home/.claude/settings.json'
         settings.parent.mkdir(parents=True)
         settings.write_text('{"mine": true}\n')
-        self.install_script('pwd -P > "$HOME/ran-in"\nprintf \'{"permissions": {}}\\n\' > settings.snippet.json\n')
+        self.install_script('pwd -P > "$HOME/ran-in"\n')
         _, record = self.prepare('skills-install', 's1', targets=('claude',))
         self.assertEqual(self.cli(self.approve('skills-install', 's1', record['digest'], HEADLESS))[0], 0, self.stderr)
-        export = self.folder('s1') / 'release'
-        self.assertEqual((self.tmp / 'home/ran-in').read_text().strip(), str(export.resolve()))
-        self.assertEqual(json.loads((export / '.release-pin.json').read_text()),
-                         {'commit': self.head, 'tree': record['tree']})
-        self.assertEqual(sorted(p.name for p in export.iterdir()),
-                         ['.release-pin.json', 'base.txt', 'feature.txt', 'install.sh', 'settings.snippet.json'])
-        self.assertFalse((self.repo / 'settings.snippet.json').exists(), 'install never runs in the working tree')
+        release = (self.releases / self.head[:7]).resolve()
+        self.assertEqual((self.tmp / 'home/ran-in').read_text().strip(), str(release))
+        self.assertEqual(json.loads((release / '.release-pin.json').read_text()),
+                         {'source': REPOSITORY, 'commit': self.head, 'tree': record['tree']})
+        self.assertEqual(sorted(p.name for p in release.iterdir()),
+                         ['.release-pin.json', 'agent_skills', 'base.txt', 'feature.txt', 'global', 'install.sh',
+                          'settings.snippet.json', 'skills'])
+        linked = Path(os.readlink(self.tmp / 'home/.claude/skills'))
+        self.assertTrue(linked.is_relative_to(release), linked)
+        self.assertFalse(linked.is_relative_to((self.repo / '.claude/drafts').resolve()), 'never into the drafts folder')
+        self.assertEqual(sorted(p.name for p in self.folder('s1').iterdir()), ['action.json', 'log.md', 'used'])
+        self.assertIn(f'release {self.releases / self.head[:7]} ', self.log('s1'))
+        _, again = self.prepare('skills-install', 's1b', targets=('codex',))
+        self.assertEqual(self.cli(self.approve('skills-install', 's1b', again['digest']))[0], 0, self.stderr)
+        self.assertEqual(sorted(p.name for p in self.releases.iterdir()), [self.head[:7]], 'one verified snapshot per commit')
         self.assertEqual(settings.read_text(), '{"mine": true}\n')
         self.assertRegex(self.log('s1'), r'settings snippet settings\.snippet\.json sha256 [0-9a-f]{64} written, not applied')
         self.assertEqual(receipt('approved', self.log('s1'))['session'], HEADLESS)
@@ -369,7 +423,7 @@ class RunApproved(unittest.TestCase):
         self.assertIn('install changed settings', receipt('failed', self.log('s2'))['reason'])
 
     def test_skills_install_refuses_a_dirty_tree(self):
-        self.install_script('printf \'{}\\n\' > settings.snippet.json\n')
+        self.install_script('')
         _, record = self.prepare('skills-install', 's1', targets=('claude',))
         go = self.approve('skills-install', 's1', record['digest'])
         (self.repo / 'feature.txt').write_text('edited after review\n')
@@ -410,9 +464,14 @@ class RunApproved(unittest.TestCase):
         self.assertEqual(undo['train'], record['train'])
         self.assertEqual(self.cli(self.approve('rollback', 'b1', undo['digest']))[0], 0, self.stderr)
         self.assertEqual(git(self.remote, 'rev-parse', 'main'), right)
-        self.assertIn(f'Rollback: main: {self.head}', self.log('b1'))
-        self.assertEqual(receipt('pushed', self.log('b1'))['sha'], right)
-        self.assertTrue(receipt('approved', ''.join(self.comments(11)[-2:])))
+        undone = self.log('b1')
+        self.assertIn(f'Rollback: main: {self.head}', undone)
+        posted = ''.join(self.comments(11)[-2:])
+        for text in (undone, posted):
+            rolled = re.search(ROLLED_BACK, text, re.M)
+            self.assertEqual((rolled['sha'], rolled['branch']), (right, 'main'))
+            self.assertIsNone(receipt('pushed', text), 'a rollback writes Rolled back:, never Pushed:')
+        self.assertTrue(receipt('approved', posted))
 
     def test_rollback_refuses_when_the_target_moved_after_the_release(self):
         _, record = self.prepare()

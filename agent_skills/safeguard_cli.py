@@ -76,7 +76,7 @@ def main(argv=None):
     prepare.add_argument('id')
     prepare.add_argument('--session', required=True, help='Preparing session')
     prepare.add_argument('--expires-in-minutes', type=int, required=True)
-    prepare.add_argument('--train', action='append', default=[], help='--train=<issue|->:<pr>:<full head sha>; none for rollback')
+    prepare.add_argument('--train', action='append', default=[], help='--train=<issue>:<pr>:<full head sha>; none for rollback')
     prepare.add_argument('--target', action='append', default=[], help='Branch on origin, or all|claude|codex for skills-install')
     approved = subs.add_parser('run-approved', help="The user's one click: refuse per action_record.refusals or run the kind's fixed path")
     approved.add_argument('kind')
@@ -166,7 +166,9 @@ def main(argv=None):
                 result = prepare_action(repo, args.kind, args.id, train=args.train, targets=args.target,
                                         session=args.session, minutes=args.expires_in_minutes)
             elif args.action == 'run-approved':
-                result = run_approved(repo, args.kind, args.id, args.digest, question=args.question, session=args.session)
+                releases = machine_config().get('releases_root', '~/.local/share/agent-skills/releases')
+                result = run_approved(repo, args.kind, args.id, args.digest, question=args.question,
+                                      session=args.session, releases=releases)
             else:
                 result = correct_rollback(repo, args.id, args.target, args.wrong, args.right)
         elif args.action == 'reconcile':

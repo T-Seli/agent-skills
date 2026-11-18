@@ -1,16 +1,16 @@
 """Exact immutable release identity and write-once rollback receipt."""
 import hashlib
-import io
 import json
 import os
 import re
-import tarfile
 import tempfile
 from datetime import datetime, timedelta, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import subprocess
 
 from . import layout
+from .release_maintenance import _verify_release_root
+from .release_package import package
 
 
 _SHA = re.compile(r'[0-9a-f]{40}|[0-9a-f]{64}', re.ASCII)
@@ -173,8 +173,16 @@ def _train_item(text):
     parts = text.split(':')
     issue, pr, head = parts if len(parts) == 3 else ('', '', '')
     if not (issue == '-' or issue.isdigit()) or not pr.isdigit() or not re.fullmatch(r'[0-9a-f]{40}', head):
-        raise ValueError(f'train item must be <issue|->:<pr>:<full head sha>: {text}')
-    return {'issue': None if issue == '-' else int(issue), 'pr': int(pr), 'head': head}
+        raise ValueError(f'train item must be <issue>:<pr>:<full head sha>: {text}')
+    item = {'issue': None if issue == '-' else int(issue), 'pr': int(pr), 'head': head}
+    _named([item])
+    return item
+
+
+def _named(train):
+    for item in train:
+        if item['issue'] is None:
+            raise Refused('no-issue', f'PR {item["pr"]} names no issue; the sweep gives it one')
 
 
 def _log_entries(log):
@@ -293,7 +301,7 @@ def _remote_ref(repo, target):
 def _train_state(repo, record):
     """Each train item with its PR's head and labels and its issue's labels and comments (the receipt home)."""
     return [(item, _gh(repo, 'pr', 'view', str(item['pr']), '--json', 'headRefOid,labels'),
-             None if item['issue'] is None else _gh(repo, 'issue', 'view', str(item['issue']), '--json', 'labels,comments'))
+             _gh(repo, 'issue', 'view', str(item['issue']), '--json', 'labels,comments'))
             for item in record['train']]
 
 
@@ -304,14 +312,12 @@ def _labels(view):
 def _held(state):
     for item, pr, issue in state:
         for noun, number, view in (('pr', item['pr'], pr), ('issue', item['issue'], issue)):
-            if view is not None and 'hold' in _labels(view):
+            if 'hold' in _labels(view):
                 raise Refused('hold', f'{noun} {number} carries hold')
 
 
 def _not_ready(state):
     for item, pr, issue in state:
-        if issue is None:
-            continue
         heads = {found['head'] for comment in issue['comments'] for found in _REVIEWED.finditer(comment['body'])}
         if _READY not in _labels(issue) or not any(pr['headRefOid'].startswith(head) for head in heads):
             raise Refused('not-ready', f'issue {item["issue"]} needs {_READY} and Reviewed: YES on PR {item["pr"]} head')
@@ -345,6 +351,7 @@ def _check(repo, record, kind, digest, now):
     if now >= datetime.strptime(record['expires_at'], _STAMP).replace(tzinfo=timezone.utc):
         raise Refused('expired', f'expired at {record["expires_at"]}')
     _check_limit(repo, record['train'])
+    _named(record['train'])
     state = [] if kind == 'rollback' else _train_state(repo, record)
     _held(state)  # hold stops forward moves; it never blocks undoing one
     commit = _moved(repo, record, state)
@@ -376,10 +383,17 @@ def _append(folder, lines):
 
 
 def _write(repo, folder, issues, lines):
-    """Append the lines to the release log, then post the same lines on every train issue."""
+    """Append the lines to the release log (it keeps every line), then post them on every train issue.
+
+    Return the issues a post missed, so a sweep can re-post them from the log."""
     _append(folder, lines)
+    missed = []
     for issue in issues:
-        _gh(repo, 'issue', 'comment', str(issue), '--body-file', '-', stdin='\n'.join(lines) + '\n')
+        try:
+            _gh(repo, 'issue', 'comment', str(issue), '--body-file', '-', stdin='\n'.join(lines) + '\n')
+        except (OSError, subprocess.CalledProcessError):
+            missed.append(issue)
+    return missed
 
 
 def _push(repo, folder, record, commit, before):
@@ -400,27 +414,23 @@ def _settings(home):
     return {name: (home / name).read_bytes() if (home / name).exists() else None for name in _SETTINGS}
 
 
-def _export(repo, tree, commit, destination):
-    """The recorded tree as plain files plus the release pin layout.release_id reads."""
-    archive = subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', tree],
-                             check=True, capture_output=True).stdout
-    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-        members = tar.getmembers()
-        for member in members:
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or '..' in path.parts or not (member.isfile() or member.isdir()):
-                raise ValueError(f'export holds contained regular files only: {member.name}')
-        destination.mkdir()
-        tar.extractall(destination, members=members)
-    with (destination / '.release-pin.json').open('x', encoding='utf-8') as stream:
-        json.dump({'commit': commit, 'tree': tree}, stream, indent=2)
-        stream.write('\n')
+def _release(repo, commit, releases):
+    """The commit's snapshot in the releases root: packaged once, re-verified when it already exists."""
+    repository = _gh(repo, 'repo', 'view', '--json', 'nameWithOwner')['nameWithOwner']
+    destination = Path(releases).expanduser() / commit[:7]
+    if destination.exists():
+        pin = json.loads((destination / '.release-pin.json').read_text(encoding='utf-8'))
+        if pin['source'] != repository or pin['commit'] != commit:
+            raise ValueError(f'{destination} holds another release')
+        _verify_release_root(destination, Path(repo), pin)
+        return destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    return Path(package(repo, destination, commit, repository)['destination'])
 
 
-def _install(repo, folder, record, commit):
-    """install.sh from an export of the record's tree; settings stay the user's manual step."""
-    export = folder / 'release'
-    _export(repo, record['tree'], commit, export)
+def _install(repo, record, commit, releases):
+    """install.sh from the commit's snapshot in the releases root; settings stay the user's manual step."""
+    export = _release(repo, commit, releases)
     home = Path.home()
     before = _settings(home)
     subprocess.run(['sh', 'install.sh', f'--target={record["targets"][0]}'], cwd=export, check=True,
@@ -434,7 +444,7 @@ def _install(repo, folder, record, commit):
     if changed:
         raise RuntimeError(f'install changed settings, restored: {", ".join(changed)}')
     snippet = export / 'settings.snippet.json'
-    return f'export {export} · settings snippet {snippet.name} sha256 {hashlib.sha256(snippet.read_bytes()).hexdigest()} written, not applied'
+    return f'release {export} · settings snippet {snippet.name} sha256 {hashlib.sha256(snippet.read_bytes()).hexdigest()} written, not applied'
 
 
 def _lines(record, commit, before, digest, question, session, stamp):
@@ -446,14 +456,16 @@ def _lines(record, commit, before, digest, question, session, stamp):
     done = [f'## {stamp} — {kind}: {commit[:9]} to {", ".join(targets)}', f'Commit: {commit}']
     if kind != 'skills-install':
         done += [f'Evidence: {" · ".join(f"{t} at {commit}" for t in targets)}',
-                 *[f'Pushed: {commit} to {t}' for t in targets],
+                 *[f'{"Rolled back" if kind == "rollback" else "Pushed"}: {commit} to {t}' for t in targets],
                  f'Rollback: {" · ".join(f"{t}: {sha}" for t, sha in before.items())}']
     failed = [f'## {stamp} — failed: {kind} {action_id}', f'Failed: {kind} {action_id} · {stamp} · ']
     return approved, done, failed
 
 
-def run_approved(repo, kind, action_id, digest, *, question, session, now=None):
-    """The one route for a go: refuse per action_record.refusals, else run the kind's fixed path."""
+def run_approved(repo, kind, action_id, digest, *, question, session, releases, now=None):
+    """The one route for a go: refuse per action_record.refusals, else run the kind's fixed path.
+
+    skills-install packages into `releases`, the machine's releases root."""
     now = _now(now)
     if kind not in ACTION['kinds']:
         raise Refused('unknown-kind', kind)
@@ -465,21 +477,25 @@ def run_approved(repo, kind, action_id, digest, *, question, session, now=None):
     record = json.loads((folder / 'action.json').read_text(encoding='utf-8'))
     commit, before = _check(repo, record, kind, digest, now)
     approved, done, failed = _lines(record, commit, before, digest, question, session, _minute(now))
-    issues = list(dict.fromkeys(item['issue'] for item in record['train'] if item['issue'] is not None))
+    issues = list(dict.fromkeys(item['issue'] for item in record['train']))
     _claim(folder, record, now)
     try:
-        _write(repo, folder, issues, approved)
+        missed = _write(repo, folder, issues, approved)
+        if missed:
+            raise RuntimeError(f'Approved: not posted on issues {missed}; nothing was run')
         if kind == 'skills-install':
-            evidence = _install(repo, folder, record, commit)
-            _write(repo, folder, issues, done + [f'Evidence: {evidence}'])
-            return {'kind': kind, 'id': action_id, 'commit': commit, 'evidence': evidence}
-        _push(repo, folder, record, commit, before)
-        _write(repo, folder, issues, done)
+            evidence = _install(repo, record, commit, releases)
+            done.append(f'Evidence: {evidence}')
+            result = {'kind': kind, 'id': action_id, 'commit': commit, 'evidence': evidence}
+        else:
+            _push(repo, folder, record, commit, before)
+            result = {'kind': kind, 'id': action_id, 'commit': commit, 'rollback': before}
     except Exception as exc:  # after the claim: record the failure everywhere, keep the record used, re-raise
         reason = ' '.join(str(exc).split()) or type(exc).__name__
         _write(repo, folder, issues, failed[:-1] + [failed[-1] + reason])
         raise
-    return {'kind': kind, 'id': action_id, 'commit': commit, 'rollback': before}
+    # It landed: the log holds every line; an issue a post missed is re-posted by a sweep, never a failure.
+    return {**result, 'unposted': _write(repo, folder, issues, done)}
 
 
 def correct_rollback(repo, action_id, target, wrong, right, *, now=None):
