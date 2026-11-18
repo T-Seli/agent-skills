@@ -41,8 +41,10 @@ Only commands write receipts; the AI writes only a station's existing judgment f
 ## Approvals
 `safeguard-cli run-approved <kind> <id> --digest <d>` is the only route for a go. Each kind in conveyor.json `action_record.kinds` maps to one fixed code path; the record carries parameters only, never a command line. The record names the train's issues and heads, tree, targets, preparer, expiry and digest input; it refuses on each `action_record.refusals` reason and writes `Approved:` with the digest and no quoted words.
 
+`skills-install` writes the settings snippet file and never applies it; settings stay the user's manual step. The belt never runs a gated action that has no kind (a production data write, a customer-facing send, a consent or legal change): it stays with the user's own word in the executing session under contracts.md § Consent until a reviewed change adds a kind.
+
 ## Questions
-Three kinds: bookkeeping (never asked; covered by `authorizations.json`), go and choice. A go or choice carries the card `issues-cli ask <n> --kind go|choice` builds (conveyor.json `card`: ten fields, ≤12 lines; refused with an empty field or when it opens with a PR number or sha). "Tell me more" records `Asked for more` and the question returns.
+Three kinds: bookkeeping (never asked; covered by `authorizations.json`), go and choice. A go or choice carries the card `issues-cli ask <n> --kind go|choice` builds (conveyor.json `card`: ten fields, ≤12 lines; refused with an empty field or when it opens with a PR number or sha). A go card shows its kind, id and the digest's first 8 characters; its undo comes from the Rollback data. "Tell me more" records `Asked for more` and the question returns.
 
 ## Station contract
 **Input:** the issue plus the brief `issues-cli brief <n>` renders (body, decisions, the domain's knowledge pages with verified dates), so a station reruns from the issue alone. **Output:** the existing `log.md` entry and its tokens (contracts.md § Task log) plus the skills release sha. **Gate:** `issues-cli lane`.

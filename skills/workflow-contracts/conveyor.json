@@ -144,7 +144,7 @@
     },
     "approved": {
       "source": "log",
-      "pattern": "^Approved: (?P<kind>release|rollback|skills-install|settings-install) (?P<id>\\S+) · digest (?P<digest>[0-9a-f]{64}) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · question (?P<question>https?://\\S+) · session (?P<session>\\S+)$",
+      "pattern": "^Approved: (?P<kind>release|rollback|skills-install) (?P<id>\\S+) · digest (?P<digest>[0-9a-f]{64}) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · question (?P<question>https?://\\S+) · session (?P<session>\\S+)$",
       "written_by": "run-approved"
     },
     "deploy": {
@@ -262,8 +262,7 @@
     "kinds": {
       "release": "safeguard release of the frozen train",
       "rollback": "safeguard rollback to the recorded Rollback ref",
-      "skills-install": "install.sh at the record's tree",
-      "settings-install": "render and install authorizations.json"
+      "skills-install": "install.sh at the record's tree; writes the settings snippet file, never applies it (settings stay the user's manual step)"
     },
     "fields": {
       "kind": "one of kinds",
@@ -287,7 +286,8 @@
       "hold",
       "train-over-limit"
     ],
-    "command_lines": "forbidden"
+    "command_lines": "forbidden",
+    "no_kind": "the belt never runs a gated action without a kind; it stays with the user's own word in the executing session (contracts.md § Consent)"
   },
   "questions": {
     "bookkeeping": "never asked; authorizations.json",
@@ -316,18 +316,26 @@
       "changes",
       "if_yes",
       "if_no",
-      "if_wait"
+      "if_wait",
+      "recommended"
     ],
     "script_fills": {
       "goal": "goal name and step k of n",
       "from": "origin text stored at capture",
       "checked": "Checked: receipts present · Not yet: receipts missing, never omitted",
-      "link": "full-page link"
+      "link": "full-page link",
+      "undo": "go: from the action record's Rollback data"
     },
     "refuse": {
       "empty_field": true,
-      "opens_with": "^(PR ?)?#?\\d+\\b|^[0-9a-f]{7,40}\\b"
+      "opens_with": "^(#|PR ?#?)\\d+\\b|^(?=[0-9a-f]*\\d)[0-9a-f]{7,40}\\b"
     },
-    "tell_me_more": "records asked_more; not a decision; the question returns"
+    "tell_me_more": "records asked_more; not a decision; the question returns",
+    "ai_fills_by_kind": {
+      "choice": [
+        "undo"
+      ]
+    },
+    "go_shows": "kind, id and the first 8 characters of the digest"
   }
 }

@@ -102,11 +102,13 @@ class Receipts(unittest.TestCase):
 class ActionsAndCards(unittest.TestCase):
     def test_action_record_is_parameters_only(self):
         a = SCHEMA['action_record']
-        self.assertEqual(set(a['kinds']), {'release', 'rollback', 'skills-install', 'settings-install'})
+        self.assertEqual(set(a['kinds']), {'release', 'rollback', 'skills-install'})
         for f in ('kind', 'id', 'train', 'tree', 'targets', 'prepared_by', 'prepared_at', 'expires_at', 'digest_input', 'digest', 'used_at'):
             self.assertIn(f, a['fields'])
         self.assertEqual(set(a['refusals']), {'unknown-kind', 'moved-head', 'expired', 'reused', 'digest-mismatch', 'hold', 'train-over-limit'})
         self.assertEqual(a['command_lines'], 'forbidden')
+        self.assertIn('never applies', a['kinds']['skills-install'])
+        self.assertIn('never runs a gated action that has no kind', CONVEYOR)
         kinds = re.search(r'\(\?P<kind>([^)]+)\)', R['approved']['pattern']).group(1).split('|')
         self.assertEqual(set(kinds), set(a['kinds']))
 
@@ -116,9 +118,13 @@ class ActionsAndCards(unittest.TestCase):
         self.assertEqual(c['max_lines'], 12)
         self.assertEqual(set(c['kinds']), {'go', 'choice'})
         self.assertTrue(set(c['ai_writes']) <= set(c['fields']))
-        for bad in ('#17 ships the contract', 'PR 17 ships', f'{SHA} ships'):
+        for bad in ('#17 ships the contract', 'PR 17 ships', 'PR #17 ships', f'{SHA} ships'):
             self.assertRegex(bad, c['refuse']['opens_with'])
-        self.assertNotRegex('The belt contract ships', c['refuse']['opens_with'])
+        for ok in ('The belt contract ships', '2 PRs ship today', 'deadbeef is a word here', 'added to the train'):
+            self.assertNotRegex(ok, c['refuse']['opens_with'], ok)
+        self.assertIn('recommended', c['ai_writes'])
+        self.assertIn('undo', c['script_fills'])
+        self.assertIn('digest', c['go_shows'])
         self.assertEqual(set(SCHEMA['questions']), {'bookkeeping', 'go', 'choice'})
 
     def test_knowledge_interface_is_named(self):
