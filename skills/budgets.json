@@ -1,7 +1,7 @@
 {
  "unit": "bytes; tokens ~ bytes/3.9",
  "long_line_chars": 600,
- "duplicate_runs": 70,
+ "duplicate_runs": 80,
  "files": {
   "CLAUDE.md": {
    "bytes": 2935,
@@ -60,7 +60,7 @@
    "long": 4
   },
   "skills/agent-coordination/references/independent-reviewer.md": {
-   "bytes": 5245,
+   "bytes": 6694,
    "long": 0
   },
   "skills/agent-coordination/references/reviewer-access.md": {
@@ -84,11 +84,11 @@
    "long": 10
   },
   "skills/agent-coordination/references/worker-execution.md": {
-   "bytes": 20549,
-   "long": 11
+   "bytes": 20809,
+   "long": 12
   },
   "skills/agent-coordination/references/workspace-and-train.md": {
-   "bytes": 4003,
+   "bytes": 4215,
    "long": 4
   },
   "skills/approval-handoff/SKILL.md": {
@@ -124,7 +124,7 @@
    "long": 1
   },
   "skills/implement/SKILL.md": {
-   "bytes": 12807,
+   "bytes": 13032,
    "long": 6
   },
   "skills/implement/references/review-axes.md": {
@@ -136,8 +136,8 @@
    "long": 1
   },
   "skills/monitor/SKILL.md": {
-   "bytes": 10286,
-   "long": 1
+   "bytes": 11195,
+   "long": 2
   },
   "skills/prime-context/SKILL.md": {
    "bytes": 5280,
@@ -176,11 +176,11 @@
    "long": 0
   },
   "skills/test-review/SKILL.md": {
-   "bytes": 15798,
-   "long": 5
+   "bytes": 16547,
+   "long": 7
   },
   "skills/test-review/references/hosted-review.md": {
-   "bytes": 5703,
+   "bytes": 5886,
    "long": 0
   },
   "skills/ui-design/SKILL.md": {
