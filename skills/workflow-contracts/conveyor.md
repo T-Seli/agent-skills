@@ -15,7 +15,7 @@ A new rule that is fixed, a count, a state change or a check is a script; one th
 The belt acts only on sessions and worktrees in its own registry (started by the coordinator or `delegate.py`). The user's own side sessions are outside it: never archived, messaged, cleaned up or counted against lane limits. Machine limits (test slots, disk) read real load, so a side session's test run holds a slot like any other.
 
 ## Labels
-Each open belt issue carries exactly one `lane:<name>`, one `domain:<name>` and, once sorted, one `size:S|M|L`. Priority is `prio:now`, `prio:next` or `prio:later`, separate from the lane `next`. Modifiers: `hold` (no gate moves it forward) and `needs-human` (waits for the user). `ready-for-agent` folds into `lane:backlog`.
+Each open belt issue carries exactly one `lane:<name>`, one `domain:<name>` and, once sorted, one `size:S|M|L`. Priority is `prio:now`, `prio:next` or `prio:later`, separate from the lane `next`. Modifiers: `hold` (no gate moves it forward) and `needs-human` (waits for the user). `ready-for-agent` folds into `lane:backlog`. A gate command that needs a missing belt label creates it (lane, `prio:`, `size:`, modifiers from conveyor.json; `domain:` from the knowledge store's domains): additive only, never renamed or deleted, one receipt.
 
 ## Lanes
 Every move is `issues-cli lane <n> <lane>`, which checks the entry rule against receipts and refuses loudly, naming each missing one. Forward moves skip no lane after `next`. A move back (a review NO, a failed deploy) is allowed with a `--reason`, which becomes its receipt.
