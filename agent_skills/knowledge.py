@@ -1,4 +1,5 @@
 """Knowledge stores: a brain (decisions, lessons, answers, inbox, log) and a repo wiki, both plain markdown."""
+import collections
 import datetime
 import json
 import math
@@ -42,6 +43,10 @@ def _git(cwd, *args, check=True):
     if check and done.returncode:
         raise KnowledgeError(f'git {" ".join(args)} failed in {cwd}: {done.stderr.strip()}')
     return done.stdout.strip()
+
+
+def _secrets(line):
+    return [label for rx, label in SECRETS if rx.search(line)]
 
 
 def _md_files(directory):
@@ -149,6 +154,8 @@ def _fold_text(text, entries, name):
         unknown = [h for h in header if h not in values]
         if unknown:
             raise KnowledgeError(f'{name} has columns collect cannot fill: {", ".join(unknown)}')
+        if e['scope'] != 'global' and 'scope' not in header:
+            raise KnowledgeError(f'{name} has no scope column; entry {e["id"]} has scope {e["scope"]}')
         rows.append('| ' + ' | '.join(values[h] for h in header) + ' |')
     lines = text.split('\n')
     lines[end:end] = rows
@@ -179,8 +186,9 @@ class Knowledge:
                 raise KnowledgeError(f'{path} is not valid JSON: {error}')
             if not isinstance(stores, dict):
                 raise KnowledgeError(f'{path}: knowledge_stores must be an object')
-        mapped = Path(stores[brain]).expanduser() if brain and brain in stores else None
-        brain_path = mapped if mapped and mapped.is_dir() else None
+        brain_path = Path(stores[brain]).expanduser() if brain and brain in stores else None
+        if brain_path and not brain_path.is_dir():
+            raise KnowledgeError(f'knowledge_stores maps {brain} to a missing folder: {brain_path}')
         wiki_path = Path(wiki).expanduser() if wiki else None
         if wiki_path and not wiki_path.is_dir():
             raise KnowledgeError(f'wiki directory not found: {wiki_path}')
@@ -209,7 +217,7 @@ class Knowledge:
         return out
 
     def domains(self):
-        return sorted({d for _, s in self._stores() for d, _, _ in _routing(s) if re.fullmatch(r'[a-z-]+', d)})
+        return sorted({d for _, s in self._stores() for d, _, _ in _routing(s) if re.fullmatch(r'[a-z0-9-]+', d)})
 
     def pages(self, domain):
         out, seen = [], set()
@@ -227,7 +235,7 @@ class Knowledge:
         return out
 
     def find(self, words):
-        wanted = _tokens(' '.join(words)) - STOP
+        wanted = _tokens(words if isinstance(words, str) else ' '.join(words)) - STOP
         if not wanted:
             raise KnowledgeError('find needs at least one word of 3+ characters that is not a stop word')
         need, hits = math.ceil(len(wanted) / 2), []
@@ -240,14 +248,15 @@ class Knowledge:
                         ident, text = row[0], cell.get('rule', '')
                     else:
                         ident, text = cell.get('id'), f"{cell.get('question', '')} => {cell.get('answer', '')}"
-                    hits.append((rel, ident, text, name, False, ' '.join(row)))
+                    hits.append((rel, ident, text, name, cell.get('source', row[-1]), False, ' '.join(row)))
             for path, entry in self._unfolded(store):
-                hits.append((f'inbox/{path.name}', entry['id'], entry['text'], name, True, f"{entry['id']} {entry['text']}"))
+                hits.append((f'inbox/{path.name}', entry['id'], entry['text'], name, entry['source'], True,
+                             f"{entry['id']} {entry['text']}"))
         found = []
-        for file, ident, text, name, pending, haystack in hits:
+        for file, ident, text, name, source, pending, haystack in hits:
             score = len(wanted & _tokens(haystack))
             if score >= need:
-                found.append({'file': file, 'id': ident, 'text': text, 'source': name, 'score': score, 'pending': pending})
+                found.append({'file': file, 'id': ident, 'text': text, 'store': name, 'source': source, 'score': score, 'pending': pending})
         return sorted(found, key=lambda h: -h['score'])[:5]
 
     # writes
@@ -262,9 +271,14 @@ class Knowledge:
             raise KnowledgeError(f'date must be YYYY-MM-DD{" or YYYY-MM" if kind == "lesson" else ""}: {date!r}')
         if not SCOPE.fullmatch(scope):
             raise KnowledgeError(f'scope must be global, tenant:<id> or repo:<name>: {scope!r}')
-        for label, value in (('source', source), ('text', text)):
+        table = _first_table(brain / TABLES[kind])
+        if scope != 'global' and table and 'scope' not in table[2]:
+            raise KnowledgeError(f'{TABLES[kind]} has no scope column, so scope {scope} would be lost')
+        for label, value in (('id', id), ('source', source), ('text', text)):
             if not value or value != value.strip() or '\n' in value or '|' in value:
                 raise KnowledgeError(f'{label} must be one trimmed non-empty line without "|"')
+            if _secrets(value):
+                raise KnowledgeError(f'{label} looks like a secret or personal data ({_secrets(value)[0]}); refused')
         if kind != 'decision' and ' => ' not in text:
             shape = '<what happened> => <rule now>' if kind == 'lesson' else '<question> => <answer>'
             raise KnowledgeError(f'{kind} text must be "{shape}"')
@@ -291,32 +305,37 @@ class Knowledge:
 
     def collect(self):
         brain = self._need_brain()
-        entries = self._unfolded(brain, strict=True)
+        open_branches = self._folded_on_open_branches(brain)
+        entries = [(p, e) for p, e in self._unfolded(brain, strict=True) if p.name not in open_branches]
         if not entries:
-            return {'folded': [], 'pr': None}
-        if _git(brain, 'status', '--porcelain', '--', 'decisions.md', 'inbox'):
-            raise KnowledgeError('decisions.md or inbox/ has uncommitted changes; commit or discard them first')
+            return {'folded': [], 'branch': None}
+        if _git(brain, 'status', '--porcelain', '--', *TABLES.values()):
+            raise KnowledgeError('decisions.md, lessons.md or answered.md has uncommitted changes; commit or discard them first')
+        before = self._lint_counts(brain)
+        start = _git(brain, 'rev-parse', 'HEAD')
         decisions = [(p, e) for p, e in entries if e['kind'] == 'decision']
         others = [(p, e) for p, e in entries if e['kind'] != 'decision']
         branch = worktree = original = None
         moved = []
         try:
-            if others:
-                branch = f'collect/{_stamp()}'
-                worktree = self._fold_branch(brain, branch, others)
+            if _git(brain, 'status', '--porcelain', '--', 'inbox'):
+                _git(brain, 'add', '-A', '--', 'inbox')
+                _git(brain, 'commit', '-q', '-m', 'knowledge: record inbox entries', '--', 'inbox')
             if decisions:
                 table = brain / 'decisions.md'
                 original = table.read_text(encoding='utf-8')
                 table.write_text(_fold_text(original, [e for _, e in decisions], table.name), encoding='utf-8')
                 moved = _move_folded(brain, [p.name for p, _ in decisions])
-                self._abort_on_lint(brain)
-            if worktree:
-                _git(worktree, 'add', '-A')
-                _git(worktree, 'commit', '-q', '-m', f'knowledge: fold {len(others)} inbox entries')
-            if decisions:
+                self._abort_on_lint(brain, before)
                 _git(brain, 'add', '-A', '--', 'decisions.md', 'inbox')
                 _git(brain, 'commit', '-q', '-m', f'knowledge: fold {len(decisions)} decisions', '--', 'decisions.md', 'inbox')
+            if others:
+                branch = f'collect/{_stamp()}'
+                worktree = self._fold_branch(brain, branch, others, before)
+                _git(worktree, 'add', '-A')
+                _git(worktree, 'commit', '-q', '-m', f'knowledge: fold {len(others)} inbox entries')
         except BaseException:
+            _git(brain, 'reset', '-q', start, check=False)
             if original is not None:
                 (brain / 'decisions.md').write_text(original, encoding='utf-8')
                 for src, dst in moved:
@@ -327,9 +346,17 @@ class Knowledge:
             raise
         if worktree:
             _remove_worktree(brain, worktree)
-        return {'folded': [e['id'] for _, e in entries], 'pr': branch}
+        return {'folded': [e['id'] for _, e in entries], 'branch': branch}
 
-    def _fold_branch(self, brain, branch, others):
+    @staticmethod
+    def _folded_on_open_branches(brain):
+        """Inbox file names already folded on a collect/* branch not yet merged into HEAD."""
+        names = set()
+        for branch in _git(brain, 'branch', '--list', '--no-merged', 'HEAD', '--format=%(refname:short)', 'collect/*').split():
+            names |= {Path(n).name for n in _git(brain, 'ls-tree', '--name-only', branch, 'inbox/folded/').split()}
+        return names
+
+    def _fold_branch(self, brain, branch, others, before):
         """Fold lessons and answers into their tables in a new temporary worktree on `branch`; returns its path."""
         worktree = Path(tempfile.mkdtemp(prefix='knowledge-')) / 'wt'
         try:
@@ -340,17 +367,22 @@ class Knowledge:
                     table = worktree / TABLES[kind]
                     table.write_text(_fold_text(table.read_text(encoding='utf-8'), mine, table.name), encoding='utf-8')
             _move_folded(worktree, [p.name for p, _ in others])
-            self._abort_on_lint(worktree)
+            self._abort_on_lint(worktree, before)
         except BaseException:
             _remove_worktree(brain, worktree)
             _git(brain, 'branch', '-D', branch, check=False)
             raise
         return worktree
 
-    def _abort_on_lint(self, root):
-        failures = self._lint_store('brain', root)
-        if failures:
-            raise KnowledgeError('lint failed after folding; nothing was kept:\n' + '\n'.join(failures))
+    def _lint_counts(self, root):
+        """Lint failures with line numbers and the folded/ path part removed, so a fold compares like with like."""
+        return collections.Counter(re.sub(r'line \d+: ', '', f).replace('inbox/folded/', 'inbox/')
+                                   for f in self._lint_store('brain', root))
+
+    def _abort_on_lint(self, root, before):
+        new = list((self._lint_counts(root) - before).elements())
+        if new:
+            raise KnowledgeError('folding would add lint failures; nothing was kept:\n' + '\n'.join(new))
 
     # log
 
@@ -384,13 +416,19 @@ class Knowledge:
             sections.append(new)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(head.rstrip('\n') + '\n' + ''.join('\n' + s.rstrip('\n') + '\n' for s in sections), encoding='utf-8')
-        return {'path': target.relative_to(brain).as_posix()}
+        rel = target.relative_to(brain).as_posix()
+        if _git(brain, 'status', '--porcelain', '--', rel):
+            _git(brain, 'add', '--', rel)
+            _git(brain, 'commit', '-q', '-m', f'knowledge: log #{issue}', '--', rel)
+        return {'path': rel}
 
     # stale
 
     def stale(self):
         out = []
         for name, store in self._stores():
+            if name == 'brain':
+                continue
             root = None
             for path in sorted(store.rglob('*.md')):
                 rel = path.relative_to(store).as_posix()
@@ -423,7 +461,7 @@ class Knowledge:
                 continue
             text = path.read_text(encoding='utf-8')
             for number, line in enumerate(text.split('\n'), 1):
-                out += [f'{name}:{rel}: line {number}: {label}' for rx, label in SECRETS if rx.search(line)]
+                out += [f'{name}:{rel}: line {number}: {label}' for label in _secrets(line)]
             top = rel.split('/')[0]
             if top == 'inbox':
                 missing = [k for k in KEYS if not _entry(path).get(k)]
@@ -435,6 +473,8 @@ class Knowledge:
                     out.append(f'{name}:{rel}: {lines} lines, budget {limit}')
                 if not VERIFIED.search(text):
                     out.append(f'{name}:{rel}: header needs "verified: <date> @ <sha>"')
+                if name == 'brain' and CODE.search(text):
+                    out.append(f'{name}:{rel}: a brain page cannot carry a code: line')
         out += self._lint_routing(name, store)
         for kind, rel in TABLES.items():
             out += self._lint_table(name, store, kind, rel)
@@ -444,8 +484,8 @@ class Knowledge:
     def _lint_routing(name, store):
         out, linked = [], set()
         for domain, link, row in _routing(store):
-            if not re.fullmatch(r'[a-z-]+', domain):
-                out.append(f'{name}:index.md: row {row[0]!r} needs a [a-z-]+ domain cell, got {domain!r}')
+            if not re.fullmatch(r'[a-z0-9-]+', domain):
+                out.append(f'{name}:index.md: row {row[0]!r} needs a [a-z0-9-]+ domain cell, got {domain!r}')
             if not link:
                 out.append(f'{name}:index.md: row {row[0]!r} has no page link')
             elif not (store / link).is_file():

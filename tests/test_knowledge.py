@@ -99,9 +99,10 @@ class TestOpen(Base):
         self.assertEqual(k.notice, 'brain: not configured on this machine')
         self.assertEqual([p['store'] for p in k.pages('deploy')], ['wiki'])
 
-    def test_missing_mapped_path_is_unmapped(self):
+    def test_mapped_but_missing_folder_raises(self):
         self.config.write_text(json.dumps({'knowledge_stores': {'acme/brain': str(self.root / 'gone')}}))
-        self.assertEqual(self.open().notice, 'brain: not configured on this machine')
+        with self.assertRaises(KnowledgeError):
+            self.open()
 
     def test_no_config_file_is_unmapped(self):
         k = Knowledge.open(brain='acme/brain', wiki=str(self.wiki), config_path=str(self.root / 'nope.json'))
@@ -173,7 +174,8 @@ class TestReads(Base):
         self.assertEqual(found[0]['id'], 'consent-first')
         self.assertEqual(found[0]['text'], 'Ask consent before any send.')
         self.assertEqual(found[0]['file'], 'decisions.md')
-        self.assertEqual(found[0]['source'], 'brain')
+        self.assertEqual(found[0]['store'], 'brain')
+        self.assertEqual(found[0]['source'], 'chat')
         self.assertEqual(found[0]['score'], 2)
         self.assertFalse(found[0]['pending'])
 
@@ -214,7 +216,7 @@ class TestReads(Base):
         write(self.wiki / 'decisions.md', '# D\n' + HEAD + '\n| id | status | date | switch | rule | source |\n|---|---|---|---|---|---|\n'
               '| wiki-rule | decided | 2026-10-01 | - | Wiki rule about rollback. | chat |\n')
         hit = self.open().find(['rollback'])[0]
-        self.assertEqual((hit['id'], hit['source']), ('wiki-rule', 'wiki'))
+        self.assertEqual((hit['id'], hit['store'], hit['source']), ('wiki-rule', 'wiki', 'chat'))
 
 
 class TestRecord(Base):
@@ -268,14 +270,14 @@ class TestRecord(Base):
 
 class TestCollect(Base):
     def test_nothing_pending(self):
-        self.assertEqual(self.open().collect(), {'folded': [], 'pr': None})
+        self.assertEqual(self.open().collect(), {'folded': [], 'branch': None})
 
     def test_decision_folds_on_current_branch(self):
         self.inbox('decision', 'log-it', scope='tenant:acme')
         commit_all(self.brain, 'inbox')
         before = git(self.brain, 'rev-list', '--count', 'HEAD')
         out = self.open().collect()
-        self.assertEqual(out, {'folded': ['log-it'], 'pr': None})
+        self.assertEqual(out, {'folded': ['log-it'], 'branch': None})
         row = [l for l in (self.brain / 'decisions.md').read_text().splitlines() if l.startswith('| log-it')]
         self.assertEqual(row, ['| log-it | decided | 2026-11-10 | - | Always log it. | chat | tenant:acme |'])
         self.assertTrue((self.brain / 'inbox' / 'folded' / '20261110T100000Z-decision-log-it.md').exists())
@@ -291,23 +293,21 @@ class TestCollect(Base):
         head = git(self.brain, 'rev-parse', 'HEAD')
         out = self.open().collect()
         self.assertEqual(sorted(out['folded']), ['new-answer', 'new-lesson'])
-        self.assertRegex(out['pr'], r'^collect/\d{8}T\d{6}Z$')
+        self.assertRegex(out['branch'], r'^collect/\d{8}T\d{6}Z$')
         self.assertEqual(git(self.brain, 'rev-parse', 'HEAD'), head)
         self.assertEqual(git(self.brain, 'status', '--porcelain'), '')
         self.assertNotIn('new-lesson', (self.brain / 'lessons.md').read_text())
         self.assertEqual(git(self.brain, 'worktree', 'list').count('\n'), 0)
-        lessons = git(self.brain, 'show', f"{out['pr']}:lessons.md")
+        lessons = git(self.brain, 'show', f"{out['branch']}:lessons.md")
         self.assertIn('| new-lesson | 2026-11-10 | It broke | Test it first. | chat |', lessons)
-        answered = git(self.brain, 'show', f"{out['pr']}:answered.md")
+        answered = git(self.brain, 'show', f"{out['branch']}:answered.md")
         self.assertIn('| Which day? | Monday. | 2026-11-10 | chat |', answered)
-        files = git(self.brain, 'ls-tree', '-r', '--name-only', out['pr'])
+        files = git(self.brain, 'ls-tree', '-r', '--name-only', out['branch'])
         self.assertIn('inbox/folded/20261110T100000Z-lesson-new-lesson.md', files)
         self.assertNotIn('inbox/20261110T100000Z-lesson-new-lesson.md', files)
 
-    def test_refuses_uncommitted_inbox_or_decisions(self):
+    def test_refuses_uncommitted_tables(self):
         self.inbox('decision', 'log-it')
-        with self.assertRaises(KnowledgeError):
-            self.open().collect()
         commit_all(self.brain, 'inbox')
         write(self.brain / 'decisions.md', DECISIONS + '\n')
         with self.assertRaises(KnowledgeError):
@@ -336,12 +336,109 @@ class TestCollect(Base):
         self.assertEqual(git(self.brain, 'worktree', 'list').count('\n'), 0)
 
 
+class TestReview(Base):
+    def test_find_accepts_a_string(self):
+        self.assertEqual(self.open().find('consent send')[0]['id'], 'consent-first')
+
+    def test_result_keys_carry_store(self):
+        k = self.open()
+        self.assertTrue(all('store' in p for p in k.pages('policy')))
+        self.assertTrue(all('store' in h for h in k.find(['consent'])))
+
+    def test_domain_may_contain_digits(self):
+        write(self.wiki / 'index.md', WIKI_INDEX + '| texting registration | [release](pages/release.md) | a2p |\n')
+        k = self.open()
+        self.assertIn('a2p', k.domains())
+        self.assertEqual(k.pages('a2p')[0]['path'], 'pages/release.md')
+        self.assertEqual(k.lint(), [])
+
+    def test_non_global_scope_never_dropped(self):
+        self.inbox('lesson', 'scoped', scope='tenant:acme')
+        commit_all(self.brain, 'inbox')
+        head = git(self.brain, 'rev-parse', 'HEAD')
+        with self.assertRaises(KnowledgeError) as ctx:
+            self.open().collect()
+        self.assertIn('scope', str(ctx.exception))
+        self.assertEqual(git(self.brain, 'rev-parse', 'HEAD'), head)
+        self.assertEqual(git(self.brain, 'branch', '--list', 'collect/*'), '')
+        self.assertTrue((self.brain / 'inbox' / '20261110T100000Z-lesson-scoped.md').exists())
+        with self.assertRaises(KnowledgeError):
+            self.open().record('lesson', 'other-one', '2026-11-10', 'chat', 'a => b', scope='repo:tool')
+        self.open().record('lesson', 'other-two', '2026-11-10', 'chat', 'a => b')
+
+    def test_record_refuses_secrets_before_writing(self):
+        k = self.open()
+        for text in ('mail me@example.com', 'api_key = abcd1234', 'call 555-123-4567'):
+            with self.subTest(text=text), self.assertRaises(KnowledgeError):
+                k.record('decision', 'leaky', '2026-11-10', 'chat', text)
+        with self.assertRaises(KnowledgeError):
+            k.record('decision', 'leaky', '2026-11-10', 'me@example.com', 'Fine text.')
+        self.assertEqual(list((self.brain / 'inbox').glob('*.md')), [])
+
+    def test_preexisting_lint_failure_does_not_block_collect(self):
+        write(self.brain / 'tenants' / 'note.md', '# N\n' + HEAD + 'call 555-123-4567\n')
+        commit_all(self.brain, 'old page')
+        self.inbox('decision', 'log-it')
+        self.assertEqual(self.open().collect()['folded'], ['log-it'])
+        self.assertTrue(any('tenants/note.md' in f and 'phone' in f for f in self.open().lint()))
+
+    def test_collect_commits_uncommitted_inbox_itself(self):
+        k = self.open()
+        k.record('decision', 'rec-one', '2026-11-10', 'chat', 'Recorded then collected.')
+        k.record('lesson', 'rec-two', '2026-11-10', 'chat', 'It broke => Fix it.')
+        out = k.collect()
+        self.assertEqual(sorted(out['folded']), ['rec-one', 'rec-two'])
+        self.assertEqual(git(self.brain, 'status', '--porcelain'), '')
+
+    def test_failed_collect_restores_uncommitted_inbox(self):
+        head = git(self.brain, 'rev-parse', 'HEAD')
+        path = self.inbox('decision', 'bad-one', text='password: hunter2hunter2')
+        with self.assertRaises(KnowledgeError):
+            self.open().collect()
+        self.assertEqual(git(self.brain, 'rev-parse', 'HEAD'), head)
+        self.assertTrue(path.exists())
+        self.assertEqual(git(self.brain, 'status', '--porcelain'), '?? inbox/' + path.name)
+
+    def test_branch_cut_after_decision_commit(self):
+        self.inbox('decision', 'log-it')
+        self.inbox('lesson', 'new-lesson', stamp='20261110T100001Z')
+        out = self.open().collect()
+        self.assertIn('| log-it |', git(self.brain, 'show', f"{out['branch']}:decisions.md"))
+        self.assertNotIn('pr', out)
+
+    def test_second_collect_skips_entries_on_unmerged_branch(self):
+        self.inbox('lesson', 'one-lesson')
+        first = self.open().collect()
+        self.assertEqual(self.open().collect(), {'folded': [], 'branch': None})
+        self.inbox('lesson', 'two-lesson', stamp='20261110T100001Z')
+        with mock.patch('agent_skills.knowledge._stamp', return_value='20261201T000001Z'):
+            second = self.open().collect()
+        self.assertEqual(second['folded'], ['two-lesson'])
+        self.assertNotEqual(second['branch'], first['branch'])
+        self.assertEqual(len(git(self.brain, 'branch', '--list', 'collect/*').splitlines()), 2)
+
+    def test_stale_skips_brain_pages_and_lint_refuses_their_code_line(self):
+        write(self.brain / 'tenants' / 'note.md', '# N\nverified: 2026-11-02 @ deadbeef\ncode: src/a.py\n')
+        commit_all(self.brain, 'page')
+        k = self.open()
+        self.assertEqual(k.stale(), [])
+        self.assertTrue(any('tenants/note.md' in f and 'code:' in f for f in k.lint()))
+
+
 class TestLog(Base):
     def test_writes_month_file(self):
         out = self.open().log(42, [TIMELINE, TIMELINE2])
         self.assertEqual(out['path'], 'log/2026-11.md')
         self.assertEqual((self.brain / 'log' / '2026-11.md').read_text(),
                          f'# Log 2026-11\n\n## #42\n{TIMELINE}\n{TIMELINE2}\n')
+
+    def test_commits_the_month_file_once(self):
+        k = self.open()
+        before = int(git(self.brain, 'rev-list', '--count', 'HEAD'))
+        k.log(42, [TIMELINE])
+        self.assertEqual(git(self.brain, 'status', '--porcelain'), '')
+        k.log(42, [TIMELINE])
+        self.assertEqual(int(git(self.brain, 'rev-list', '--count', 'HEAD')), before + 1)
 
     def test_idempotent_and_replaces_in_place(self):
         k = self.open()
