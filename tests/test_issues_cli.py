@@ -13,6 +13,7 @@ import unittest.mock
 from pathlib import Path
 
 from agent_skills import issues_cli
+from agent_skills import knowledge as KNOWLEDGE  # the real module, imported before any stub replaces it
 
 REPO = 'o/r'
 PLAN = '# Plan: add widgets\n\nBase: main\n'
@@ -137,9 +138,21 @@ class KnowledgeError(ValueError):
     pass
 
 
+def real_knowledge(test, root):
+    """The real agent_skills.knowledge over a wiki at `root`/wiki (belt_project's § Map), with no brain store mapped,
+    so writes refuse as conveyor.json knowledge.unmapped_brain says."""
+    (root / 'wiki' / 'pages').mkdir(parents=True)
+    (root / 'wiki' / 'index.md').write_text('# Wiki\n\n| Task words | Read | Domain |\n|---|---|---|\n'
+                                            '| ship | [release](pages/release.md) | deploy |\n')
+    (root / 'wiki' / 'pages' / 'release.md').write_text('# Release\nverified: 2026-11-02 @ abc1234\n')
+    patcher = unittest.mock.patch.dict(sys.modules, {'agent_skills.knowledge': KNOWLEDGE})
+    patcher.start()
+    test.addCleanup(patcher.stop)
+
+
 def stub_knowledge(test, notice=None, domains=('deploy', 'policy'), pages=None, changes=()):
-    """Stands in for agent_skills.knowledge (T6 builds it) with the return shapes of conveyor.json knowledge.functions;
-    records what issues-cli asked of it."""
+    """Stands in for agent_skills.knowledge where a brain store would be needed, with the real module's signatures and
+    return shapes (Knowledge.test_the_stub_matches_the_real_module); records what issues-cli asked of it."""
     calls = {'open': [], 'record': [], 'log': [], 'changes': []}
 
     class Knowledge:
@@ -157,11 +170,15 @@ def stub_knowledge(test, notice=None, domains=('deploy', 'policy'), pages=None, 
         def pages(self, domain):
             return (pages or {}).get(domain, [])
 
-        def record(self, kind, ident, date, source, text, scope='global'):
+        def find(self, words):
+            return [{'file': 'decisions.md', 'id': 'grey', 'text': 'Grey everywhere', 'store': 'brain',
+                     'source': 'https://x.test/q/1', 'score': 1, 'pending': False}]
+
+        def record(self, kind, id, date, source, text, scope='global'):
             if notice:
                 raise KnowledgeError(notice)
-            calls['record'].append((kind, ident, date, source, text, scope))
-            return {'path': f'inbox/20261118T120000Z-{kind}-{ident}.md'}
+            calls['record'].append((kind, id, date, source, text, scope))
+            return {'path': f'inbox/20261118T120000Z-{kind}-{id}.md'}
 
         def log(self, issue, lines):
             if notice:
@@ -172,7 +189,7 @@ def stub_knowledge(test, notice=None, domains=('deploy', 'policy'), pages=None, 
         def collect(self):
             if notice:
                 raise KnowledgeError(notice)
-            return {'folded': 0, 'branch': None}
+            return {'folded': [], 'branch': None}
 
         def changes(self, since):
             calls['changes'].append(since)

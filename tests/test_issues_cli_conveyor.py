@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from agent_skills import issues_cli, layout
-from test_issues_cli import REPO, belt_project, draft, run, spec_body, stub_knowledge
+from test_issues_cli import KNOWLEDGE, REPO, belt_project, draft, real_knowledge, run, spec_body, stub_knowledge
 
 T0 = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
 CONVEYOR = json.loads((Path(__file__).resolve().parents[1] / 'skills/workflow-contracts/conveyor.json').read_text())
@@ -25,6 +25,11 @@ OWNER2 = 'local_c0000000-0000-4000-8000-000000000002'
 BUILDER = 'b0000000-0000-4000-8000-000000000001'  # headless workers are plain uuids
 REVIEWER, REVIEWER2 = 'e0000000-0000-4000-8000-000000000001', 'e0000000-0000-4000-8000-000000000002'
 RELEASE_OWNER = 'local_d0000000-0000-4000-8000-000000000001'
+SHORT = ("Approve the new wording for failed care texts? Staff will see 'Not delivered' instead of 'Failed to send', and "
+         "the extra notice only when the number was never reached. Tests passed; nothing goes live until the next "
+         "release. Before and after: https://x.test/p/1")
+CHANGE = {'store': 'brain', 'sha': 'f' * 40, 'path': 'decisions.md', 'summary': 'record colour decision',
+          'at': '2026-11-17T09:00:00Z'}
 
 
 def iso(t):
@@ -307,6 +312,40 @@ class Lanes(BeltCase):
         self.lane(n, 'monitoring')
         self.assertEqual(self.gh.lane(n), 'monitoring')
 
+    def test_pushed_lands_an_item_when_every_named_target_is_a_branch(self):
+        """Fix2 item 3: not only `none`; branch targets alone (one line or one per line) let Pushed: land it."""
+        claude = (self.root / 'CLAUDE.md').read_text()
+        branch, box = 'main — kind `branch` — git push — ls-remote shows the head', 'box — kind `deploy` — ship — check'
+        for targets, lands in ((branch, True), (f'\n  - {branch}\n  - release — kind `branch` — push — check', True),
+                               (f'{branch} · {box}', False), (f'\n  - {branch}\n  - {box}', False), ('main', False)):
+            (self.root / 'CLAUDE.md').write_text(f'{claude}\n## Deploy\n- Targets: {targets}\n')
+            self.assertIs(issues_cli.branch_targets_only(), lands, targets)
+        n = self.at('ready-to-release')
+        self.gh.link_pr(n)
+        self.write_log(f'Approved: release r-1 · digest {"d" * 64} · 2026-11-18 12:00Z · question {Q} · session {COORD}',
+                       f'Pushed: {HEAD[:7]} to main', 'Rollback: main: 0123abc',
+                       'Scheduler: claude monitor-r-first', 'Scheduler: claude monitor-r-24h')
+        (self.root / 'CLAUDE.md').write_text(f'{claude}\n## Deploy\n- Targets: {branch}\n')
+        self.lane(n, 'monitoring')
+        self.assertEqual(self.gh.lane(n), 'monitoring')
+
+    def test_a_later_rolled_back_line_undoes_landed_until_a_newer_push(self):
+        """Fix2 item 3 (contract PR #24): receipts.landed.undone_by and the rolled_back receipt."""
+        self.assertIn('Rolled back:', CONVEYOR['receipts']['landed']['undone_by'])
+        claude = (self.root / 'CLAUDE.md').read_text()
+        (self.root / 'CLAUDE.md').write_text(claude + '\n## Deploy\n- Targets: none (the pipeline ends at the merge)\n')
+        n = self.at('ready-to-release')
+        self.gh.link_pr(n)
+        self.gh.comment(n, f'Pushed: {HEAD[:7]} to main')
+        self.gh.comment(n, f'Rolled back: {HEAD[:7]} to main')
+        self.write_log(f'Approved: release r-1 · digest {"d" * 64} · 2026-11-18 12:00Z · question {Q} · session {COORD}',
+                       'Rollback: main: 0123abc', 'Scheduler: claude monitor-r-first', 'Scheduler: claude monitor-r-24h')
+        self.assertIn('landed (deploy (issue comment `deploy:`) or pushed (issue comment `Pushed:`))',
+                      self.lane(n, 'monitoring', ok=False))
+        self.write_log(f'Pushed: {NEW_HEAD[:7]} to main')
+        self.lane(n, 'monitoring')
+        self.assertEqual(self.gh.lane(n), 'monitoring')
+
     def test_closed_needs_both_verdicts_both_deletions_and_learned(self):
         n = self.at('monitoring')
         self.ready_monitoring(n)
@@ -445,9 +484,9 @@ class ReceiptHome(BeltCase):
         n = self.at('in-review')
         self.gh.link_pr(n)
         self.write_log('## 2026-11-18 12:00Z — implement: done')
-        card = self.cli('ask', '--repo', REPO, str(n), '--kind', 'choice', '--log', str(self.log), '--changes', 'c',
-                        '--if-yes', 'y', '--if-no', 'n', '--if-wait', 'w', '--undo', 'revert', '--recommended', 'Yes')
-        self.assertIn('Not yet: build finished', card)
+        self.cli('ask', '--repo', REPO, str(n), '--kind', 'choice', '--log', str(self.log), '--changes', 'c',
+                 '--if-yes', 'y', '--if-no', 'n', '--if-wait', 'w', '--undo', 'revert', '--recommended', 'Yes', '--short', SHORT)
+        self.assertIn('Not yet: build finished', self.gh.issues[n]['comments'][-1]['body'])
 
 
 class NoRelease(BeltCase):
@@ -620,12 +659,17 @@ class Spec5(BeltCase):
         self.gh.link_pr(n)
         self.gh.comment(n, '## 2026-11-18 12:00Z — implement: done')
         self.gh.comment(n, f'Reviewed: {HEAD[:7]} YES\nReviewer: session {REVIEWER} · head {HEAD[:7]} · outside')
-        self.assertIn('empty changes, if_yes, if_no, if_wait, recommended', self.go_card(n, ok=False))
-        full = ('--changes', 'Saved widgets survive a reload for every user', '--if-yes', 'Release 7 ships tonight',
-                '--if-no', 'Widgets keep vanishing', '--if-wait', 'Nothing changes until tomorrow', '--recommended', 'Yes')
+        self.assertIn('empty changes, if_yes, if_no, if_wait, recommended', self.go_card(n, '--short', SHORT, ok=False))
+        full = ('--short', SHORT, '--changes', 'Saved widgets survive a reload for every user', '--if-yes',
+                'Release 7 ships tonight', '--if-no', 'Widgets keep vanishing', '--if-wait', 'Nothing changes until tomorrow',
+                '--recommended', 'Yes')
         self.assertIn('opens with a PR number', self.go_card(n, *full[:-1], '#12 first', ok=False))
         self.assertIn('the script fills undo', self.go_card(n, *full, '--undo', 'mine', ok=False))
-        card = self.go_card(n, *full).strip().split('\n')
+        self.assertIn("'Changes: We deploy: a1b2c3d to prod' reads as a receipt",
+                      self.go_card(n, *full[:3], 'We deploy: a1b2c3d to prod', *full[4:], ok=False))
+        self.assertEqual(self.gh.writes(), [])
+        self.assertEqual(self.go_card(n, *full).strip(), SHORT)  # the short form is all ask prints
+        card = self.gh.issues[n]['comments'][-1]['body'].split('\n')  # the detail is the record, on the issue
         self.assertEqual(card[0], f'Go: release r-7 · digest {"c" * 8}')
         self.assertEqual(card[1], 'Goal: Widget · step 6 of 8')
         self.assertEqual(card[2], 'From: Fix widgets')
@@ -633,14 +677,59 @@ class Spec5(BeltCase):
         self.assertIn('Checked: captured, domain label, kind label, size label, owner set, done-when written, claimed, '
                       'brief rendered, build finished, pull request linked, review passed on this head, '
                       'independent reviewer · Not yet: none', card)
-        self.assertLessEqual(len(card), 12)
+        self.assertEqual([x.split(':')[0] for x in card[1:11]], [issues_cli.CARD_LABELS[k] for k in CONVEYOR['card']['detail']['fields']])
+        self.assertTrue(TIMELINE.match(card[11]))
+        self.assertLessEqual(len(card) - 1, CONVEYOR['card']['detail']['max_lines'])
+
+    def test_9_a_go_shows_its_kind_id_and_digest_only_in_the_detail(self):
+        n = self.at('ready-to-release')
+        self.gh.link_pr(n)
+        full = ('--changes', 'c', '--if-yes', 'y', '--if-no', 'n', '--if-wait', 'w', '--recommended', 'Yes')
+        for leak in ('r-7', 'c' * 8):
+            short = SHORT.replace('Tests passed', f'Tests passed for {leak}')
+            self.assertIn(f'short card refused: {leak}', self.go_card(n, '--short', short, *full, ok=False))
+        self.assertEqual(self.gh.writes(), [])
+        printed = self.go_card(n, '--short', SHORT, *full)
+        self.assertNotIn('Go:', printed)
+        self.assertIn(f'Go: release r-7 · digest {"c" * 8}', self.gh.lines(n))
+
+    def short(self, n, text, ok=True):
+        return self.cli('ask', '--repo', REPO, str(n), '--kind', 'choice', '--changes', 'c', '--if-yes', 'y', '--if-no', 'n',
+                        '--if-wait', 'w', '--undo', 'revert', '--recommended', 'Yes', '--short', text, ok=ok)
+
+    def test_9_the_short_form_is_one_question_three_sentences_45_words_and_one_link(self):
+        """Fix2 item 2: card.short limits and every card.short.refuse pattern, read from conveyor.json."""
+        n = self.at('in-review')
+        link = 'Before and after: https://x.test/p/1'
+        body = SHORT[SHORT.index('?') + 2:SHORT.index(link)].strip()
+        self.assertEqual(len(body.split()), 30)
+        refusals = {
+            'issue_number': SHORT.replace('Tests passed', 'Tests for #12 passed'),
+            'commit_id': SHORT.replace('Tests passed', 'Tests on a1b2c3d passed'),
+            'branch_like': SHORT.replace('Tests passed', 'Tests on feat/care-texts passed'),
+            'colon_label': SHORT.replace(' Tests passed', '\nStatus: tests passed'),
+            'test_count': SHORT.replace('Tests passed', '12 tests passed'),
+        }
+        self.assertEqual(set(refusals), set(CONVEYOR['card']['short']['refuse']))
+        for name, text in refusals.items():
+            self.assertIn(f'short card refused: {name}', self.short(n, text, ok=False), name)
+        fourth = SHORT.replace(link, f'Waiting costs nothing. Undo is one click. {link}')  # the labelled link is no sentence
+        self.assertIn('short card refused: 4 sentences', self.short(n, fourth, ok=False))
+        long = SHORT.replace(link, f"Staff {' '.join(['also'] * 14)} agree. {link}")
+        self.assertEqual(len(long[long.index('?') + 2:long.index(link)].split()), 46)
+        self.assertIn('short card refused: 3 sentences and 46 words', self.short(n, long, ok=False))
+        self.assertIn('one plain question first and one link last', self.short(n, SHORT.replace(' https://x.test/p/1', ''), ok=False))
+        self.assertIn('one plain question first and one link last', self.short(n, SHORT.replace('?', '.', 1), ok=False))
+        self.assertIn('one plain question first', self.short(n, SHORT + ' https://x.test/p/2', ok=False))
+        self.assertEqual(self.gh.writes(), [])
+        self.assertEqual(self.short(n, SHORT).strip(), SHORT)
 
     def test_9_the_card_prints_plain_labels_never_internal_names(self):
         n = self.at('ready-to-release')
         self.gh.link_pr(n)
         self.gh.comment(n, f'Reviewed: {HEAD[:7]} YES\nReviewer: session {REVIEWER} · head {HEAD[:7]} · outside')
-        card = self.cli('ask', '--repo', REPO, str(n), '--kind', 'choice', '--log', str(self.log), '--changes', 'c',
-                        '--if-yes', 'y', '--if-no', 'n', '--if-wait', 'w', '--undo', 'revert', '--recommended', 'Yes')
+        self.short(n, SHORT)
+        card = self.gh.issues[n]['comments'][-1]['body']
         self.assertIn('Not yet: build finished', card)  # implement: done was never posted
         checked = self.board(card, 'Checked:')
         for name in CONVEYOR['receipts']:
@@ -651,8 +740,7 @@ class Spec5(BeltCase):
         n = self.at('in-review')
         self.assertIn(f'- #{n} Widget (in-review)', self.sweep())  # Coming to you next before any question
         self.assertIn('Need from you: 0', self.sweep())  # owner and monitor bookkeeping ask nothing
-        self.cli('ask', '--repo', REPO, str(n), '--kind', 'choice', '--changes', 'c', '--if-yes', 'y', '--if-no', 'n',
-                 '--if-wait', 'w', '--undo', 'revert', '--recommended', 'Yes')
+        self.short(n, SHORT)
         self.t += timedelta(minutes=1)
         self.cli('ask', '--repo', REPO, str(n), '--more', Q)
         self.assertIn(f'Asked for more: 2026-11-18 12:01Z · question {Q}', self.gh.lines(n))
@@ -736,8 +824,7 @@ class Sweep(BeltCase):
         self.assertNotIn('not-a-session-id', out)
 
     def test_weekly_adds_the_backlog_age_question_counts_and_the_knowledge_changes(self):
-        self.k = stub_knowledge(self, changes=[{'store': 'brain', 'sha': 'f' * 40, 'path': 'decisions.md',
-                                                'summary': 'record colour decision', 'at': '2026-11-17T09:00:00Z'}])
+        self.k = stub_knowledge(self, changes=[CHANGE])
         old = self.at('backlog')
         self.gh.issues[old]['createdAt'] = iso(T0 - timedelta(days=31))
         out = self.sweep('--weekly')
@@ -757,13 +844,14 @@ class Knowledge(BeltCase):
         self.assertEqual(out.strip(), 'False')
 
     def test_unmapped_brain_reads_say_so_decide_still_records_and_log_refuses(self):
-        self.k = stub_knowledge(self, notice='brain: not configured on this machine')
+        real_knowledge(self, self.root)  # workers.json maps no knowledge_stores
         n = self.at('next')
-        self.assertIn('brain: not configured on this machine', self.cli('brief', '--repo', REPO, str(n)))
+        out = self.cli('brief', '--repo', REPO, str(n))
+        self.assertIn('brain: not configured on this machine', out)
+        self.assertIn('- wiki:pages/release.md · verified 2026-11-02 @ abc1234\n', out)
         out = self.cli('decide', '--repo', REPO, str(n), 'Yes', '--question', Q, '--session', COORD)
         self.assertIn('decision row PENDING: brain: not configured on this machine', out)
         self.assertIn(f'Decision: Yes · 2026-11-18 12:00Z · question {Q} · session {COORD}', self.gh.lines(n))
-        self.assertEqual(self.k['record'], [])
         m = self.at('monitoring')
         self.ready_monitoring(m)
         self.ready_closed()
@@ -784,18 +872,47 @@ class Knowledge(BeltCase):
         self.assertIn('not local_<uuid> or a uuid', out)
         self.assertEqual(self.gh.writes(), [])
 
-    def test_the_stub_returns_the_contract_shapes(self):
-        k = sys.modules['agent_skills.knowledge'].Knowledge.open()
+    def test_the_stub_matches_the_real_module(self):
+        """Fix2 item 4: the stub keeps the real module's signatures and the contract's return shapes, so the tests
+        that need a brain store prove what the real store would return."""
+        import inspect
         functions = CONVEYOR['knowledge']['functions']
-        self.assertIn('{path}', functions['record']['returns'])
-        self.assertEqual(set(k.record('decision', 'x', '2026-11-18', Q, 't')), {'path'})
+        stub_knowledge(self, changes=[CHANGE])
+        stub = sys.modules['agent_skills.knowledge'].Knowledge
+        names = [x for x in ('open', *functions) if hasattr(stub, x)]
+        self.assertEqual(set(names), {'open', 'domains', 'pages', 'find', 'record', 'collect', 'log', 'changes'})
+        for name in names:
+            self.assertEqual(inspect.signature(getattr(stub, name)), inspect.signature(getattr(KNOWLEDGE.Knowledge, name)), name)
+        brain = self.root / 'brain'
+        brain.mkdir()
+        for args in (('init', '-q', '-b', 'main'), ('config', 'user.name', 'T'), ('config', 'user.email', 't@x.invalid')):
+            subprocess.run(['git', '-C', str(brain), *args], check=True)
+        (brain / 'decisions.md').write_text('# Decisions\n\n| id | status | date | switch | rule | source | scope |\n'
+                                            '|---|---|---|---|---|---|---|\n')
+        subprocess.run(['git', '-C', str(brain), 'add', '-A'], check=True)
+        subprocess.run(['git', '-C', str(brain), 'commit', '-qm', 'seed'], check=True)
+        self.configure(knowledge_stores={'acme/brain': str(brain)})
+        real, fake = KNOWLEDGE.Knowledge.open(brain='acme/brain'), stub.open()
+        for k in (real, fake):  # nothing in the inbox yet: collect folds nothing
+            self.assertEqual(k.collect(), {'folded': [], 'branch': None})
         self.assertEqual(functions['collect']['returns'], '{folded, branch}')
-        self.assertEqual(set(k.collect()), {'folded', 'branch'})
-        self.assertEqual(set(k.log(1, [])), {'path'})
+        line = 'Conveyor: 2026-11-18 12:00Z · close · monitoring → closed · head - · tests - · skills fffffff · schedules -'
+        for call in (lambda k: k.record('decision', 'grey', '2026-11-18', 'https://x.test/q/1', 'Grey everywhere'),
+                     lambda k: k.find('grey everywhere')[0], lambda k: k.log(1, [line]), lambda k: k.changes('2026-01-01')[0]):
+            self.assertEqual(set(call(real)), set(call(fake)))
+        self.assertIn('source', functions['find']['returns'])
+        self.assertEqual(real.find('grey everywhere')[0]['source'], 'https://x.test/q/1')
 
     def test_the_stores_come_from_the_project_map(self):
         self.cli('brief', '--repo', REPO, str(self.at('next')))
         self.assertEqual(self.k['open'], [('acme/brain', str(self.root / 'wiki'))])
+        real_knowledge(self, self.root)  # the real module reads the domain vocabulary from the project's wiki
+        n = self.at('backlog')
+        d = str(draft(plan=f'# Plan: widgets\nIssue: {REPO}#{n}\n', items=None))
+        out = self.cli('publish', '--repo', REPO, d, '--owner', 'thomas', '--domain', 'policy', '--session', COORD, ok=False)
+        self.assertIn("domain 'policy' is not in the knowledge store's routing table: deploy", out)
+        self.cli('publish', '--repo', REPO, d, '--owner', 'thomas', '--domain', 'deploy', '--session', COORD)
+        self.assertEqual(self.gh.lane(n), 'next')
 
     def test_no_knowledge_line_is_refused(self):
         (self.root / 'CLAUDE.md').write_text('# p\n\n## Map\n')

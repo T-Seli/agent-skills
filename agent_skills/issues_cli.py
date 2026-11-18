@@ -451,10 +451,11 @@ def review_fallback():
 
 
 def branch_targets_only():
-    """conveyor.json receipts.landed: `Pushed:` lands an item only when the project's § Deploy `Targets` is `none`
-    (the pipeline ends at the push); any named target needs `deploy:`."""
-    m = re.search(r'^- Targets: (.+)$', section(project()[1], 'Deploy'), re.M)
-    return bool(m) and m[1].strip().startswith('none')
+    """conveyor.json receipts.landed.pushed_only_if: § Deploy `Targets` names no target other than branches: `none`,
+    or entries (one per line or ` · `-separated) that each say kind `branch`. Any other entry needs `deploy:`."""
+    m = re.search(r'^- Targets:[ \t]*(.*(?:\n[ \t]+\S.*)*)', section(project()[1], 'Deploy'), re.M)
+    entries = [x for x in (y.strip(' \t-') for y in re.split(r'\n| · ', m[1] if m else '')) if x]
+    return bool(entries) and (entries[0].startswith('none') or all('kind `branch`' in x for x in entries))
 
 
 def knowledge_names():
@@ -553,11 +554,19 @@ def counts_toward(r, name):
     return f'{name}_only_if' not in r or branch_targets_only()
 
 
+def latest(f, names):
+    """Index of the last issue comment line matching any of the receipts `names`; -1 when none."""
+    return max((i for i, line in enumerate(f.comments) for x in names if re.search(receipt(x)['pattern'], line)), default=-1)
+
+
 def have(name, k, f):
     """True when receipt `name` is present `k` times (conveyor.json receipts)."""
     r = receipt(name)
     if 'any_of' in r:
-        return any(have(x, k, f) for x in r['any_of'] if counts_toward(r, x))
+        members = [x for x in r['any_of'] if counts_toward(r, x)]
+        if 'undone_by' in r:  # receipts.landed.undone_by: a later `Rolled back:` undoes it until a newer push or deploy
+            return latest(f, members) > latest(f, ['rolled_back'])
+        return any(have(x, k, f) for x in members)
     source = r['source']
     if source == 'labels':
         return sum(bool(re.fullmatch(r['pattern'], x)) for x in f.labels) == r['count']
@@ -925,8 +934,28 @@ def action_record(path):
     return rec, ' · '.join(f'{target}: {ref}' for target, ref in sorted(rollback.items()))
 
 
-def ask(gh, repo, n, kind, given, record_file=None, log=None, more=None):
-    """Build the decision card (conveyor.json card), or record `Asked for more` with --more."""
+def short_card(text, hidden=()):
+    """conveyor.json card.short: one plain question, then at most max_sentences sentences and max_words words (a
+    trailing link and its short label excluded), then one link. Refused on any card.short.refuse pattern and on a
+    go's id or digest prefix (`hidden`), which only the detail shows."""
+    spec, text = belt()['card']['short'], (text or '').strip()
+    hits = [name for name, p in spec['refuse'].items() if re.search(p, text)] + [h for h in hidden if h in text]
+    if hits:
+        raise Refused(f"short card refused: {', '.join(hits)}")
+    m = re.fullmatch(r'([^?.!\n]+\?)(.*?)(?:[A-Z][A-Za-z ]{0,24}:\s*)?https?://\S+', text, re.S)
+    if not m or len(re.findall(r'https?://', text)) != 1:
+        raise Refused('short card refused: --short needs one plain question first and one link last')
+    body = m[2].strip()
+    sentences, words = len(re.split(r'(?<=[.!?])\s+', body)) if body else 0, len(body.split())
+    if sentences > spec['max_sentences'] or words > spec['max_words']:
+        raise Refused(f"short card refused: {sentences} sentences and {words} words under the question; "
+                      f"at most {spec['max_sentences']} and {spec['max_words']}")
+    return text
+
+
+def ask(gh, repo, n, kind, given, short=None, record_file=None, log=None, more=None):
+    """Write the decision card's detail to the issue and return its short form (conveyor.json card.printed), or
+    record `Asked for more` with --more."""
     d = load(gh, repo, n)
     cur, (log_path, _) = lane_of(d), task_log(log)
     if more is not None:
@@ -937,7 +966,8 @@ def ask(gh, repo, n, kind, given, record_file=None, log=None, more=None):
     card = belt()['card']
     if kind not in card['kinds']:
         raise Refused(f"--kind is one of {', '.join(card['kinds'])}")
-    ai = set(card['ai_writes']) | set(card['ai_fills_by_kind'].get(kind, []))
+    detail = card['detail']
+    ai = set(detail['ai_writes']) | set(detail['ai_fills_by_kind'].get(kind, []))
     stray = [k for k, v in given.items() if v and k not in ai]
     if stray:
         raise Refused(f"the script fills {', '.join(stray)} on a {kind} card")
@@ -951,22 +981,29 @@ def ask(gh, repo, n, kind, given, record_file=None, log=None, more=None):
     fields = {'goal': f"{d['title']} · step {order.index(cur) + 1} of {len(order)}", 'from': origin(d),
               'checked': f"{', '.join(dict.fromkeys(present)) or 'none'} · Not yet: {', '.join(dict.fromkeys(missing)) or 'none'}",
               'link': d['url'], **{k: (v or '').strip() for k, v in given.items() if k in ai}}
-    lines = []
+    lines, hidden = [], []
     if kind == 'go':
         rec, fields['undo'] = action_record(record_file)
-        lines.append(f"Go: {rec['kind']} {rec['id']} · digest {rec['digest'][:8]}")
-    empty = [k for k in card['fields'] if not fields.get(k)]
+        hidden = [rec['id'], rec['digest'][:8]]
+        lines.append(f"Go: {rec['kind']} {hidden[0]} · digest {hidden[1]}")
+    empty = [k for k in detail['fields'] if not fields.get(k)]
     if empty:
         raise Refused(f"card refused: empty {', '.join(empty)}")
-    opens = re.compile(card['refuse']['opens_with'])
-    bad = [k for k in card['fields'] if opens.search(fields[k]) or '\n' in fields[k]]
+    opens = re.compile(detail['refuse']['opens_with'])
+    bad = [k for k in detail['fields'] if opens.search(fields[k]) or '\n' in fields[k]]
     if bad:
         raise Refused(f"card refused: {', '.join(bad)} opens with a PR number or sha, or spans lines")
-    lines += [f'{CARD_LABELS[k]}: {fields[k]}' for k in card['fields']]
-    if len(lines) > card['max_lines']:
-        raise Refused(f"card refused: {len(lines)} lines, at most {card['max_lines']}")
-    record(gh, repo, n, conveyor_line('ask', cur, cur, f.head, None, schedule_ids(f)), log_path)
-    return '\n'.join(lines)
+    lines += [f'{CARD_LABELS[k]}: {fields[k]}' for k in detail['fields']]
+    if len(lines) > detail['max_lines']:
+        raise Refused(f"card refused: {len(lines)} lines, at most {detail['max_lines']}")
+    # The detail lands in the receipt home, so no line of it may read as a receipt.
+    patterns = [r['pattern'] for r in belt()['receipts'].values() if r.get('source') == 'issue_comment']
+    forged = [x for x in lines if any(re.search(p, x) for p in patterns)]
+    if forged:
+        raise Refused(f"card refused: {forged[0]!r} reads as a receipt")
+    text = short_card(short, hidden)
+    record(gh, repo, n, conveyor_line('ask', cur, cur, f.head, None, schedule_ids(f)), log_path, lines)
+    return text
 
 
 def brief(gh, repo, n, log=None):
@@ -1336,8 +1373,10 @@ def main(argv=None, gh=None):
     dc.add_argument('number', type=int); dc.add_argument('text')
     dc.add_argument('--question', required=True); dc.add_argument('--session')
     dc.add_argument('--scope', help='decision row scope: global | tenant:<id> | repo:<name> (default: this repo)')
-    ak = subs.add_parser('ask', parents=[log], help='print the decision card, or record Asked for more')
+    ak = subs.add_parser('ask', parents=[log], help="write the card's detail to the issue and print its short form, "
+                         'or record Asked for more')
     ak.add_argument('number', type=int); ak.add_argument('--kind', choices=['go', 'choice'])
+    ak.add_argument('--short', help='one plain question, at most 3 sentences and 45 words, then one link')
     for field in ('changes', 'if_yes', 'if_no', 'if_wait', 'recommended', 'undo'):
         ak.add_argument('--' + field.replace('_', '-'), dest=field)
     ak.add_argument('--record', help='go: the action record JSON inside the working directory')
@@ -1393,7 +1432,7 @@ def main(argv=None, gh=None):
             print(decide(gh, args.repo, args.number, args.text, args.question, args.session, args.log, args.scope))
         elif args.action == 'ask':
             given = {k: getattr(args, k) for k in ('changes', 'if_yes', 'if_no', 'if_wait', 'recommended', 'undo')}
-            print(ask(gh, args.repo, args.number, args.kind, given, args.record, args.log, args.more))
+            print(ask(gh, args.repo, args.number, args.kind, given, args.short, args.record, args.log, args.more))
         elif args.action == 'brief':
             print(brief(gh, args.repo, args.number, args.log))
         elif args.action == 'sweep':
