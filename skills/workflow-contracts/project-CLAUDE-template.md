@@ -15,6 +15,7 @@
 - Commits: <convention, e.g. `<type>(<scope>): <summary>`> · attribution: <trailer policy, or none>
 - Git host CLI: `<command>` | none
 - Issues: `<owner/repo>`, … (repos where implement publishes every code-changing task as an issue; workflow-contracts issues.md; works in either flow) | none
+- Knowledge: brain `<checkout path>` · wiki `<repo path>` (conveyor.md § Knowledge) | none
 
 ## Run & test
 <!-- Exact commands a fresh session can paste, plus what a fresh worktree needs before they work. -->

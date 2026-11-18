@@ -29,7 +29,7 @@ Every move is `issues-cli lane <n> <lane>`, which checks the entry rule against 
 | `in-review` | `implement: done` on a head, a linked PR | implement's done record |
 | `ready-to-release` | `Reviewed: <head> YES` where head = the PR's current head, from the independent review | test-review on YES |
 | `monitoring` | `Approved:`, `deploy:`, `Rollback:`, two `Scheduler:` ids | deploy, via `safeguard-cli run-approved` |
-| `closed` | a final `monitor:` verdict, a `Learned:` line | monitor's end |
+| `closed` | a final `monitor:` verdict, a `Learned:` line (§ Knowledge) | monitor's end |
 
 ## Receipts
 Each gate command (`capture`, `prio`, `lane`, `decide`, `brief`, `ask`, `run-approved`) writes one timeline line, on the issue and in the task's `log.md`:
@@ -55,6 +55,13 @@ The outside reviewer is asked first, and the request time is recorded on the iss
 - One line per violation: reviewed head ≠ PR head; a lane over its limit; `monitoring` without two schedule ids; `inbox` unsorted over 24 h; a capture spool older than 15 minutes; a review request past the fallback with no reviewer started; a belt session refused, waiting on an unanswered question, or with no result.
 - Weekly: `backlog` items over 30 days, as one batch question (keep, drop or bump); question counts against the baseline in decisions.md.
 It changes nothing except the pull, spool flush and fallback start, each a receipt.
+
+## Knowledge
+§ Map `Knowledge` names the brain checkout and the repo's wiki. The brain's own CLI implements reads and writes, prints JSON and fails loudly; belt scripts call it as a subprocess and pass no outside path. Interface (conveyor.json `knowledge`):
+- `pages --domain <label>` for the brief · `find "<words>"` for sort · `stale` for the sweep.
+- `record --kind decision|lesson|answered` for `decide` and the `Learned:` collector: one new inbox file per call, never a table edit.
+- `log --issue <n>` takes the closed issue's timeline lines on stdin, verbatim.
+The `domain:*` vocabulary is the brain routing table's `domain` column; with `Knowledge` none, any `domain:` label the repo has. Close is refused without a `Learned:` line: `none`, `lesson: <text>`, `answered: <question> => <answer>` or `page-fix: <path>: <text>`.
 
 ## Permissions
 `authorizations.json` is the standing list, one entry per command: `bookkeeping` entries are `allow` and are never asked; `go` entries are `ask` (the user's one click); `deny` entries are refused. `install.sh` renders it into the Claude settings snippet and Codex rules; the user installs it and no session edits settings. Belt commands take no path outside the worktree as an argument: they resolve notes, spool and knowledge locations from config.

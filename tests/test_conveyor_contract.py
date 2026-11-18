@@ -44,7 +44,7 @@ class Conveyor(unittest.TestCase):
             'rollback': 'Rollback: box: 3bf92eb',
             'schedule': 'Scheduler: claude monitor-repo-x',
             'monitor_final': '## 2026-11-19 02:30Z — monitor: All working — first traffic',
-            'learned': 'Learned: none',
+            'learned': 'Learned: answered: which lane? => next',
             'implement_done': '## 2026-11-18 20:00Z — implement: done',
             'capture': 'Captured: 2026-11-18 20:00Z · source https://example.test/m/1',
             'done_when': 'Done when: the board shows it',
@@ -75,6 +75,13 @@ class Conveyor(unittest.TestCase):
         self.assertEqual(modes['run-approved'], 'ask')
         for gate in ('capture', 'prio', 'lane', 'decide', 'sweep', 'ask', 'brief'):
             self.assertEqual(modes[gate], 'allow', gate)
+
+    def test_knowledge_interface_is_named(self):
+        self.assertEqual(set(SCHEMA['knowledge']['commands']), {'pages', 'find', 'record', 'log', 'stale'})
+        for k in ('none', 'lesson: x', 'page-fix: wiki/a.md: x'):
+            self.assertRegex(f'Learned: {k}', SCHEMA['receipts']['learned']['pattern'])
+        self.assertNotRegex('Learned: maybe', SCHEMA['receipts']['learned']['pattern'])
+        self.assertIn('- Knowledge:', text(WC / 'project-CLAUDE-template.md'))
 
     def test_contracts_point_to_the_belt(self):
         self.assertIn('[conveyor.md](conveyor.md)', DEFAULTS)
