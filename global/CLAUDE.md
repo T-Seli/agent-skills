@@ -37,9 +37,9 @@ Tenant = what varies per install; § Tenancy `none` disables tenant rules.
 - After `Attempts before blocked` tries record them and move on.
 
 ## Coordination
-- Never send, reply to or forward email: write a draft. Other sends need the user's exact-text yes; sanitized messages to the configured assistant need none (routing.md § Standing policy).
+- Never send, reply to or forward email: write a draft. Other sends need the user's exact-text yes; policy-allowed assistant reports need none (agent-coordination).
 - Workers start only via `delegate.py`, in auto mode, never default. Before starting or nesting one: ≥10 GB free disk, ≤2 `test:diff` runs machine-wide, one writer per directory; a refused start waits.
-- Drafts and PRs stay drafts until the user's native go on the exact head.
+- Merge, deploy and install need the user's native go on the exact head; drafts per test-review.
 
 ## Stages
 Skill order: contracts.md § Chain. No tracked changes before `/implement` runs on an approved plan or fix.
