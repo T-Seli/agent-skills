@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from .disk_check import check as disk_check
 from .closeout import cleanup_gate, main_sync_gate, sweep
 from .code_state import code_state
 from .release_reconciliation import reconcile_release
-from .release_guard import capture_rollback, verify_release
+from .release_guard import Refused, capture_rollback, correct_rollback, prepare_action, run_approved, verify_release
 from .release_maintenance import maintain_release
 from .task_checkpoint import operating_view
 from .task_reconciliation import reconcile_tasks
@@ -69,6 +70,24 @@ def main(argv=None):
     rollback.add_argument('--release', required=True)
     rollback.add_argument('--repository', required=True)
     rollback.add_argument('--target', action='append', required=True)
+    prepare = subs.add_parser('prepare-action', help='Write the action record run-approved checks; parameters only')
+    prepare.add_argument('kind')
+    prepare.add_argument('id')
+    prepare.add_argument('--session', required=True, help='Preparing session')
+    prepare.add_argument('--expires-in-minutes', type=int, required=True)
+    prepare.add_argument('--train', action='append', default=[], help='--train=<issue|->:<pr>:<full head sha>; none for rollback')
+    prepare.add_argument('--target', action='append', default=[], help='Branch on origin, or all|claude|codex for skills-install')
+    approved = subs.add_parser('run-approved', help="The user's one click: refuse per action_record.refusals or run the kind's fixed path")
+    approved.add_argument('kind')
+    approved.add_argument('id')
+    approved.add_argument('--digest', required=True)
+    approved.add_argument('--question', required=True, help='Link to the go question')
+    approved.add_argument('--session', required=True, help='Session running the approved action')
+    correction = subs.add_parser('correct-rollback', help='Append a Correction: for a wrong Rollback ref; never edits it')
+    correction.add_argument('id')
+    correction.add_argument('target')
+    correction.add_argument('wrong')
+    correction.add_argument('right')
     reconcile = subs.add_parser('reconcile')
     reconcile.add_argument('manifest')
     reconcile.add_argument('state')
@@ -140,6 +159,15 @@ def main(argv=None):
                 raise ValueError('duplicate target')
             result = capture_rollback(Path(args.path), targets, task=args.task,
                                       release=args.release, repository=args.repository)
+        elif args.action in ('prepare-action', 'run-approved', 'correct-rollback'):
+            repo = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()
+            if args.action == 'prepare-action':
+                result = prepare_action(repo, args.kind, args.id, train=args.train, targets=args.target,
+                                        session=args.session, minutes=args.expires_in_minutes)
+            elif args.action == 'run-approved':
+                result = run_approved(repo, args.kind, args.id, args.digest, question=args.question, session=args.session)
+            else:
+                result = correct_rollback(repo, args.id, args.target, args.wrong, args.right)
         elif args.action == 'reconcile':
             manifest = json.loads(Path(args.manifest).read_text(encoding='utf-8'))
             state = json.loads(Path(args.state).read_text(encoding='utf-8'))
@@ -189,7 +217,10 @@ def main(argv=None):
                 return 1
         print(json.dumps(result, sort_keys=True))
         return 0
-    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
+    except Refused as exc:
+        print(json.dumps({'refused': exc.reason, 'detail': str(exc)}, sort_keys=True))
+        return 1
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
         print(f'safeguard failed: {exc}', file=sys.stderr)
         return 1
 
