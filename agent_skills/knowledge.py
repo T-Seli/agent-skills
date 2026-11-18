@@ -25,7 +25,7 @@ SECRETS = [
     (re.compile(r'AKIA[0-9A-Z]{16}'), 'AWS access key'),
     (re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----'), 'private key'),
     (re.compile(r'\bsk-[A-Za-z0-9_-]{20,}'), 'API key'),
-    (re.compile(r'\bxox[abprs]-[A-Za-z0-9-]{10,}'), 'Slack token'),
+    (re.compile(r'\bxox[abprs]-[A-Za-z0-9-]{10,}'), 'chat token'),
     (re.compile(r'\bBearer\s+[A-Za-z0-9._~+/-]{20,}'), 'bearer token'),
     (re.compile(r'\b(?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S{4,}', re.I), 'credential assignment'),
     (re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+'), 'email address'),

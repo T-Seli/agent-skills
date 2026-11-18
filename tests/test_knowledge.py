@@ -430,7 +430,7 @@ class TestLint(Base):
 
     def test_secrets_and_pii(self):
         samples = {'AKIA' + 'A' * 16: 'AWS', '-----BEGIN RSA PRIVATE KEY-----': 'private key',
-                   'sk-' + 'a' * 24: 'API key', 'xoxb-1234567890-abc': 'Slack', 'Bearer ' + 'a' * 24: 'bearer',
+                   'sk-' + 'a' * 24: 'API key', 'xoxb-1234567890-abc': 'chat token', 'Bearer ' + 'a' * 24: 'bearer',
                    'api_key = abcd1234': 'credential', 'mail me@example.com': 'email', 'call 555-123-4567': 'phone'}
         for text, name in samples.items():
             write(self.wiki / 'pages' / 'release.md', '# R\n' + HEAD + text + '\n')
