@@ -18,10 +18,10 @@ STOP = {'the', 'and', 'for', 'are', 'was', 'does', 'did', 'has', 'have', 'how', 
 STATUSES = ('decided', 'shadow', 'enforced', 'superseded')
 KEBAB = re.compile(r'[a-z0-9]+(-[a-z0-9]+)*')
 SCOPE = re.compile(r'global|tenant:[^\s|]+|repo:[^\s|]+')
-VERIFIED = re.compile(r'^verified: (\d{4}-\d{2}-\d{2}) @ ([0-9a-f]{7,40})$', re.M)
+VERIFIED = re.compile(r'^verified: ([0-9]{4}-[0-9]{2}-[0-9]{2}) @ ([0-9a-f]{7,40})$', re.M)
 CODE = re.compile(r'^code:\s*(.+)$', re.M)
 LINK = re.compile(r'\[[^\]]*\]\(([^)\s]+)\)')
-INBOX_NAME = re.compile(r'^\d{8}T\d{6}Z-(decision|lesson|answered)-(.+)\.md$')
+INBOX_NAME = re.compile(r'^[0-9]{8}T[0-9]{6}Z-(decision|lesson|answered)-(.+)\.md$')
 SECRETS = [
     (re.compile(r'AKIA[0-9A-Z]{16}'), 'AWS access key'),
     (re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----'), 'private key'),
@@ -30,7 +30,8 @@ SECRETS = [
     (re.compile(r'\bBearer\s+[A-Za-z0-9._~+/-]{20,}'), 'bearer token'),
     (re.compile(r'\b(?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S{4,}', re.I), 'credential assignment'),
     (re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+'), 'email address'),
-    (re.compile(r'(?:\+1[ .-]?)?\(?\b\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b'), 'phone number'),
+    (re.compile(r'(?:\+1[ .-]?)?\(?\b[0-9]{3}\)?[ .-][0-9]{3}[ .-][0-9]{4}\b'), 'phone number'),
+    (re.compile(r'(?<![0-9])[0-9]{10,11}(?![0-9])'), 'phone number'),
 ]
 
 
@@ -100,6 +101,10 @@ def _routing(store):
     return out
 
 
+def _inside(store, link):
+    return not os.path.isabs(link) and (store / link).resolve().is_relative_to(store.resolve())
+
+
 def _tokens(text):
     return set(re.findall(r'[a-z0-9_-]{3,}', text.lower()))
 
@@ -118,7 +123,7 @@ def _date_ok(value, month=False):
         datetime.datetime.strptime(value, '%Y-%m' if month else '%Y-%m-%d')
     except ValueError:
         return False
-    return bool(re.fullmatch(r'\d{4}-\d{2}' if month else r'\d{4}-\d{2}-\d{2}', value))
+    return bool(re.fullmatch(r'[0-9]{4}-[0-9]{2}' if month else r'[0-9]{4}-[0-9]{2}-[0-9]{2}', value))
 
 
 def _timeline_patterns():
@@ -227,6 +232,8 @@ class Knowledge:
                 if dom != domain or not link or (name, link) in seen:
                     continue
                 seen.add((name, link))
+                if not _inside(store, link):
+                    raise KnowledgeError(f'{name}:index.md links outside the store: {link}')
                 page = store / link
                 found = VERIFIED.search(page.read_text(encoding='utf-8')) if page.is_file() else None
                 kind = next((k for k, f in TABLES.items() if f == link), None)
@@ -330,7 +337,7 @@ class Knowledge:
                 _git(brain, 'add', '-A', '--', 'decisions.md', 'inbox')
                 _git(brain, 'commit', '-q', '-m', f'knowledge: fold {len(decisions)} decisions', '--', 'decisions.md', 'inbox')
             if others:
-                branch = f'collect/{_stamp()}'
+                branch = self._free_branch(brain)
                 worktree = self._fold_branch(brain, branch, others, before)
                 _git(worktree, 'add', '-A')
                 _git(worktree, 'commit', '-q', '-m', f'knowledge: fold {len(others)} inbox entries')
@@ -356,11 +363,23 @@ class Knowledge:
             names |= {Path(n).name for n in _git(brain, 'ls-tree', '--name-only', branch, 'inbox/folded/').split()}
         return names
 
+    @staticmethod
+    def _free_branch(brain):
+        base = name = f'collect/{_stamp()}'
+        n = 1
+        while subprocess.run(['git', '-C', str(brain), 'rev-parse', '-q', '--verify', f'refs/heads/{name}'],
+                             capture_output=True).returncode == 0:
+            n += 1
+            name = f'{base}-{n}'
+        return name
+
     def _fold_branch(self, brain, branch, others, before):
         """Fold lessons and answers into their tables in a new temporary worktree on `branch`; returns its path."""
         worktree = Path(tempfile.mkdtemp(prefix='knowledge-')) / 'wt'
+        created = False
         try:
             _git(brain, 'worktree', 'add', '-q', '-b', branch, str(worktree), 'HEAD')
+            created = True
             for kind in ('lesson', 'answered'):
                 mine = [e for _, e in others if e['kind'] == kind]
                 if mine:
@@ -370,7 +389,8 @@ class Knowledge:
             self._abort_on_lint(worktree, before)
         except BaseException:
             _remove_worktree(brain, worktree)
-            _git(brain, 'branch', '-D', branch, check=False)
+            if created:
+                _git(brain, 'branch', '-D', branch, check=False)
             raise
         return worktree
 
@@ -388,8 +408,8 @@ class Knowledge:
 
     def log(self, issue, lines):
         brain = self._need_brain()
-        if not re.fullmatch(r'\d+', str(issue)):
-            raise KnowledgeError(f'issue must be a number: {issue!r}')
+        if not re.fullmatch(r'[0-9]+', str(issue)) or int(str(issue)) < 1:
+            raise KnowledgeError(f'issue must be a positive integer: {issue!r}')
         if not lines:
             raise KnowledgeError('log needs at least one timeline line')
         pattern, correction = _timeline_patterns()
@@ -399,7 +419,7 @@ class Knowledge:
                 raise KnowledgeError(f'not a timeline line: {line!r}')
             if month is None and pattern.match(line):
                 month = pattern.match(line).group('time')[:7]
-        heading = f'## #{issue}'
+        heading = f'## #{int(str(issue))}'
         target = next((p for p in _md_files(brain / 'log') if re.search(rf'(?m)^{heading}$', p.read_text(encoding='utf-8'))), None)
         if target is None:
             if month is None:
@@ -407,19 +427,19 @@ class Knowledge:
             target = brain / 'log' / f'{month}.md'
         text = target.read_text(encoding='utf-8') if target.exists() else f'# Log {target.stem}\n'
         head, *sections = re.split(r'(?m)^(?=## #)', text)
-        new = f'{heading}\n' + '\n'.join(lines) + '\n'
         for i, section in enumerate(sections):
             if section.split('\n', 1)[0] == heading:
-                sections[i] = new
+                kept = [l for l in section.split('\n')[1:] if l]
+                sections[i] = '\n'.join([heading, *kept, *dict.fromkeys(l for l in lines if l not in kept)]) + '\n'
                 break
         else:
-            sections.append(new)
+            sections.append(f'{heading}\n' + '\n'.join(dict.fromkeys(lines)) + '\n')
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(head.rstrip('\n') + '\n' + ''.join('\n' + s.rstrip('\n') + '\n' for s in sections), encoding='utf-8')
         rel = target.relative_to(brain).as_posix()
         if _git(brain, 'status', '--porcelain', '--', rel):
             _git(brain, 'add', '--', rel)
-            _git(brain, 'commit', '-q', '-m', f'knowledge: log #{issue}', '--', rel)
+            _git(brain, 'commit', '-q', '-m', f'knowledge: log {heading[3:]}', '--', rel)
         return {'path': rel}
 
     # stale
@@ -488,6 +508,8 @@ class Knowledge:
                 out.append(f'{name}:index.md: row {row[0]!r} needs a [a-z0-9-]+ domain cell, got {domain!r}')
             if not link:
                 out.append(f'{name}:index.md: row {row[0]!r} has no page link')
+            elif not _inside(store, link):
+                out.append(f'{name}:index.md: row {row[0]!r} links outside the store: {link}')
             elif not (store / link).is_file():
                 out.append(f'{name}:index.md: row {row[0]!r} links missing page {link}')
             else:

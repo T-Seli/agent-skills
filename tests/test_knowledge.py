@@ -425,6 +425,76 @@ class TestReview(Base):
         self.assertTrue(any('tenants/note.md' in f and 'code:' in f for f in k.lint()))
 
 
+class TestReviewTwo(Base):
+    def test_same_second_collects_get_distinct_branches(self):
+        with mock.patch('agent_skills.knowledge._stamp', return_value='20261201T000000Z'):
+            self.inbox('lesson', 'b1', stamp='20261110T100000Z')
+            a = self.open().collect()['branch']
+            self.inbox('lesson', 'b2', stamp='20261110T100001Z')
+            b = self.open().collect()['branch']
+        self.assertNotEqual(a, b)
+        self.assertEqual(sorted(git(self.brain, 'branch', '--list', 'collect/*', '--format=%(refname:short)').split()), sorted([a, b]))
+        self.assertIn('| b1 |', git(self.brain, 'show', f'{a}:lessons.md'))
+        self.assertNotIn('| b2 |', git(self.brain, 'show', f'{a}:lessons.md'))
+        self.assertIn('| b2 |', git(self.brain, 'show', f'{b}:lessons.md'))
+
+    def test_failed_collect_deletes_only_its_own_branch(self):
+        with mock.patch('agent_skills.knowledge._stamp', return_value='20261201T000000Z'):
+            self.inbox('lesson', 'b1', stamp='20261110T100000Z')
+            a = self.open().collect()['branch']
+            write(self.brain / 'inbox' / '20261110T100001Z-lesson-b2.md',
+                  inbox_text('lesson', 'b2', text='It broke => mail me@example.com'))
+            with self.assertRaises(KnowledgeError):
+                self.open().collect()
+        self.assertEqual(git(self.brain, 'branch', '--list', 'collect/*', '--format=%(refname:short)').split(), [a])
+
+    def test_failed_worktree_add_never_deletes_an_existing_branch(self):
+        self.inbox('lesson', 'b1', stamp='20261110T100000Z')
+        a = self.open().collect()['branch']
+        self.inbox('lesson', 'b2', stamp='20261110T100001Z')
+        with mock.patch.object(Knowledge, '_free_branch', return_value=a), self.assertRaises(KnowledgeError):
+            self.open().collect()
+        self.assertEqual(git(self.brain, 'branch', '--list', 'collect/*', '--format=%(refname:short)').split(), [a])
+
+    def test_log_appends_missing_lines_and_normalizes_issue(self):
+        k = self.open()
+        k.log('0042', [TIMELINE])
+        k.log(42, [TIMELINE2, TIMELINE])
+        k.log('42', [TIMELINE2])
+        text = (self.brain / 'log' / '2026-11.md').read_text()
+        self.assertEqual(text, f'# Log 2026-11\n\n## #42\n{TIMELINE}\n{TIMELINE2}\n')
+        for bad in (0, -1, '4x', 4.5, '', None):
+            with self.subTest(bad=bad), self.assertRaises(KnowledgeError):
+                k.log(bad, [TIMELINE])
+
+    def test_ten_and_eleven_digit_runs_are_phone_numbers(self):
+        k = self.open()
+        for text in ('Call 2485550100 now.', 'Call 12485550100 now.'):
+            with self.subTest(text=text), self.assertRaises(KnowledgeError):
+                k.record('decision', 'digits', '2026-11-10', 'chat', text)
+        write(self.wiki / 'pages' / 'release.md', '# R\n' + HEAD + 'id 2485550100\n')
+        self.assertTrue(any('phone' in f for f in k.lint()))
+        k.record('decision', 'nine', '2026-11-10', 'chat', 'Only 123456789 here.')
+
+    def test_dates_are_ascii_digits_only(self):
+        with self.assertRaises(KnowledgeError):
+            self.open().record('decision', 'wide', '\uff12\uff10\uff12\uff16-11-10', 'chat', 'Text.')
+        write(self.brain / 'decisions.md', DECISIONS + '| wide | decided | \uff12\uff10\uff12\uff16-11-10 | - | r | s | global |\n')
+        self.assertTrue(any("row 'wide'" in f for f in self.open().lint()))
+
+    def test_links_outside_the_store_are_refused(self):
+        (self.root / 'outside.md').write_text('# Out\n' + HEAD)
+        (self.wiki / 'pages' / 'link.md').symlink_to(self.root / 'outside.md')
+        for link in ('../../outside.md', str(self.root / 'outside.md'), 'pages/link.md'):
+            write(self.wiki / 'index.md', WIKI_INDEX + f'| escape | [x]({link}) | ext |\n')
+            k = self.open()
+            with self.subTest(link=link):
+                with self.assertRaises(KnowledgeError):
+                    k.pages('ext')
+                self.assertTrue(any('outside' in f for f in k.lint()))
+                self.assertEqual(len(k.pages('deploy')), 1)
+
+
 class TestLog(Base):
     def test_writes_month_file(self):
         out = self.open().log(42, [TIMELINE, TIMELINE2])
