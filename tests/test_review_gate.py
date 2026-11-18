@@ -53,6 +53,9 @@ class PacketTests(unittest.TestCase):
             with self.subTest(kw=kw), self.assertRaises(ValueError):
                 packet(**kw)
 
+    def test_plain_uppercase_ledger_words_are_not_mistaken_for_ids(self):
+        self.assertIn('DUPLICATE-IDS', packet(ledger=[('DUPLICATE-IDS', 'resolved')])['text'])
+
     def test_missing_or_unknown_field_fails_loudly(self):
         with self.assertRaises(TypeError):
             packet(extra='x')
