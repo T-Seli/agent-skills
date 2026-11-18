@@ -297,7 +297,9 @@ def sweep(main, *, base, apply=False, rebuildable=(), lease_files=(), active_sec
     return report
 
 
-# Belt registry and guards (conveyor.json `registry`): receipts on the cwd repo's open belt issues are the only source.
+# Belt registry and guards (conveyor.json `registry`): receipts on the cwd repo's belt issues are the only source.
+# The registry and sweep list open belt issues; each guard instead makes one search for its id over open and closed ones.
+SEARCH_LIMIT = 100  # a guard search that fills this cannot prove no open issue was left out, so it fails
 VERDICT_FOR = ("monitor_first", "monitor_24h")  # an issue's first `Scheduler:` id is first-traffic, the second 24 h
 DEADLINE = re.compile(r"Deadline: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z")  # contracts.md § Scheduler
 
@@ -314,34 +316,44 @@ def _state_dir():
     return tasks.state_dir()
 
 
-def belt_issues(cwd):
-    """Open issues carrying a `lane:` label in the GitHub repo of `cwd`: number, label names, comment lines."""
-    done = subprocess.run(["gh", "issue", "list", "--state", "open", "--limit", "1000", "--json",
-                           "number,labels,comments"], cwd=cwd, capture_output=True, text=True, timeout=30)
+def belt_issues(cwd, search=None):
+    """Issues carrying a `lane:` label in the GitHub repo of `cwd`: every open one, or with `search` the open and
+    closed ones holding that exact text, within the guard timeout. Number, open, label names, comment lines."""
+    if search is None:
+        query, seconds = ["--state", "open", "--limit", "1000"], 30
+    else:
+        query = ["--state", "all", "--search", f'"{search}"', "--limit", str(SEARCH_LIMIT)]
+        seconds = float(os.environ.get("AGENT_SKILLS_GUARD_TIMEOUT", "2"))
+    done = subprocess.run(["gh", "issue", "list", *query, "--json", "number,state,labels,comments"],
+                          cwd=cwd, capture_output=True, text=True, timeout=seconds)
     if done.returncode:
         raise RuntimeError(f"gh issue list failed: {done.stderr.strip() or done.returncode}")
+    listed = json.loads(done.stdout)
+    if search is not None and len(listed) >= SEARCH_LIMIT:
+        raise RuntimeError(f"search for {search} returned {SEARCH_LIMIT} or more issues; some may be missing")
     issues = []
-    for found in json.loads(done.stdout):
+    for found in listed:
         labels = {label["name"] for label in found["labels"]}
         if any(name.startswith("lane:") for name in labels):
-            issues.append({"number": found["number"], "labels": labels,
+            issues.append({"number": found["number"], "open": found["state"] == "OPEN", "labels": labels,
                            "lines": [line.strip() for comment in found["comments"]
                                      for line in comment["body"].splitlines()]})
     return issues
 
 
+def _claims(found, receipts):
+    """(session, claimed branch or None) for each `Owner:` or `Claimed:` receipt on one issue."""
+    for line in found["lines"]:
+        for key in ("owner", "claim"):
+            if match := re.match(receipts[key]["pattern"], line):
+                yield match["session"], line.split("`")[1] if key == "claim" else None
+
+
 def registry(cwd):
     """One row per `Owner:` or `Claimed:` receipt on an open belt issue: session, issue, parked, claimed branch."""
     receipts = _contract()["receipts"]
-    rows = []
-    for found in belt_issues(cwd):
-        for line in found["lines"]:
-            for key in ("owner", "claim"):
-                if match := re.match(receipts[key]["pattern"], line):
-                    rows.append({"session": match["session"], "issue": found["number"],
-                                 "parked": "parked" in found["labels"],
-                                 "branch": line.split("`")[1] if key == "claim" else None})
-    return rows
+    return [{"session": session, "issue": found["number"], "parked": "parked" in found["labels"], "branch": branch}
+            for found in belt_issues(cwd) for session, branch in _claims(found, receipts)]
 
 
 def _session(event):
@@ -350,15 +362,18 @@ def _session(event):
 
 
 def archive_check(cwd, session):
-    """(decision, reason) per conveyor.json registry guards; a closed issue is no longer open, so never unfinished."""
+    """(decision, reason) per conveyor.json registry guards, from one search for the session over open and closed
+    belt issues: on none asks, on an open unparked one denies, else allows."""
     contract = _contract()
     guards = contract["registry"]["guards"]
     if re.fullmatch(contract["session_id"]["pattern"], session) and not session.startswith("local_"):
         return "deny", f"session {session} is a headless worker; it ends by itself and is never archived"
-    rows = [row for row in registry(cwd) if row["session"] == session]
-    if not rows:
+    receipts = contract["receipts"]
+    mine = [found for found in belt_issues(cwd, session)
+            if any(named == session for named, _ in _claims(found, receipts))]
+    if not mine:
         return guards["outside_registry"], f"session {session} is outside the belt registry"
-    unfinished = sorted({row["issue"] for row in rows if not row["parked"]})
+    unfinished = sorted(found["number"] for found in mine if found["open"] and "parked" not in found["labels"])
     if unfinished:
         return guards["registry_unfinished"], \
             f"session {session} has unfinished work on {', '.join(f'#{n}' for n in unfinished)}"
@@ -386,7 +401,7 @@ def monitor_create_check(cwd, task_id, description):
 def monitor_delete_check(cwd, task_id):
     """Allow a `Scheduler:` id on a belt issue once its verdict is recorded; deny before; any other id asks."""
     receipts = _contract()["receipts"]
-    for found in belt_issues(cwd):
+    for found in belt_issues(cwd, task_id):
         ids = list(dict.fromkeys(line.split()[2] for line in found["lines"]
                                  if re.match(receipts["schedule"]["pattern"], line)))
         if task_id in ids:
@@ -396,7 +411,7 @@ def monitor_delete_check(cwd, task_id):
                 return "allow", "verdict recorded"
             label = receipts[need]["label"] if need else "verdict (only two schedules have one)"
             return "deny", f"#{found['number']}: monitor {task_id} has no {label} receipt yet"
-    return "ask", f"{task_id} is not a `Scheduler:` id on an open belt issue"
+    return "ask", f"{task_id} is not a `Scheduler:` id on a belt issue"
 
 
 def denial_log():
