@@ -1,5 +1,5 @@
 # Model selection
-Choose a role first, then a tier. Skills and prompts never name a model id: ids, efforts and timeouts live only in the worker config (`policy.<provider>`), so a new model needs a config edit and no skill edit. Works for any provider the config lists. Tiers are ladder positions (small, mid, top), named in config; the table maps each to ids per provider (Claude Code and Codex alike). Logic adopted from the model-selection guidance Thomas supplied (Nov 2026) and the mid-tier guidance he relayed (read second-hand).
+Choose a role first, then a tier. Skills and prompts never name a model id: ids, efforts and timeouts live only in the worker config (`policy.<provider>`), so a new model needs a config edit and no skill edit. Works for any provider the config lists. Tiers are ladder positions (small, mid, top), named in config; the table maps each to ids per provider (Claude Code and Codex alike). Logic adopted from the user's model-selection guidance (Nov 2026) and the mid-tier guidance relayed to the user (read second-hand).
 
 ## Roles and tiers
 | Role | Default tier | Why |
@@ -7,7 +7,7 @@ Choose a role first, then a tier. Skills and prompts never name a model id: ids,
 | planner (plan, design, brainstorm, grill) | involved | open-ended reasoning; a wrong plan costs every later step |
 | reviewer, judge | involved | independent of the builder; high blast radius |
 | builder (implement a scoped ticket) | ordinary | clear scope, tests decide |
-| scout (read-only lookup) | ordinary | bounded question, capped answer |
+| scout (read-only lookup) | small | bounded question, capped answer |
 
 Config: `policy.<provider>.roles` maps role to tier; `ladder` orders tiers weakest to strongest (default `ordinary`, `involved`; add middle tiers freely). An unlisted role uses the signal rule in worker-execution.md § Select and pin.
 
@@ -29,7 +29,7 @@ Start at the default: medium for well-specified agentic work, high for harder or
 Order: make the work self-verifying, raise effort one level within the ceiling, then climb one tier at the lower effort. Code covers the tier step: pass `failures` (failed or blocked attempts); every two climb one tier (`select_route(..., role=..., failures=n)`). At the top of the ladder it raises: report blocked with the attempts. Never fall back to a weaker tier or another provider silently. Switch tiers at a natural break (short written plan or compaction), since caches belong to one model.
 
 ## Coordinator duty
-Each brief records tier, effort and why. The sweep checks no worker runs a higher tier than its task shape needs, and that agentic production workflows use only the small, low-cost tier (Thomas's standing rule).
+Each brief records tier, effort and why. The sweep checks no worker runs a higher tier than its task shape needs, and that agentic production workflows use only the small, low-cost tier (the user's standing rule).
 
 ## Verify
 Record the route with `record_execution` and compare it with the model and effort the runtime reports (usage output); a mismatch is a blocker, not a note. Measure candidates on the task's own work, each in its own session.
