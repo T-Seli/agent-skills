@@ -279,6 +279,7 @@ build() {
 
 # render_to <claude|codex>: print authorizations.json rendered as the Claude settings
 # snippet (on top of settings.snippet.json) or as Codex rules (codex/compatibility.md § Rules).
+# An entry carrying `held` renders nothing, its guard hook included, until a reviewed change lifts it.
 # Each guard registers hooks/<guard>.sh as a PreToolUse hook; any hook the output names
 # that is missing from hooks/ fails the render.
 render_to() {
@@ -294,7 +295,7 @@ claude_rule = {"bash": "Bash({}:*)", "mcp": "{}", "edit": "Edit({})"}
 codex_decision = {"allow": "allow", "ask": "prompt", "deny": "forbidden"}
 hook_dir = "~/.claude/hooks" if kind == "claude" else os.path.join(root, "hooks")
 rules, guards = [], []
-for e in auth["entries"]:
+for e in (e for e in auth["entries"] if "held" not in e):
     if e["tool"] not in claude_rule or e["mode"] not in codex_decision:
         sys.exit("render: {}: unknown tool {!r} or mode {!r}".format(e["id"], e["tool"], e["mode"]))
     rules.append(e)

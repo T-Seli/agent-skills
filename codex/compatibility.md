@@ -31,6 +31,8 @@ scheduling are defined once in contracts.md (§ Layers, § Chain, § Consent,
 - Fetching follows § Git, in skills and hooks alike.
 - Codex hook trust belongs to the user, via `/hooks`. Never bypass it or write
   trust records yourself.
+- `codex/hooks/session-start.py` puts `issues-cli resume` before the Git snapshot
+  for a session named in workers.json `roles`, as the Claude hook does.
 
 ## Rules
 `install.sh` renders `authorizations.json` to `~/.codex/agent-skills/rules.toml`
@@ -38,7 +40,7 @@ and never applies it; the user does. Each `[[rules]]` has `id`, `tool`, `match`,
 `decision` (allow, prompt or forbidden for the modes allow, ask, deny), `why`, a
 bash rule's `pattern` (command-prefix tokens) and any `guard`. Each guard is also a
 `[[hooks.PreToolUse]]` group running `hooks/<guard>.sh`, the Claude hook itself.
-Apply a guarded allow only together with its hook. Claude-only: the
+An entry with `held` is not rendered. Apply a guarded allow only together with its hook. Claude-only: the
 `PermissionDenied` denial log (Codex has no such event). Rules passed by
 `--settings` apply without a trust click; project-file rules wait for folder trust.
 

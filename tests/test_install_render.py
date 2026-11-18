@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -15,6 +16,10 @@ SNIPPET = ".claude/agent-skills/settings.snippet.json"
 RULES = ".codex/agent-skills/rules.toml"
 CLAUDE_RULE = {"bash": "Bash({}:*)", "mcp": "{}", "edit": "Edit({})"}
 CODEX_DECISION = {"allow": "allow", "ask": "prompt", "deny": "forbidden"}
+LIVE = [e for e in AUTH["entries"] if "held" not in e]
+HELD = [e for e in AUTH["entries"] if "held" in e]
+UUID = "{0}{0}{0}{0}{0}{0}{0}{0}-{0}{0}{0}{0}-{0}{0}{0}{0}-{0}{0}{0}{0}-{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}"
+ROLE, OTHER = UUID.format("a"), UUID.format("b")
 
 
 def source(tmp, auth=None, drop=()):
@@ -88,13 +93,12 @@ class RenderTests(unittest.TestCase):
             result = install(ROOT, dest)
             self.assertEqual(result.returncode, 0, result.stderr)
             snippet, rules = rendered(dest)
-            self.assertEqual([r["id"] for r in rules["rules"]], [e["id"] for e in AUTH["entries"]])
-            for e in AUTH["entries"]:
+            self.assertEqual([r["id"] for r in rules["rules"]], [e["id"] for e in LIVE])
+            for e in LIVE:
                 self.assertIn(CLAUDE_RULE[e["tool"]].format(e["match"]), snippet["permissions"][e["mode"]])
-            guarded = {(e["match"], e["guard"]) for e in AUTH["entries"] if "guard" in e}
-            self.assertIn(("mcp__scheduled-tasks__delete_scheduled_task", "monitor-id-guard"), guarded)
-            self.assertEqual({(m, os.path.basename(c)[:-3]) for m, c in commands(rules["hooks"]["PreToolUse"])},
-                             guarded)
+            guarded = {(e["match"], e["guard"]) for e in LIVE if "guard" in e}
+            codex_hooks = commands(rules.get("hooks", {}).get("PreToolUse", []))
+            self.assertEqual({(m, os.path.basename(c)[:-3]) for m, c in codex_hooks}, guarded)
             self.assertTrue(guarded <= {(m, os.path.basename(c)[:-3])
                                         for m, c in commands(snippet["hooks"]["PreToolUse"])})
             self.assertEqual(commands(snippet["hooks"]["PermissionDenied"]),
@@ -115,12 +119,17 @@ class RenderTests(unittest.TestCase):
             self.assertEqual(list(Path(dest).iterdir()), [])
 
     def test_a_missing_hook_fails_the_render_loudly(self):
-        for target, hook, who in (("claude", "archive-guard.sh", "archive-done"),
-                                  ("codex", "monitor-id-guard.sh", "monitor-delete"),
+        guarded = {"version": 2, "entries": [
+            {"id": "archive-x", "tool": "mcp", "match": "mcp__a__archive", "kind": "bookkeeping", "mode": "allow",
+             "why": "w", "guard": "archive-guard"},
+            {"id": "monitor-x", "tool": "mcp", "match": "mcp__a__monitor", "kind": "bookkeeping", "mode": "allow",
+             "why": "w", "guard": "monitor-id-guard"}]}
+        for target, hook, who in (("claude", "archive-guard.sh", "archive-x"),
+                                  ("codex", "monitor-id-guard.sh", "monitor-x"),
                                   ("claude", "denial-log.sh", "settings.snippet.json")):
             for mode in ("--dry-run", "--target=" + target):
                 with self.subTest(target=target, hook=hook, mode=mode), tempfile.TemporaryDirectory() as tmp:
-                    src = source(tmp, drop=(hook,))
+                    src = source(tmp, guarded, drop=(hook,))
                     dest = Path(tmp) / "home"
                     dest.mkdir()
                     result = install(src, dest, mode, f"--target={target}")
@@ -128,6 +137,129 @@ class RenderTests(unittest.TestCase):
                     self.assertIn(f"render: {who}: hook {src}/hooks/{hook} is missing or not executable",
                                   result.stderr)
                     self.assertFalse((dest / SNIPPET).exists() or (dest / RULES).exists())
+
+    def test_no_held_entry_is_rendered(self):
+        self.assertEqual({e["id"] for e in HELD},
+                         {"monitor-arm", "monitor-delete", "archive-done", "no-merge-outside-release"})
+        with tempfile.TemporaryDirectory() as dest:
+            result = install(ROOT, dest)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            snippet_text = (Path(dest) / SNIPPET).read_text()
+            rules_text = (Path(dest) / RULES).read_text()
+            for e in HELD:
+                with self.subTest(held=e["id"]):
+                    self.assertNotIn(e["match"], snippet_text)
+                    self.assertNotIn(e["match"], rules_text)
+                    self.assertNotIn(json.dumps(e["id"]), rules_text)
+                    if "guard" in e:
+                        self.assertNotIn(e["guard"], rules_text)
+
+    def test_issues_cli_resume_renders_like_the_other_bookkeeping_entries(self):
+        resume = next(e for e in AUTH["entries"] if e["id"] == "issues-resume")
+        self.assertEqual((resume["kind"], resume["mode"]), ("bookkeeping", "allow"))
+        with tempfile.TemporaryDirectory() as dest:
+            result = install(ROOT, dest)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            snippet, rules = rendered(dest)
+            self.assertIn(f"Bash({AUTH['invocation']['issues-cli']} resume:*)", snippet["permissions"]["allow"])
+            rule = next(r for r in rules["rules"] if r["id"] == "issues-resume")
+            self.assertEqual((rule["tool"], rule["decision"], rule["pattern"]),
+                             ("bash", "allow", [AUTH["invocation"]["issues-cli"], "resume"]))
+            self.assertNotIn("guard", rule)
+
+
+def release(home):
+    """A release snapshot of this working tree in scratch `home`: tracked files plus its .release-pin.json."""
+    head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
+                          check=True).stdout.strip()
+    dest = home / ".local" / "share" / "agent-skills" / "releases" / head[:7]
+    listed = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, text=True,
+                            check=True).stdout
+    for name in filter(None, listed.split("\0")):
+        if (ROOT / name).exists():
+            (dest / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / name, dest / name)
+    (dest / ".release-pin.json").write_text(json.dumps({"source": "o/r", "commit": head, "tree": "t"}))
+    return dest, head
+
+
+class InstalledLayoutTests(unittest.TestCase):
+    """An installed release, outside any git checkout, finds its pin and contract through agent_skills.layout."""
+
+    def test_installed_release_prints_the_pin_commit_and_an_existing_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve() / "home"
+            pkg, head = release(home)
+            git_dir = subprocess.run(["git", "-C", str(pkg), "rev-parse", "--git-dir"], capture_output=True)
+            self.assertNotEqual(git_dir.returncode, 0, "the scratch HOME must be outside any git checkout")
+            result = install(pkg, home)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            installed = (home / ".agents" / "skills" / "workflow-contracts").resolve().parents[1]
+            self.assertEqual(installed, pkg)
+            done = subprocess.run(
+                ["python3", "-c",
+                 'from agent_skills import layout; print(layout.release_id(), layout.contract("conveyor.json"))'],
+                cwd=installed, capture_output=True, text=True,
+                env=dict(os.environ, HOME=str(home), PYTHONDONTWRITEBYTECODE="1"))
+            self.assertEqual(done.returncode, 0, done.stderr)
+            commit, path = done.stdout.split()
+            self.assertEqual(commit, head)
+            self.assertEqual(Path(path), installed / "skills" / "workflow-contracts" / "conveyor.json")
+            self.assertTrue(Path(path).is_file())
+
+
+class CodexSessionStartTests(unittest.TestCase):
+    """codex/hooks/session-start.py adds `issues-cli resume` for a session named in workers.json `roles`,
+    as hooks/session-start.sh does for Claude (conveyor.json `resume.hooks`). The codex binary never runs."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name).resolve()
+        self.home = base / "home"
+        self.cli = self.home / ".agents" / "skills" / "workflow-contracts" / "scripts" / "issues-cli"
+        self.cli.parent.mkdir(parents=True)
+        self.cli.write_text('#!/bin/sh\n[ "$*" = resume ] || exit 3\necho "Board: in-progress 1/8"\n'
+                            'echo "Questions: none"\n')
+        self.cli.chmod(0o755)
+        self.config = base / "workers.json"
+        self.config.write_text(json.dumps({"roles": {"coordinator": ROLE}}))
+        self.cwd = base / "repo"
+        self.cwd.mkdir()
+        subprocess.run(["git", "-C", str(self.cwd), "init", "-q"], check=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_hook(self, session, cwd=None):
+        event = {"hook_event_name": "SessionStart", "session_id": session, "cwd": str(cwd or self.cwd)}
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_HOST_SESSION_ID"}
+        env.update(HOME=str(self.home), AGENT_SKILLS_CONFIG=str(self.config), PYTHONDONTWRITEBYTECODE="1")
+        done = subprocess.run(["python3", str(ROOT / "codex" / "hooks" / "session-start.py")],
+                              input=json.dumps(event), capture_output=True, text=True, env=env)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        output = json.loads(done.stdout)["hookSpecificOutput"]
+        self.assertEqual(output["hookEventName"], "SessionStart")
+        return output["additionalContext"]
+
+    def test_a_role_session_gets_the_resume_picture_before_the_snapshot(self):
+        context = self.run_hook(ROLE)
+        self.assertTrue(context.startswith("Board: in-progress 1/8\nQuestions: none\n"), context)
+        self.assertIn("Local Git snapshot.", context)
+
+    def test_any_other_session_keeps_only_the_snapshot(self):
+        context = self.run_hook(OTHER)
+        self.assertNotIn("Board:", context)
+        self.assertTrue(context.startswith("Local Git snapshot."), context)
+
+    def test_a_role_session_outside_git_still_gets_the_resume_picture(self):
+        outside = Path(self.tmp.name).resolve() / "plain"
+        outside.mkdir()
+        context = self.run_hook(ROLE, outside)
+        self.assertEqual(context, "Board: in-progress 1/8\nQuestions: none")
+
+    def test_a_failed_resume_is_said_loudly(self):
+        self.cli.write_text("#!/bin/sh\necho 'gh: offline' >&2\nexit 1\n")
+        self.assertIn("issues-cli resume failed (exit 1): gh: offline", self.run_hook(ROLE))
 
 
 class InvocationTests(unittest.TestCase):
