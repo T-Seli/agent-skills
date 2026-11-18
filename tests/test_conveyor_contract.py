@@ -103,7 +103,7 @@ class ActionsAndCards(unittest.TestCase):
     def test_action_record_is_parameters_only(self):
         a = SCHEMA['action_record']
         self.assertEqual(set(a['kinds']), {'release', 'rollback', 'skills-install'})
-        for f in ('kind', 'id', 'train', 'tree', 'targets', 'prepared_by', 'prepared_at', 'expires_at', 'digest_input', 'digest', 'used_at'):
+        for f in ('kind', 'id', 'train', 'tree', 'targets', 'rollback', 'prepared_by', 'prepared_at', 'expires_at', 'digest_input', 'digest', 'used_at'):
             self.assertIn(f, a['fields'])
         self.assertEqual(set(a['refusals']), {'unknown-kind', 'moved-head', 'expired', 'reused', 'digest-mismatch', 'hold', 'train-over-limit'})
         self.assertEqual(a['command_lines'], 'forbidden')
@@ -131,6 +131,9 @@ class ActionsAndCards(unittest.TestCase):
         k = SCHEMA['knowledge']
         self.assertEqual(set(k['functions']), {'pages', 'find', 'domains', 'record', 'collect', 'log', 'stale', 'lint'})
         self.assertEqual(k['module'], 'agent_skills.knowledge')
+        self.assertEqual(k['functions']['collect']['returns'], '{folded, branch, pr}')
+        for fn in ('pages', 'find', 'stale'):
+            self.assertIn('store', k['functions'][fn]['returns'])
         for s in ('none', 'lesson: x', 'page-fix: wiki/a.md: x'):
             self.assertTrue(matches('learned', f'Learned: {s}'), s)
         self.assertFalse(matches('learned', 'Learned: maybe'))
@@ -147,6 +150,8 @@ class Authorizations(unittest.TestCase):
             self.assertTrue({'id', 'tool', 'match', 'kind', 'mode', 'why'} <= set(e) <= {'id', 'tool', 'match', 'kind', 'mode', 'why', 'guard'}, e['id'])
             self.assertIn(e['tool'], {'bash', 'mcp', 'edit'}, e['id'])
             self.assertIn((e['kind'], e['mode']), {('bookkeeping', 'allow'), ('go', 'ask'), ('deny', 'deny')}, e['id'])
+            if 'guard' in e:
+                self.assertRegex(e['guard'], r'^[a-z-]+-guard$', e['id'])
 
     def test_gates_are_allowed_and_the_go_is_one_click(self):
         mode = {e['match']: e['mode'] for e in AUTH['entries']}
@@ -154,6 +159,7 @@ class Authorizations(unittest.TestCase):
         for gate in ('capture', 'prio', 'publish', 'claim', 'lane', 'decide', 'ask', 'brief', 'sweep', 'close'):
             self.assertEqual(mode[f'{icli} {gate}'], 'allow', gate)
         self.assertEqual(mode[f'{scli} run-approved'], 'ask')
+        self.assertEqual(mode[f'{scli} prepare-action'], 'allow')
         self.assertEqual([e['id'] for e in AUTH['entries'] if e['mode'] == 'ask'], ['run-approved'])
         self.assertTrue(any(e['mode'] == 'deny' and 'email' in e['why'] for e in AUTH['entries']))
 

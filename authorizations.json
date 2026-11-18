@@ -1,5 +1,5 @@
 {
-  "note": "Standing permissions for the belt (skills/workflow-contracts/conveyor.md § Permissions). tool: bash (command prefix), mcp (tool name, * wildcard), edit (path glob). guard names the hook that narrows an allow (T3). install.sh renders this for Claude and Codex (T5); the user installs it.",
+  "note": "Standing permissions for the belt (skills/workflow-contracts/conveyor.md § Permissions). tool: bash (command prefix), mcp (tool name, * wildcard), edit (path glob). guard is the basename of the hooks/<guard>.sh file that narrows an allow (T3); rendering fails loudly if it is missing. install.sh renders this for Claude and Codex (T5); the user installs it.",
   "version": 2,
   "invocation": {
     "issues-cli": "~/.agents/skills/workflow-contracts/scripts/issues-cli",
@@ -140,8 +140,7 @@
       "match": "mcp__scheduled-tasks__create_scheduled_task",
       "kind": "bookkeeping",
       "mode": "allow",
-      "why": "deploy arms first-traffic and 24 h monitors",
-      "guard": "monitor-id"
+      "why": "deploy arms first-traffic and 24 h monitors"
     },
     {
       "id": "monitor-delete",
@@ -150,7 +149,7 @@
       "kind": "bookkeeping",
       "mode": "allow",
       "why": "a monitor that recorded its verdict",
-      "guard": "monitor-id"
+      "guard": "monitor-id-guard"
     },
     {
       "id": "archive-done",
@@ -159,7 +158,15 @@
       "kind": "bookkeeping",
       "mode": "allow",
       "why": "verified-done belt sessions only",
-      "guard": "closeout"
+      "guard": "archive-guard"
+    },
+    {
+      "id": "prepare-action",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli prepare-action",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "writes the action record (parameters only); the go stays run-approved"
     },
     {
       "id": "run-approved",
