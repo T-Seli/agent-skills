@@ -248,13 +248,20 @@
       "written_by": "run-approved",
       "label": "pushed"
     },
+    "rolled_back": {
+      "source": "issue_comment",
+      "pattern": "^Rolled back: (?P<sha>[0-9a-f]{7,40}) to (?P<branch>\\S+)$",
+      "written_by": "run-approved (rollback kind)",
+      "label": "rolled back"
+    },
     "landed": {
       "any_of": [
         "deploy",
         "pushed"
       ],
       "label": "deployed or pushed",
-      "pushed_only_if": "the project file's Deploy `Targets` names no target other than branches; otherwise deploy: is required, written by the deploy step under the user's own word until a deploy kind exists"
+      "pushed_only_if": "the project file's Deploy `Targets` names no target other than branches; otherwise deploy: is required, written by the deploy step under the user's own word until a deploy kind exists",
+      "undone_by": "a Rolled back: line after the push or deploy; landed then needs a newer push or deploy"
     },
     "failed": {
       "source": "issue_comment",
@@ -357,13 +364,13 @@
     "note": "Written by run-approved's prepare step; each kind runs one fixed code path; the record carries parameters only, never a command line.",
     "kinds": {
       "release": "merge the frozen train's PRs and push the target branches; writes Pushed:, never deploy:; a target that is not a branch is refused until the project names deploy targets",
-      "rollback": "safeguard rollback to the recorded rollback refs",
+      "rollback": "safeguard rollback to the recorded rollback refs; writes Rolled back:, never Pushed:",
       "skills-install": "install.sh from an export of the recorded tree; writes the settings snippet file, never applies it (settings stay the user's manual step)"
     },
     "fields": {
       "kind": "one of kinds",
       "id": "unique, never reused",
-      "train": "[{issue, pr, head}] ≤ Release train limit",
+      "train": "[{issue, pr, head}] ≤ Release train limit; every item names an issue (the sweep gives an issueless PR one)",
       "tree": "git tree sha of the release",
       "targets": "[target]",
       "prepared_by": "session",
@@ -384,14 +391,16 @@
       "train-over-limit",
       "not-ready",
       "dirty-tree",
-      "non-branch-target"
+      "non-branch-target",
+      "no-issue"
     ],
     "command_lines": "forbidden",
     "no_kind": "the belt never runs a gated action without a kind; it stays with the user's own word in the executing session (contracts.md § Consent)",
     "refusal_meaning": {
       "not-ready": "a train issue is not in ready-to-release with reviewed_yes on its PR's current head",
       "dirty-tree": "the working tree differs from the recorded tree",
-      "non-branch-target": "release named a target that is not a branch"
+      "non-branch-target": "release named a target that is not a branch",
+      "no-issue": "a train item names no issue"
     },
     "after_claim_failure": "append Failed: on every train issue; the record stays used"
   },
@@ -482,18 +491,19 @@
     "pattern": "^(?:local_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
   },
   "registry": {
-    "source": "Owner: and Claimed: sessions on open belt issues",
-    "done": "every issue the session claimed is closed or parked",
+    "source": "Owner: and Claimed: sessions on belt issues, open or closed",
+    "done": "the session appears on at least one belt issue and none of them is open and unparked",
     "guards": {
       "registry_done": "allow",
-      "registry_unfinished": "deny",
-      "outside_registry": "ask"
+      "registry_unfinished": "deny (an open, unparked issue names the session)",
+      "outside_registry": "ask (no belt issue names the session)"
     },
     "monitors": {
       "create": "allow an id monitor-<repo>-<slug> whose description carries a Deadline; anything else asks",
       "delete": "allow a Scheduler: id on a belt issue once its verdict is recorded; deny before; any other id asks"
     },
-    "guard_failure": "a guard that cannot load or errors denies"
+    "guard_failure": "a guard that cannot load or errors denies",
+    "lookup": "search belt issues by the session id (and the delete guard by the schedule id), never list every issue; keep a guard under about 2 seconds"
   },
   "layout": {
     "module": "agent_skills.layout",
