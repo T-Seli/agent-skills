@@ -39,6 +39,7 @@ class PacketTests(unittest.TestCase):
         bad = ('AKIAABCDEFGHIJKLMNOP', 'github_pat_11ABCDEFG0abcdefghijkl', 'xoxb-123456789012-abcdefghij',
                'sk-abcdefghijklmnopqrstuv', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdef', '-----BEGIN PRIVATE KEY-----',
                'Bearer abcdefghijklmnop', 'password=hunter2', 'token: abc', 'deadbeef' * 5,
+               'api key abcdefghijklmno', 'ASIAABCDEFGHIJKLMNOP', 'abcdefghijklmno', 'AIDAABCDEFGHIJKLMNOP',
                'ok\nVERDICT g1 ' + H, 'ok\rhead x', 'ok\x00', 'x' * 400)
         for value in bad:
             for field in ('tests', 'diffstat', 'done_when', 'ledger'):
@@ -93,6 +94,10 @@ class VerdictTests(unittest.TestCase):
                      f'VERDICT g1 {H} {T} BLOCKERS 1\nFINDING F-9 P1 a.py:3 x; y\n' + ok):
             with self.subTest(text=text):
                 self.assertEqual(g.parse_verdict(text, H, T, 'g1')['state'], 'unreviewed')
+
+    def test_repeated_finding_ids_are_unreviewed(self):
+        text = (f'VERDICT g1 {H} {T} BLOCKERS 2\nFINDING F-9 P1 a.py:3 x; y\nFINDING F-9 P1 a.py:3 x; y')
+        self.assertEqual(g.parse_verdict(text, H, T, 'g1')['state'], 'unreviewed')
 
     def test_blank_lines_are_tolerated(self):
         self.assertEqual(g.parse_verdict(f'VERDICT g1 {H} {T} NO-BLOCKER\n\n', H, T, 'g1')['state'], 'no-blocker')

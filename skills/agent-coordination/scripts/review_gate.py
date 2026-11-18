@@ -20,10 +20,10 @@ DEFAULTS = {"on": True, "deadline_h": 4, "retries": 1}
 SHA = re.compile(r"[0-9a-f]{40}")
 PRIVATE = re.compile(
     r"gh[pousr]_\w{16,}|github_pat_\w+|xox[a-z]-[\w-]+|sk-\w{16,}|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[\w-]{5,}\."
-    r"|(?i:\b(?:password|passwd|secret|token|api[_-]?key|bearer)\b)|[0-9a-fA-F]{32,}|\b[A-Za-z0-9_+=-]{32,}\b"
+    r"|(?i:\b(?:password|passwd|secret|token|api[ _-]?key|bearer)\b)|\b(?:AKIA|ASIA|AIDA|AROA|AGPA|ANPA|ANVA|AIPA)[0-9A-Z]{16}\b|[A-Za-z0-9]{15,}|[0-9a-fA-F]{32,}|\b[A-Za-z0-9_+=-]{32,}\b"
     r"|[\w.+-]+@[\w-]+\.\w+|\b[UDCTW][0-9A-Z]{8,}\b|\+?\d[\d\s().-]{8,}\d"
 )
-FREE = re.compile(r"[A-Za-z0-9 _.,:;()/+=%'#-]{1,200}")  # one line, no control characters, no pipe or at-sign
+FREE = re.compile(r"[A-Za-z0-9 _.,:;()/+=%'#-]{1,200}")  # one line, no control characters, no pipe or at-sign; PRIVATE also rejects any 15+ character alphanumeric run, so prose is not trusted beyond the denylist
 DIFFSTAT = re.compile(r"\d+ files? changed(, \d+ insertions?\(\+\))?(, \d+ deletions?\(-\))?")
 LEDGER_ID = re.compile(r"[A-Z][A-Z0-9-]{0,39}")
 VERDICT = re.compile(r"VERDICT (\S+) ([0-9a-f]{40}) ([0-9a-f]{40}) (NO-BLOCKER|BLOCKERS (\d+))")
@@ -66,6 +66,8 @@ def parse_verdict(text, head, tree, gate):
     if not all(parsed):
         return {"state": "unreviewed", "findings": []}
     findings = [dict(zip(("id", "severity", "source", "detail"), f.groups())) for f in parsed]
+    if len({f["id"] for f in findings}) != len(findings):
+        return {"state": "unreviewed", "findings": []}
     if m.group(4) == "NO-BLOCKER":
         return {"state": "no-blocker" if not findings else "unreviewed", "findings": []}
     if int(m.group(5)) == 0 or int(m.group(5)) != len(findings):
