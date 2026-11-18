@@ -21,7 +21,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 PRIVATE = re.compile(
     r"gh[pousr]_\w{16,}|github_pat_\w+|xox[a-z]-[\w-]+|sk-\w{16,}|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[\w-]{5,}\."
     r"|(?i:\b(?:password|passwd|secret|token|api[ _-]?key|bearer)\b)|\b(?:AKIA|ASIA|AIDA|AROA|AGPA|ANPA|ANVA|AIPA)[0-9A-Z]{16}\b|[A-Za-z0-9]{15,}|[0-9a-fA-F]{32,}|\b[A-Za-z0-9_+=-]{32,}\b"
-    r"|[\w.+-]+@[\w-]+\.\w+|\b[UDCTW][0-9A-Z]{8,}\b|\+?\d[\d\s().-]{8,}\d"
+    r"|[\w.+-]+@[\w-]+\.\w+|\b[UDCTW](?=[0-9A-Z]*\d)[0-9A-Z]{8,}\b|\+?\d[\d\s().-]{8,}\d"
 )
 FREE = re.compile(r"[A-Za-z0-9 _.,:;()/+=%'#-]{1,200}")  # one line, no control characters, no pipe or at-sign; PRIVATE also rejects any 15+ character alphanumeric run, so prose is not trusted beyond the denylist
 DIFFSTAT = re.compile(r"\d+ files? changed(, \d+ insertions?\(\+\))?(, \d+ deletions?\(-\))?")
