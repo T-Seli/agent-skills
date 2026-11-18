@@ -139,10 +139,10 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn('max_per_day', g.gate_settings([], 'g1'))
 
     def test_layering_narrower_wins_and_off_switch(self):
-        cfg = [{'g1': {'on': True, 'deadline_h': 4}}, {'g1': {'on': False}}]
+        cfg = [{'g1': {'on': True, 'deadline_h': 3}}, {'g1': {'on': False}}]
         s = g.gate_settings(cfg, 'g1')
         self.assertFalse(s['on'])
-        self.assertEqual(s['deadline_h'], 4)
+        self.assertEqual(s['deadline_h'], 3)
 
     def test_unknown_gate_fails(self):
         with self.assertRaises(ValueError):
@@ -151,7 +151,7 @@ class ConfigTests(unittest.TestCase):
 
 class WatchTests(unittest.TestCase):
     def rec(self, **kw):
-        r = dict(sent_at=1000, deadline_h=4, retries=0, fingerprint='f')
+        r = dict(sent_at=1000, deadline_h=2, fingerprint='f')
         r.update(kw)
         return r
 
@@ -173,12 +173,30 @@ class WatchTests(unittest.TestCase):
     def test_stale_or_unreviewed_inside_deadline_keeps_waiting(self):
         self.assertEqual(g.watch_step(self.rec(), 1100, 'stale')['action'], 'wait')
 
-    def test_deadline_then_one_retry_then_tell_thomas(self):
-        late = 1000 + 4 * 3600 + 1
-        self.assertEqual(g.watch_step(self.rec(), late, None)['action'], 'retry')
-        step = g.watch_step(self.rec(retries=1, sent_at=late), late + 4 * 3600 + 1, None)
-        self.assertEqual(step['action'], 'tell-thomas')
-        self.assertEqual(step['state'], 'unreviewed')
+    def test_deadline_runs_local_fallback_once_then_tells_user(self):
+        late = 1000 + 2 * 3600 + 1
+        self.assertEqual(g.watch_step(self.rec(deadline_h=g.DEFAULTS['deadline_h']), late, None)['action'], 'fallback')
+        fb = self.rec(deadline_h=2, fallback_at=late)
+        self.assertEqual(g.watch_step(fb, late + 3600, None)['action'], 'wait')
+        step = g.watch_step(fb, late + 2 * 3600 + 1, None)
+        self.assertEqual((step['action'], step['state']), ('tell-user', 'unreviewed'))
+
+    def test_default_deadline_is_two_hours_and_no_retry_setting(self):
+        self.assertEqual(g.gate_settings([], 'g1')['deadline_h'], 2)
+        self.assertNotIn('retries', g.gate_settings([], 'g1'))
+
+    def test_fallback_verdict_counts_like_any_verdict(self):
+        fb = self.rec(fallback_at=5000)
+        self.assertEqual(g.watch_step(fb, 6000, 'no-blocker')['action'], 'close')
+        self.assertEqual(g.watch_step(fb, 6000, 'blockers', 'yes')['action'], 'escalate')
+
+    def test_late_outside_verdict(self):
+        self.assertEqual(g.late_verdict('no-blocker', 'blockers', released=False), 'reopen')
+        self.assertEqual(g.late_verdict('no-blocker', 'blockers', released=True), 'needs-human')
+        self.assertEqual(g.late_verdict('no-blocker', 'no-blocker', released=False), 'ignore')
+        self.assertEqual(g.late_verdict('blockers', 'no-blocker', released=False), 'ignore')
+        self.assertEqual(g.late_verdict('unreviewed', 'no-blocker', released=False), 'close')
+        self.assertEqual(g.late_verdict('no-blocker', 'stale', released=True), 'ignore')
 
     def test_identical_packet_is_deduped(self):
         fp = packet()['fingerprint']
