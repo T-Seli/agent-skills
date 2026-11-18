@@ -560,6 +560,13 @@ class TestShapesLayoutLock(Base):
         self.assertEqual({s for s, _ in got}, {'wiki'})
         self.assertIn(('wiki', 'index.md'), got)
 
+    def test_changes_keeps_non_ascii_and_spaced_names(self):
+        write(self.brain / 'pages' / 'caf\u00e9.md', '# C\n' + HEAD)
+        write(self.brain / 'pages' / 'sp ace.md', '# S\n' + HEAD)
+        commit_at(self.brain, 'names', '2026-11-08T00:00:00+00:00')
+        paths = {c['path'] for c in self.open().changes('2026-11-07') if c['summary'] == 'names'}
+        self.assertEqual(paths, {'pages/caf\u00e9.md', 'pages/sp ace.md'})
+
     def hold(self):
         handle = open(self.brain / '.git' / 'knowledge.lock', 'a+')
         fcntl.flock(handle, fcntl.LOCK_EX)

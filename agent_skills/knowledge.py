@@ -496,7 +496,10 @@ class Knowledge:
         return out
 
     def changes(self, since):
-        """Commits after `since` touching a table, page, tenants/ or log/, one entry per commit and file, newest first."""
+        """Every changed .md file outside inbox/ in each commit after `since`: one entry per commit and file, newest first.
+
+        `since` is an ISO date or datetime; one without a zone is read as UTC. The comparison is strict: a commit
+        exactly at `since` is excluded."""
         try:
             floor = datetime.datetime.fromisoformat(since)
         except (TypeError, ValueError):
@@ -506,7 +509,7 @@ class Knowledge:
         for name, store in self._stores():
             if not _git(store, 'rev-parse', '--show-toplevel', check=name == 'brain'):
                 continue
-            raw = _git(store, 'log', '--relative', '--name-only', '--format=%x1e%H%x1f%cI%x1f%s', '--', '.')
+            raw = _git(store, '-c', 'core.quotePath=false', 'log', '--relative', '--name-only', '--format=%x1e%H%x1f%cI%x1f%s', '--', '.')
             for block in filter(None, raw.split('\x1e')):  # _git strips, and \x1e counts as whitespace
                 head, *files = block.split('\n')
                 sha, when, subject = head.split('\x1f', 2)
