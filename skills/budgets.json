@@ -224,8 +224,12 @@
    "long": 6
   },
   "skills/workflow-contracts/contracts.md": {
-   "bytes": 17901,
+   "bytes": 18381,
    "long": 8
+  },
+  "skills/workflow-contracts/conveyor.md": {
+   "bytes": 8120,
+   "long": 0
   },
   "skills/workflow-contracts/data-access.md": {
    "bytes": 1935,
@@ -240,7 +244,7 @@
    "long": 5
   },
   "skills/workflow-contracts/project-CLAUDE-template.md": {
-   "bytes": 5909,
+   "bytes": 6313,
    "long": 0
   },
   "skills/workflow-contracts/references/ci-evidence.md": {

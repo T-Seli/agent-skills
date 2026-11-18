@@ -1,0 +1,249 @@
+{
+  "note": "Standing permissions for the belt (skills/workflow-contracts/conveyor.md § Permissions). tool: bash (command prefix), mcp (tool name, * wildcard), edit (path glob). guard is the basename of the hooks/<guard>.sh file that narrows an allow (T3); rendering fails loudly if it is missing. install.sh renders this for Claude and Codex (T5); the user installs it. An entry with `held` is not rendered until the hold is lifted by a reviewed change.",
+  "version": 2,
+  "invocation": {
+    "issues-cli": "~/.agents/skills/workflow-contracts/scripts/issues-cli",
+    "safeguard-cli": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli"
+  },
+  "entries": [
+    {
+      "id": "issues-capture",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli capture",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "capture first, think later"
+    },
+    {
+      "id": "issues-prio",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli prio",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "bump or drop at the user's word"
+    },
+    {
+      "id": "issues-publish",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli publish",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "sets lane next and the Owner line; routine after plan approval"
+    },
+    {
+      "id": "issues-claim",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli claim",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "refuses another owner's issue on its own"
+    },
+    {
+      "id": "issues-lane",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli lane",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "checks receipts and refuses on its own"
+    },
+    {
+      "id": "issues-decide",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli decide",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "records the user's own answer with its question link"
+    },
+    {
+      "id": "issues-ask",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli ask",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "prints a decision card; asking stays the session's job"
+    },
+    {
+      "id": "issues-brief",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli brief",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "renders the fixed worker brief"
+    },
+    {
+      "id": "issues-sweep",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli sweep",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "board, pull, spool flush, review fallback, knowledge log"
+    },
+    {
+      "id": "issues-close",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli close",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "refuses without the closed-lane receipts"
+    },
+    {
+      "id": "issues-feed",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli feed",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "keys, dedupes and captures feed rows; never closes"
+    },
+    {
+      "id": "issues-park",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli park",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "writes the hand-over and frees the slot"
+    },
+    {
+      "id": "issues-resume",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli resume",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "read-only board since the last checkpoint; writes only the Checkpoint: line"
+    },
+    {
+      "id": "disk-check",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli disk-check",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "read-only machine check"
+    },
+    {
+      "id": "test-slot",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli test-slot",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "the machine-wide test limit every suite runs under"
+    },
+    {
+      "id": "gh-draft-pr",
+      "tool": "bash",
+      "match": "gh pr create --draft",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "draft PRs are standing"
+    },
+    {
+      "id": "gh-pr-comment",
+      "tool": "bash",
+      "match": "gh pr comment",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "status on the task's own PR"
+    },
+    {
+      "id": "gh-issue-comment",
+      "tool": "bash",
+      "match": "gh issue comment",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "status on the task's own issue"
+    },
+    {
+      "id": "gh-label-create",
+      "tool": "bash",
+      "match": "gh label create",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "missing belt labels, additive only"
+    },
+    {
+      "id": "monitor-arm",
+      "tool": "mcp",
+      "match": "mcp__scheduled-tasks__create_scheduled_task",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "deploy arms first-traffic and 24 h monitors; other ids ask",
+      "guard": "monitor-id-guard",
+      "held": "until the T3 guards and T2 run-approved pass their C3 rerun; install.sh renders no held entry"
+    },
+    {
+      "id": "monitor-delete",
+      "tool": "mcp",
+      "match": "mcp__scheduled-tasks__delete_scheduled_task",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "a belt monitor that recorded its verdict; other ids ask",
+      "guard": "monitor-id-guard",
+      "held": "until the T3 guards and T2 run-approved pass their C3 rerun; install.sh renders no held entry"
+    },
+    {
+      "id": "archive-done",
+      "tool": "mcp",
+      "match": "mcp__ccd_session_mgmt__archive_session",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "registry sessions with every claimed issue closed or parked; outside the registry asks",
+      "guard": "archive-guard",
+      "held": "until the T3 guards and T2 run-approved pass their C3 rerun; install.sh renders no held entry"
+    },
+    {
+      "id": "prepare-action",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli prepare-action",
+      "kind": "bookkeeping",
+      "mode": "allow",
+      "why": "writes the action record (parameters only); the go stays run-approved"
+    },
+    {
+      "id": "run-approved",
+      "tool": "bash",
+      "match": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli run-approved",
+      "kind": "go",
+      "mode": "ask",
+      "why": "the user's one click; refuses per conveyor.json action_record.refusals"
+    },
+    {
+      "id": "no-merge-outside-release",
+      "tool": "bash",
+      "match": "gh pr merge",
+      "kind": "deny",
+      "mode": "deny",
+      "why": "merges go through run-approved",
+      "held": "until the T3 guards and T2 run-approved pass their C3 rerun; install.sh renders no held entry"
+    },
+    {
+      "id": "no-email-send",
+      "tool": "mcp",
+      "match": "mcp__*__send_email",
+      "kind": "deny",
+      "mode": "deny",
+      "why": "no session sends email; drafts only"
+    },
+    {
+      "id": "no-email-draft-send",
+      "tool": "mcp",
+      "match": "mcp__*__send_draft",
+      "kind": "deny",
+      "mode": "deny",
+      "why": "no session sends email; drafts only"
+    },
+    {
+      "id": "no-settings-edit",
+      "tool": "edit",
+      "match": "~/.claude/settings*.json",
+      "kind": "deny",
+      "mode": "deny",
+      "why": "the user installs settings; no session edits them"
+    },
+    {
+      "id": "no-codex-config-edit",
+      "tool": "edit",
+      "match": "~/.codex/config.toml",
+      "kind": "deny",
+      "mode": "deny",
+      "why": "the user installs settings; no session edits them"
+    }
+  ]
+}

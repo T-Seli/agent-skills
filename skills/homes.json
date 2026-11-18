@@ -81,6 +81,16 @@
    "id": "approval-pairs",
    "pattern": "never files|data:` URIs",
    "home": "skills/ui-design/references/approval-pairs.md"
+  },
+  {
+   "id": "lane-limits",
+   "pattern": "Lane limits:",
+   "home": "skills/workflow-contracts/contracts.md"
+  },
+  {
+   "id": "belt-timeline",
+   "pattern": "Conveyor: <UTC time>",
+   "home": "skills/workflow-contracts/conveyor.md"
   }
  ]
 }

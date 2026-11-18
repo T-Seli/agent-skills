@@ -84,6 +84,9 @@ Outside the plan = a file, dependency, schema, config, external call or behaviou
 - Monitor window: 72 hours (recheck deadline; cold-start lookback) — § Observe `Recheck window` overrides
 - Rechecks per day: ≤3
 - Parallel sub-agents: ≤4 (never >5 incl. scout)
+- Lane limits: Build 8 (one kept free for `prio:now`, at most 2 size M) · Review 4 · Investigate 2 · Release 1 train of ≤6 PRs, frozen when its GO is asked · Sessions 10, nested workers, scouts and reviewers included ([conveyor.md](conveyor.md))
+- Review fallback: 2 hours (no outside verdict on the exact head → a fresh-context reviewer runs test-review)
+- Time boxes: Build S 4 h, M 1 day · a card 4 h, then parked · trains one a day plus one on demand for `prio:now`
 - Review fan-out above: 200 changed lines
 - Handoffs kept: 5
 - Question round size: 1–4 ready questions per native call (never above the host's cap), asked at once when ready, recommended option first, blocking and time-critical first (the user's answer, 2026-11-16)
