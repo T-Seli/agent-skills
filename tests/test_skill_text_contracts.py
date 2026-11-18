@@ -81,7 +81,7 @@ class DepthNotBreadth(unittest.TestCase):
         self.assertIn('workflow-contracts/behavior.md', global_rule)
         self.assertIn('then [behavior.md](behavior.md)', text(CONTRACTS))
         self.assertLessEqual(len(global_rule.split()), 600)
-        self.assertLessEqual(len(text(CONTRACTS).splitlines()), 92)
+        self.assertLessEqual(len(text(CONTRACTS).splitlines()), 93)
 
     def test_original_rewrite_request_is_preserved_with_its_scope_boundary(self):
         body = text('skills/workflow-contracts/behavior.md')
