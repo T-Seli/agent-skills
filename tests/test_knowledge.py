@@ -1,12 +1,15 @@
 """agent_skills.knowledge: brain and wiki stores, routing, inbox, collect, log, stale, lint."""
+import fcntl
 import json
 import os
 import pathlib
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
+from agent_skills import knowledge, layout
 from agent_skills.knowledge import Knowledge, KnowledgeError
 
 SHA = 'abc1234'
@@ -493,6 +496,93 @@ class TestReviewTwo(Base):
                     k.pages('ext')
                 self.assertTrue(any('outside' in f for f in k.lint()))
                 self.assertEqual(len(k.pages('deploy')), 1)
+
+
+def commit_at(path, msg, when):
+    env = {**os.environ, 'GIT_COMMITTER_DATE': when, 'GIT_AUTHOR_DATE': when}
+    subprocess.run(['git', '-C', str(path), 'add', '-A'], check=True, capture_output=True)
+    subprocess.run(['git', '-C', str(path), 'commit', '-q', '-m', msg], check=True, capture_output=True, env=env)
+
+
+class TestShapesLayoutLock(Base):
+    def test_no_file_relative_paths_and_contract_through_layout(self):
+        self.assertNotIn('__file__', pathlib.Path(knowledge.__file__).read_text())
+        with mock.patch.object(knowledge.layout, 'contract', wraps=layout.contract) as contract:
+            self.open().log(7, [TIMELINE])
+        contract.assert_called_with('conveyor.json')
+
+    def test_return_shapes(self):
+        k = self.open()
+        self.assertEqual(set(k.record('decision', 'shape-one', '2026-11-10', 'chat', 'Shape check.')), {'path'})
+        self.inbox('lesson', 'shape-lesson', stamp='20261110T100001Z', text='Shape broke => Check shape.')
+        for hit in k.find(['shape', 'consent', 'checkouts']):
+            self.assertEqual(set(hit), {'store', 'file', 'id', 'text', 'source', 'score', 'pending'})
+        self.assertTrue(any(h['pending'] for h in k.find(['shape'])))
+        self.assertTrue(all(set(p) == {'store', 'path', 'verified', 'sha', 'pending'} for p in k.pages('policy')))
+        self.assertEqual(set(k.collect()), {'folded', 'branch'})
+
+    def test_stale_shape(self):
+        repo = self.root / 'repo'
+        write(repo / 'src' / 'a.py', 'one\n')
+        sha = commit_all(repo, 'code')
+        write(self.wiki / 'pages' / 'release.md', f'# R\nverified: 2026-11-02 @ {sha}\ncode: src/a.py\n')
+        commit_all(repo, 'pages')
+        write(repo / 'src' / 'a.py', 'two\n')
+        commit_all(repo, 'change')
+        self.assertEqual(set(self.open().stale()[0]), {'store', 'path', 'verified', 'changed'})
+
+    def test_changes(self):
+        write(self.brain / 'lessons.md', LESSONS + '\n')
+        commit_at(self.brain, 'first fold', '2026-11-05T10:00:00+00:00')
+        write(self.brain / 'inbox' / '20261106T000000Z-lesson-x-y.md', inbox_text('lesson', 'x-y'))
+        write(self.brain / 'tenants' / 'note.md', '# N\n' + HEAD)
+        write(self.brain / 'log' / '2026-11.md', '# Log 2026-11\n')
+        commit_at(self.brain, 'second change', '2026-11-06T12:30:00-05:00')
+        k = self.open()
+        got = [(c['store'], c['summary'], c['path'], c['at']) for c in k.changes('2026-11-01') if c['summary'] != 'seed']
+        self.assertEqual(got, [('brain', 'second change', 'log/2026-11.md', '2026-11-06T17:30:00Z'),
+                               ('brain', 'second change', 'tenants/note.md', '2026-11-06T17:30:00Z'),
+                               ('brain', 'first fold', 'lessons.md', '2026-11-05T10:00:00Z')])
+        self.assertEqual(len(k.changes('2026-11-01')[0]['sha']), 40)
+        self.assertEqual([c['summary'] for c in k.changes('2026-11-06T00:00:00Z') if c['summary'] != 'seed'],
+                         ['second change', 'second change'])
+        self.assertEqual([c for c in k.changes('2026-11-07') if c['summary'] != 'seed'], [])
+        for bad in ('yesterday', '', None):
+            with self.subTest(bad=bad), self.assertRaises(KnowledgeError):
+                k.changes(bad)
+
+    def test_changes_includes_wiki_and_unmapped_is_wiki_only(self):
+        write(self.wiki / 'pages' / 'release.md', '# Release\n' + HEAD + 'Edited.\n')
+        commit_at(self.root / 'repo', 'wiki edit', '2026-11-07T00:00:00+00:00')
+        k = self.open(brain='x/y')
+        self.assertEqual(k.notice, 'brain: not configured on this machine')
+        got = {(c['store'], c['path']) for c in k.changes('2000-01-01')}
+        self.assertEqual({s for s, _ in got}, {'wiki'})
+        self.assertIn(('wiki', 'index.md'), got)
+
+    def hold(self):
+        handle = open(self.brain / '.git' / 'knowledge.lock', 'a+')
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        self.addCleanup(handle.close)
+        return handle
+
+    def test_held_lock_makes_writers_raise_and_readers_work(self):
+        self.inbox('decision', 'log-it')
+        self.hold()
+        k = self.open()
+        with mock.patch.object(knowledge, 'LOCK_WAIT', 0.3):
+            with self.assertRaisesRegex(KnowledgeError, 'knowledge.lock'):
+                k.collect()
+            with self.assertRaisesRegex(KnowledgeError, 'knowledge.lock'):
+                k.log(7, [TIMELINE])
+        self.assertEqual(k.lint(), [])
+        k.pages('policy'), k.find(['consent']), k.stale(), k.changes('2000-01-01')
+
+    def test_writer_waits_for_the_lock(self):
+        self.inbox('decision', 'log-it')
+        handle = self.hold()
+        threading.Timer(0.5, lambda: fcntl.flock(handle, fcntl.LOCK_UN)).start()
+        self.assertEqual(self.open().collect()['folded'], ['log-it'])
 
 
 class TestLog(Base):

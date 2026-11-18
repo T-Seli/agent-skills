@@ -1,6 +1,8 @@
 """Knowledge stores: a brain (decisions, lessons, answers, inbox, log) and a repo wiki, both plain markdown."""
 import collections
+import contextlib
 import datetime
+import fcntl
 import json
 import math
 import os
@@ -9,8 +11,12 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
+from . import layout
+
+LOCK_WAIT = 30
 NOT_CONFIGURED = 'brain: not configured on this machine'
 TABLES = {'decision': 'decisions.md', 'lesson': 'lessons.md', 'answered': 'answered.md'}
 KEYS = ('kind', 'id', 'date', 'source', 'scope', 'text')
@@ -127,8 +133,7 @@ def _date_ok(value, month=False):
 
 
 def _timeline_patterns():
-    path = Path(__file__).resolve().parent.parent / 'skills' / 'workflow-contracts' / 'conveyor.json'
-    data = json.loads(path.read_text(encoding='utf-8'))['timeline']
+    data = json.loads(layout.contract('conveyor.json').read_text(encoding='utf-8'))['timeline']
     return re.compile(data['pattern']), re.compile(data['correction'])
 
 
@@ -310,8 +315,29 @@ class Knowledge:
                     ids.add(m.group(2))
         return ids
 
+    @staticmethod
+    @contextlib.contextmanager
+    def _lock(store):
+        """One exclusive writer per store: flock on knowledge.lock inside .git, bounded wait."""
+        path = Path(_git(store, 'rev-parse', '--absolute-git-dir')) / 'knowledge.lock'
+        with open(path, 'a+') as handle:
+            deadline = time.monotonic() + LOCK_WAIT
+            while True:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() > deadline:
+                        raise KnowledgeError(f'another writer holds {path}; gave up after {LOCK_WAIT} s')
+                    time.sleep(0.05)
+            yield
+
     def collect(self):
         brain = self._need_brain()
+        with self._lock(brain):
+            return self._collect(brain)
+
+    def _collect(self, brain):
         open_branches = self._folded_on_open_branches(brain)
         entries = [(p, e) for p, e in self._unfolded(brain, strict=True) if p.name not in open_branches]
         if not entries:
@@ -419,28 +445,29 @@ class Knowledge:
                 raise KnowledgeError(f'not a timeline line: {line!r}')
             if month is None and pattern.match(line):
                 month = pattern.match(line).group('time')[:7]
-        heading = f'## #{int(str(issue))}'
-        target = next((p for p in _md_files(brain / 'log') if re.search(rf'(?m)^{heading}$', p.read_text(encoding='utf-8'))), None)
-        if target is None:
-            if month is None:
-                raise KnowledgeError('log needs a timeline line to choose the month')
-            target = brain / 'log' / f'{month}.md'
-        text = target.read_text(encoding='utf-8') if target.exists() else f'# Log {target.stem}\n'
-        head, *sections = re.split(r'(?m)^(?=## #)', text)
-        for i, section in enumerate(sections):
-            if section.split('\n', 1)[0] == heading:
-                kept = [l for l in section.split('\n')[1:] if l]
-                sections[i] = '\n'.join([heading, *kept, *dict.fromkeys(l for l in lines if l not in kept)]) + '\n'
-                break
-        else:
-            sections.append(f'{heading}\n' + '\n'.join(dict.fromkeys(lines)) + '\n')
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(head.rstrip('\n') + '\n' + ''.join('\n' + s.rstrip('\n') + '\n' for s in sections), encoding='utf-8')
-        rel = target.relative_to(brain).as_posix()
-        if _git(brain, 'status', '--porcelain', '--', rel):
-            _git(brain, 'add', '--', rel)
-            _git(brain, 'commit', '-q', '-m', f'knowledge: log {heading[3:]}', '--', rel)
-        return {'path': rel}
+        with self._lock(brain):
+            heading = f'## #{int(str(issue))}'
+            target = next((p for p in _md_files(brain / 'log') if re.search(rf'(?m)^{heading}$', p.read_text(encoding='utf-8'))), None)
+            if target is None:
+                if month is None:
+                    raise KnowledgeError('log needs a timeline line to choose the month')
+                target = brain / 'log' / f'{month}.md'
+            text = target.read_text(encoding='utf-8') if target.exists() else f'# Log {target.stem}\n'
+            head, *sections = re.split(r'(?m)^(?=## #)', text)
+            for i, section in enumerate(sections):
+                if section.split('\n', 1)[0] == heading:
+                    kept = [l for l in section.split('\n')[1:] if l]
+                    sections[i] = '\n'.join([heading, *kept, *dict.fromkeys(l for l in lines if l not in kept)]) + '\n'
+                    break
+            else:
+                sections.append(f'{heading}\n' + '\n'.join(dict.fromkeys(lines)) + '\n')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(head.rstrip('\n') + '\n' + ''.join('\n' + s.rstrip('\n') + '\n' for s in sections), encoding='utf-8')
+            rel = target.relative_to(brain).as_posix()
+            if _git(brain, 'status', '--porcelain', '--', rel):
+                _git(brain, 'add', '--', rel)
+                _git(brain, 'commit', '-q', '-m', f'knowledge: log {heading[3:]}', '--', rel)
+            return {'path': rel}
 
     # stale
 
@@ -467,6 +494,27 @@ class Knowledge:
                 if changed:
                     out.append({'store': name, 'path': rel, 'verified': verified.group(1), 'changed': changed})
         return out
+
+    def changes(self, since):
+        """Commits after `since` touching a table, page, tenants/ or log/, one entry per commit and file, newest first."""
+        try:
+            floor = datetime.datetime.fromisoformat(since)
+        except (TypeError, ValueError):
+            raise KnowledgeError(f'since must be an ISO date or datetime: {since!r}')
+        floor = floor if floor.tzinfo else floor.replace(tzinfo=datetime.timezone.utc)
+        out = []
+        for name, store in self._stores():
+            if not _git(store, 'rev-parse', '--show-toplevel', check=name == 'brain'):
+                continue
+            raw = _git(store, 'log', '--relative', '--name-only', '--format=%x1e%H%x1f%cI%x1f%s', '--', '.')
+            for block in filter(None, raw.split('\x1e')):  # _git strips, and \x1e counts as whitespace
+                head, *files = block.split('\n')
+                sha, when, subject = head.split('\x1f', 2)
+                at = datetime.datetime.fromisoformat(when).astimezone(datetime.timezone.utc)
+                if at > floor:
+                    out += [{'store': name, 'sha': sha, 'path': f, 'summary': subject, 'at': at.strftime('%Y-%m-%dT%H:%M:%SZ')}
+                            for f in files if f.endswith('.md') and f.split('/')[0] != 'inbox']
+        return sorted(out, key=lambda c: c['at'], reverse=True)
 
     # lint
 
