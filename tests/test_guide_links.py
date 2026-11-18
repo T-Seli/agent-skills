@@ -22,21 +22,20 @@ class GuideLinks(unittest.TestCase):
     def test_links_resolve_from_checkout(self):
         self.assertEqual(self.broken(ROOT), [])
 
-    def test_links_resolve_from_installed_layout(self):
-        home = Path(tempfile.mkdtemp()) / ".claude"
-        (home / "skills").mkdir(parents=True)
-        for d in (ROOT / "skills").iterdir():
-            if d.is_dir():
-                os.symlink(d, home / "skills" / d.name)
-        os.symlink(ROOT / "ENGINEERING-COORDINATOR.md", home / "ENGINEERING-COORDINATOR.md")
-        # lexical resolution, as an agent reading ~/.claude/skills/... would do
-        out = []
-        for f in FILES[1:]:
-            where = home / f
-            for m in LINK.finditer((ROOT / f).read_text()):
-                if not os.path.exists(os.path.normpath(os.path.join(where.parent, m.group(1)))):
-                    out.append(f"{f}: {m.group(1)}")
-        self.assertEqual(out, [])
+    def test_links_resolve_from_installed_layouts(self):
+        for name in (".claude", ".agents"):
+            home = Path(tempfile.mkdtemp()) / name
+            (home / "skills").mkdir(parents=True)
+            for d in (ROOT / "skills").iterdir():
+                if d.is_dir():
+                    os.symlink(d, home / "skills" / d.name)
+            os.symlink(ROOT / "ENGINEERING-COORDINATOR.md", home / "ENGINEERING-COORDINATOR.md")
+            out = []
+            for f in FILES:  # lexical resolution, as an agent reading the installed path would do
+                for m in LINK.finditer((ROOT / f).read_text()):
+                    if not os.path.exists(os.path.normpath(os.path.join((home / f).parent, m.group(1)))):
+                        out.append(f"{name} {f}: {m.group(1)}")
+            self.assertEqual(out, [])
 
 
 if __name__ == "__main__":
