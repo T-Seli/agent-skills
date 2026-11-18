@@ -12,7 +12,7 @@ The one home for the belt. Lanes, receipts, records, cards, feeds, flow and know
 A fixed rule, count, state change or check is a script; judgment is a skill; a direction or a go is a question to the user.
 
 ## Scope and registry
-The belt acts only on its registry: the sessions named in `Owner:` and `Claimed:` receipts on open belt issues, as `local_<uuid>` for a desktop session or a plain uuid for a headless worker, which ends by itself and is never archived (conveyor.json `registry`). A guard allows a registry session whose claimed issues are all closed or parked, denies one with unfinished work, and asks the user about anything outside the registry. Machine limits (test slots, disk) read real load.
+The belt acts only on its registry: the sessions named in `Owner:` and `Claimed:` receipts on belt issues, open or closed, as `local_<uuid>` for a desktop session or a plain uuid for a headless worker, which ends by itself and is never archived (conveyor.json `registry`). A guard allows a session none of whose belt issues is open and unparked, denies one with such an issue, and asks about a session no belt issue names; it searches by id, never lists every issue. Machine limits (test slots, disk) read real load.
 
 ## Labels
 One `lane:<name>`, one `domain:<name>`, one `kind:<name>` and, once sorted, one `size:S|M|L` per open belt issue. Priority `prio:now|next|later` is separate from lane `next`. `hold` stops forward moves; `needs-human` waits for the user; `parked` and `stalled` free the slot. A gate needing a missing belt label creates it: additive only, one receipt.
