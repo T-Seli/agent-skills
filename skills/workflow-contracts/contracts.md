@@ -69,10 +69,8 @@ Every skill reads this file first, then [behavior.md](behavior.md) for Depth, no
 ## Commits
 - Record commit = a commit that touches only `<tasks>/`. Subject per § Map's commit convention with type `docs`. `<tasks>` is `none`: no record commits.
 - Only `/deploy`'s record commit on `<base>` adds § Deploy `Skip-deploy marker` (if set), so the log commit does not redeploy. Never put the marker on a commit that ships code.
-
 ## Plan scope
 Outside the plan = a file, dependency, schema, config, external call or behaviour that the approved plan and action items do not name. For behavior changes, decisions and completion, use [behavior.md](behavior.md): one current approved matrix/source identity, explicit customer-flow steps, exclusions, reply holds and separate completion conditions.
-
 ## Scheduler
 - Claude: load via ToolSearch `select:mcp__scheduled-tasks__create_scheduled_task,mcp__scheduled-tasks__list_scheduled_tasks,mcp__scheduled-tasks__update_scheduled_task`; tasks run only while the app is open, so say so. Codex: its automation tool. Id `monitor-<repo>-<slug>` in both; cron in this machine's zone; the description carries `Deadline: <UTC ISO>` (`YYYY-MM-DDTHH:MMZ`).
 - Record `Scheduler: <runtime> <id>` in the log. An ended schedule is disabled, never deleted: list the schedules and report `disabled` only if the id lists as disabled. A daily janitor run (/monitor § 7) disables every enabled schedule past its `Deadline:`.
@@ -84,6 +82,8 @@ Outside the plan = a file, dependency, schema, config, external call or behaviou
 - Monitor window: 72 hours (recheck deadline; cold-start lookback) — § Observe `Recheck window` overrides
 - Rechecks per day: ≤3
 - Parallel sub-agents: ≤4 (never >5 incl. scout)
+- Lane limits: Build 8 (one kept free for `prio:now`) · Review 4 · Release 1 train of ≤6 PRs, frozen when its GO is asked · Sessions 10, nested workers, scouts and reviewers included ([conveyor.md](conveyor.md))
+- Review fallback: 2 hours (no outside verdict on the exact head → a fresh-context reviewer runs test-review)
 - Review fan-out above: 200 changed lines
 - Handoffs kept: 5
 - Question round size: 1–4 ready questions per native call (never above the host's cap), asked at once when ready, recommended option first, blocking and time-critical first (the user's answer, 2026-11-16)

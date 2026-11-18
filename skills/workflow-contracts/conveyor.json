@@ -1,0 +1,44 @@
+{
+  "note": "Machine-readable lanes and receipts for conveyor.md. Gates read receipts by these patterns; limits live in contracts.md § Defaults `Lane limits`, never here.",
+  "version": 1,
+  "labels": {
+    "lane": "lane:<name>",
+    "domain": "domain:<name>",
+    "size": ["size:S", "size:M", "size:L"],
+    "priority": ["prio:now", "prio:next", "prio:later"],
+    "modifiers": ["hold", "needs-human"],
+    "folds": {"ready-for-agent": "lane:backlog"}
+  },
+  "lanes": [
+    {"name": "inbox", "requires": ["capture"], "called_at": "issues-cli capture"},
+    {"name": "backlog", "requires": ["domain", "size"], "called_at": "sort pass"},
+    {"name": "next", "requires": ["owner", "domain", "done_when"], "limit": "next", "called_at": "issues-cli publish or sweep pull"},
+    {"name": "in-progress", "requires": ["claim", "brief"], "limit": "Build", "called_at": "implement Start record"},
+    {"name": "in-review", "requires": ["implement_done", "pr"], "limit": "Review", "called_at": "implement done record"},
+    {"name": "ready-to-release", "requires": ["reviewed_yes"], "called_at": "test-review YES"},
+    {"name": "monitoring", "requires": ["approved", "deploy", "rollback", "schedule", "schedule"], "called_at": "safeguard-cli run-approved"},
+    {"name": "closed", "requires": ["monitor_final", "learned"], "called_at": "monitor end"}
+  ],
+  "receipts": {
+    "capture": {"source": "issue_body", "pattern": "^Captured: \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z · source \\S+$"},
+    "domain": {"source": "labels", "pattern": "^domain:[a-z0-9-]+$", "count": 1},
+    "size": {"source": "labels", "pattern": "^size:[SML]$", "count": 1},
+    "owner": {"source": "assignees", "count": 1},
+    "done_when": {"source": "issue_body", "pattern": "^Done when: .+$"},
+    "claim": {"source": "issue_comment", "pattern": "^Claimed: branch `[^`]+` · session \\S+$"},
+    "brief": {"source": "timeline", "command": "brief"},
+    "implement_done": {"source": "log", "pattern": "^## \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z — implement: done"},
+    "pr": {"source": "linked_pr", "count": 1},
+    "reviewed_yes": {"source": "log", "pattern": "^Reviewed: (?P<head>[0-9a-f]{7,40}) YES$", "binds": "pr_head"},
+    "approved": {"source": "log", "pattern": "^Approved: .+ · .+ · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z · .+ · \".+\"$"},
+    "deploy": {"source": "log", "pattern": "deploy: (?P<sha>[0-9a-f]{7,40}) to .+"},
+    "rollback": {"source": "log", "pattern": "^Rollback: \\S+: \\S+"},
+    "schedule": {"source": "log", "pattern": "^Scheduler: \\S+ \\S+$"},
+    "monitor_final": {"source": "log", "pattern": "monitor: (All working|Working, with issues)"},
+    "learned": {"source": "closing_comment", "pattern": "^Learned: (none|lesson|answered|page fix)\\b.*$"}
+  },
+  "timeline": {
+    "pattern": "^Conveyor: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · (?P<command>capture|prio|lane|decide|brief|ask|run-approved|sweep) · (?P<from>[a-z-]+|-) → (?P<to>[a-z-]+|-) · head (?P<head>[0-9a-f]{7,40}|-) · tests (?P<tests>\\S+) · skills (?P<skills>[0-9a-f]{7,40}) · schedules (?P<schedules>\\S+)$",
+    "correction": "^Correction: (?P<ref>\\S+) · (?P<field>\\S+) was (?P<wrong>.+) · is (?P<right>.+)$"
+  }
+}

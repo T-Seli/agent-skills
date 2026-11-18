@@ -1,0 +1,17 @@
+{
+  "note": "Standing permissions for the belt (skills/workflow-contracts/conveyor.md § Permissions). install.sh renders this into the Claude settings snippet and Codex rules; the user installs it, no session edits settings. bookkeeping = allow, never asked; go = ask, the user's one click; deny = refused.",
+  "version": 1,
+  "entries": [
+    {"id": "issues-capture", "command": "~/.agents/skills/workflow-contracts/scripts/issues-cli capture", "kind": "bookkeeping", "mode": "allow", "why": "capture first, think later"},
+    {"id": "issues-prio", "command": "~/.agents/skills/workflow-contracts/scripts/issues-cli prio", "kind": "bookkeeping", "mode": "allow", "why": "bump or drop at the user's word"},
+    {"id": "issues-lane", "command": "~/.agents/skills/workflow-contracts/scripts/issues-cli lane", "kind": "bookkeeping", "mode": "allow", "why": "the gate checks receipts and refuses on its own"},
+    {"id": "issues-decide", "command": "~/.agents/skills/workflow-contracts/scripts/issues-cli decide", "kind": "bookkeeping", "mode": "allow", "why": "records the user's own answer"},
+    {"id": "issues-sweep", "command": "~/.agents/skills/workflow-contracts/scripts/issues-cli sweep", "kind": "bookkeeping", "mode": "allow", "why": "board, pull, spool flush, review fallback start"},
+    {"id": "issues-ask", "command": "~/.agents/skills/workflow-contracts/scripts/issues-cli ask", "kind": "bookkeeping", "mode": "allow", "why": "prints a decision card; asking is the session's job"},
+    {"id": "issues-brief", "command": "~/.agents/skills/workflow-contracts/scripts/issues-cli brief", "kind": "bookkeeping", "mode": "allow", "why": "renders the fixed worker brief"},
+    {"id": "issues-publish", "command": "~/.agents/skills/workflow-contracts/scripts/issues-cli publish", "kind": "bookkeeping", "mode": "allow", "why": "routine after plan approval (issues.md § Consent)"},
+    {"id": "issues-claim", "command": "~/.agents/skills/workflow-contracts/scripts/issues-cli claim", "kind": "bookkeeping", "mode": "allow", "why": "refuses another owner's issue on its own"},
+    {"id": "disk-check", "command": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli disk-check", "kind": "bookkeeping", "mode": "allow", "why": "read-only machine check"},
+    {"id": "run-approved", "command": "~/.agents/skills/workflow-contracts/scripts/safeguard-cli run-approved", "kind": "go", "mode": "ask", "why": "release: the user's one click; refuses moved head, expiry, reuse, digest mismatch, hold"}
+  ]
+}
