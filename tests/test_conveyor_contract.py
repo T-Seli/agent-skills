@@ -73,6 +73,7 @@ class Receipts(unittest.TestCase):
             'capture': 'Captured: 2026-11-18 20:00Z · source https://x.test/m/1',
             'done_when': 'Done when: the board shows it',
             'pushed': f'Pushed: {SHA} to main',
+            'rolled_back': f'Rolled back: {SHA} to main',
             'failed': 'Failed: release r12 · 2026-11-18 20:41Z · push refused',
             'no_release': 'No release: answered · the board already shows it',
             'parked': 'Parked: waiting on the user · until 2026-11-20 · 2026-11-18 20:00Z · next pick a vendor',
@@ -105,13 +106,16 @@ class Receipts(unittest.TestCase):
         self.assertTrue(matches('reviewer', f'Reviewer: session 1f72e626-fa54-4e3b-8577-2dc51614f5c2 · head {SHA} · fallback'))
         self.assertFalse(matches('claim', 'Claimed: branch `feat/x` · session local_1'))
         self.assertRegex(S1, SCHEMA['session_id']['pattern'])
-        self.assertEqual(SCHEMA['registry']['guards'], {'registry_done': 'allow', 'registry_unfinished': 'deny', 'outside_registry': 'ask'})
+        self.assertEqual({k: v.split()[0] for k, v in SCHEMA['registry']['guards'].items()}, {'registry_done': 'allow', 'registry_unfinished': 'deny', 'outside_registry': 'ask'})
+        self.assertIn('open or closed', SCHEMA['registry']['source'])
 
     def test_items_without_a_release_can_close_and_a_push_is_no_deploy(self):
         closed = SCHEMA['lanes'][-1]
         self.assertEqual(closed['requires_without_release'], ['no_release', 'learned'])
         self.assertEqual(R['landed']['any_of'], ['deploy', 'pushed'])
         self.assertIn('never deploy:', SCHEMA['action_record']['kinds']['release'])
+        self.assertIn('never Pushed:', SCHEMA['action_record']['kinds']['rollback'])
+        self.assertIn('Rolled back:', R['landed']['undone_by'])
         self.assertNotIn('sweep', SCHEMA['lanes'][2]['called_at'].split('(')[0])
         self.assertEqual(R['no_release']['refused_if'], ['pushed', 'deploy'])
         self.assertIn('names no target other than branches', R['landed']['pushed_only_if'])
@@ -141,7 +145,7 @@ class ActionsAndCards(unittest.TestCase):
         self.assertEqual(set(a['kinds']), {'release', 'rollback', 'skills-install'})
         for f in ('kind', 'id', 'train', 'tree', 'targets', 'rollback', 'prepared_by', 'prepared_at', 'expires_at', 'digest_input', 'digest', 'used_at'):
             self.assertIn(f, a['fields'])
-        self.assertEqual(set(a['refusals']), {'unknown-kind', 'moved-head', 'expired', 'reused', 'digest-mismatch', 'hold', 'train-over-limit', 'not-ready', 'dirty-tree', 'non-branch-target'})
+        self.assertEqual(set(a['refusals']), {'unknown-kind', 'moved-head', 'expired', 'reused', 'digest-mismatch', 'hold', 'train-over-limit', 'not-ready', 'dirty-tree', 'non-branch-target', 'no-issue'})
         self.assertIn('digest_input', a['fields']['rollback'])
         self.assertEqual(a['command_lines'], 'forbidden')
         self.assertIn('never applies', a['kinds']['skills-install'])
