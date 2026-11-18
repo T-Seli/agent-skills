@@ -16,7 +16,7 @@ GATES = {
     "audit": "weekly independent audit",
     "plan": "major plan, spec or decision",
 }
-DEFAULTS = {"on": True, "deadline_h": 4, "retries": 1}
+DEFAULTS = {"on": True, "deadline_h": 2}
 SHA = re.compile(r"[0-9a-f]{40}")
 PRIVATE = re.compile(
     r"gh[pousr]_\w{16,}|github_pat_\w+|xox[a-z]-[\w-]+|sk-\w{16,}|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[\w-]{5,}\."
@@ -101,17 +101,32 @@ def should_send(fingerprint, sent):
 
 
 def watch_step(record, now, state, worker=None):
-    """One watcher tick. A verdict closes it unless it disagrees with the worker and no human escalation
-    is recorded (record["escalated"]); stale/unreviewed replies keep waiting."""
+    """One watcher tick. A verdict (outside or local fallback, same parser) closes it unless it disagrees with
+    the worker and no human escalation is recorded (record["escalated"]); stale/unreviewed replies keep waiting.
+    At the deadline the outside reviewer is replaced once by a fresh-context local review (record["fallback_at"]);
+    if that also times out, tell the user."""
     if state in ("no-blocker", "blockers"):
         if worker is not None and reconcile(state, worker) == "needs-human" and not record.get("escalated"):
             return {"action": "escalate", "state": "needs-human"}
         return {"action": "close", "state": state}
-    if now <= record["sent_at"] + record["deadline_h"] * 3600:
+    since = record.get("fallback_at", record["sent_at"])
+    if now <= since + record["deadline_h"] * 3600:
         return {"action": "wait"}
-    if record["retries"] < DEFAULTS["retries"]:
-        return {"action": "retry"}
-    return {"action": "tell-thomas", "state": "unreviewed"}
+    if "fallback_at" not in record:
+        return {"action": "fallback"}
+    return {"action": "tell-user", "state": "unreviewed"}
+
+
+def late_verdict(closed, state, released):
+    """An outside verdict on the same head after the item closed. A late BLOCKERS reopens it, or needs a human
+    if already released; a late verdict on an unreviewed item closes it; anything else changes nothing."""
+    if state not in ("no-blocker", "blockers"):
+        return "ignore"
+    if closed == "unreviewed":
+        return "close"
+    if closed == "no-blocker" and state == "blockers":
+        return "needs-human" if released else "reopen"
+    return "ignore"
 
 
 def value_summary(rows):
