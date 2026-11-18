@@ -131,6 +131,9 @@ class ActionsAndCards(unittest.TestCase):
         k = SCHEMA['knowledge']
         self.assertEqual(set(k['functions']), {'pages', 'find', 'domains', 'record', 'collect', 'log', 'stale', 'lint'})
         self.assertEqual(k['module'], 'agent_skills.knowledge')
+        self.assertEqual(k['functions']['collect']['returns'], '{folded, branch, pr}')
+        for fn in ('pages', 'find', 'stale'):
+            self.assertIn('store', k['functions'][fn]['returns'])
         for s in ('none', 'lesson: x', 'page-fix: wiki/a.md: x'):
             self.assertTrue(matches('learned', f'Learned: {s}'), s)
         self.assertFalse(matches('learned', 'Learned: maybe'))
@@ -147,6 +150,8 @@ class Authorizations(unittest.TestCase):
             self.assertTrue({'id', 'tool', 'match', 'kind', 'mode', 'why'} <= set(e) <= {'id', 'tool', 'match', 'kind', 'mode', 'why', 'guard'}, e['id'])
             self.assertIn(e['tool'], {'bash', 'mcp', 'edit'}, e['id'])
             self.assertIn((e['kind'], e['mode']), {('bookkeeping', 'allow'), ('go', 'ask'), ('deny', 'deny')}, e['id'])
+            if 'guard' in e:
+                self.assertRegex(e['guard'], r'^[a-z-]+-guard$', e['id'])
 
     def test_gates_are_allowed_and_the_go_is_one_click(self):
         mode = {e['match']: e['mode'] for e in AUTH['entries']}

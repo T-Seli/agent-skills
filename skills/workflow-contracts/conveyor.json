@@ -208,12 +208,12 @@
     "functions": {
       "pages": {
         "args": "domain",
-        "returns": "[{path, verified, sha, pending}]",
+        "returns": "[{store, path, verified, sha, pending}]",
         "used_by": "brief"
       },
       "find": {
         "args": "words",
-        "returns": "[{file, id, text, source, score, pending}] from answered, decisions and inbox/",
+        "returns": "[{store, file, id, text, score, pending}] from answered, decisions and inbox/",
         "used_by": "sort"
       },
       "domains": {
@@ -223,12 +223,12 @@
       },
       "record": {
         "args": "kind=decision|lesson|answered, id, date, source, text, scope=global|tenant:<id>|repo:<name>",
-        "returns": "{path} of one new inbox/ file; refuses a duplicate id",
+        "returns": "{store, path} of one new inbox/ file; refuses a duplicate id",
         "used_by": "decide, Learned collector"
       },
       "collect": {
         "args": "",
-        "returns": "{folded, pr}",
+        "returns": "{folded, branch, pr}",
         "used_by": "daily run or on demand"
       },
       "log": {
@@ -238,7 +238,7 @@
       },
       "stale": {
         "args": "",
-        "returns": "[{path, verified, changed}]",
+        "returns": "[{store, path, verified, changed}]",
         "used_by": "sweep"
       },
       "lint": {
@@ -251,7 +251,8 @@
     "unmapped_brain": {
       "reads": "wiki only, output says `brain: not configured on this machine`",
       "writes": "record and log refuse loudly"
-    }
+    },
+    "git": "the module owns every git write in a store (record, collect, log); callers make plain calls and never run git there"
   },
   "never_a_go": [
     "decision",
