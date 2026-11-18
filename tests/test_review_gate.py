@@ -48,6 +48,13 @@ class PacketTests(unittest.TestCase):
                 with self.subTest(value=value[:20], field=field), self.assertRaises(ValueError):
                     packet(**{field: kw})
 
+    def test_every_chat_id_class_and_session_ids_are_refused(self):
+        ids = [p + 'ABC12345XYZ' for p in 'UDCTWGBSEAF'] + ['local_8ac0090e', 'local_8bb5666b-b57a']
+        for value in ids:
+            for kw in (dict(tests=value), dict(ledger=[(value, 'open')]), dict(done_when=[value])):
+                with self.subTest(value=value, field=list(kw)[0]), self.assertRaises(ValueError):
+                    packet(**kw)
+
     def test_diffstat_and_ledger_id_are_typed(self):
         for kw in (dict(diffstat='lots of changes'), dict(ledger=[('bad id', 'open')]), dict(ledger=[('f-1', 'open')])):
             with self.subTest(kw=kw), self.assertRaises(ValueError):
@@ -111,7 +118,7 @@ class VerdictTests(unittest.TestCase):
 
 
 class DecisionTests(unittest.TestCase):
-    def test_disagreement_goes_to_thomas_never_auto_resolved(self):
+    def test_disagreement_goes_to_the_user_never_auto_resolved(self):
         self.assertEqual(g.reconcile('blockers', 'yes'), 'needs-human')
         self.assertEqual(g.reconcile('no-blocker', 'no'), 'needs-human')
 
