@@ -277,11 +277,12 @@ build() {
   CURRENT_TEMP=
 }
 
-# render_to <claude|codex>: print authorizations.json rendered as the Claude settings
-# snippet (on top of settings.snippet.json) or as Codex rules (codex/compatibility.md § Rules).
+# render_to <claude|codex-rules|codex-hooks>: print authorizations.json rendered as the
+# Claude settings snippet (on top of settings.snippet.json), as Codex prefix_rule lines
+# (bash entries only) or as the Codex PreToolUse hooks fragment (codex/compatibility.md § Rules).
 # An entry carrying `held` renders nothing, its guard hook included, until a reviewed change lifts it.
-# Each guard registers hooks/<guard>.sh as a PreToolUse hook; any hook the output names
-# that is missing from hooks/ fails the render.
+# Each guard registers hooks/<guard>.sh as a PreToolUse hook with a 30 s timeout; any hook
+# the output names that is missing from hooks/ fails the render.
 render_to() {
   python3 -I -B -c '
 import json, os, sys
@@ -291,7 +292,7 @@ def need(name, who):
     hook = os.path.join(root, "hooks", name)
     if not os.access(hook, os.X_OK):
         sys.exit("render: {}: hook {} is missing or not executable".format(who, hook))
-claude_rule = {"bash": "Bash({}:*)", "mcp": "{}", "edit": "Edit({})"}
+claude_rule = {"bash": "Bash({} *)", "mcp": "{}", "edit": "Edit({})"}
 codex_decision = {"allow": "allow", "ask": "prompt", "deny": "forbidden"}
 hook_dir = "~/.claude/hooks" if kind == "claude" else os.path.join(root, "hooks")
 rules, guards = [], []
@@ -302,7 +303,7 @@ for e in (e for e in auth["entries"] if "held" not in e):
     if "guard" in e:
         need(e["guard"] + ".sh", e["id"])
         matcher = {"bash": "Bash", "mcp": e["match"], "edit": "Edit"}[e["tool"]]
-        guards.append({"matcher": matcher, "hooks": [{"type": "command", "command": hook_dir + "/" + e["guard"] + ".sh", "timeout": 10}]})
+        guards.append({"matcher": matcher, "hooks": [{"type": "command", "command": hook_dir + "/" + e["guard"] + ".sh", "timeout": 30}]})
 if kind == "claude":
     out = json.load(open(os.path.join(root, "settings.snippet.json")))
     for e in rules:
@@ -317,24 +318,14 @@ if kind == "claude":
             if h["command"].startswith("~/.claude/hooks/"):
                 need(os.path.basename(h["command"]), "settings.snippet.json")
     print(json.dumps(out, indent=2))
-    sys.exit()
-q = json.dumps
-print("# Rendered by install.sh from authorizations.json. Inert: the user applies it (codex/compatibility.md, Rules).")
-print("version = {}".format(auth["version"]))
-for e in rules:
-    print("\n[[rules]]")
-    for key in ("id", "tool", "match"):
-        print("{} = {}".format(key, q(e[key])))
-    if e["tool"] == "bash":
-        print("pattern = [{}]".format(", ".join(q(t) for t in e["match"].split())))
-    print("decision = {}".format(q(codex_decision[e["mode"]])))
-    if "guard" in e:
-        print("guard = {}".format(q(e["guard"])))
-    print("why = {}".format(q(e["why"])))
-for g in guards:
-    h = g["hooks"][0]
-    print("\n[[hooks.PreToolUse]]\nmatcher = {}\n\n[[hooks.PreToolUse.hooks]]".format(q(g["matcher"])))
-    print("type = {}\ncommand = {}\ntimeout = {}".format(q(h["type"]), q(h["command"]), h["timeout"]))
+elif kind == "codex-hooks":
+    print(json.dumps({"description": "Rendered by install.sh from authorizations.json: belt guard hooks. Inert: merge into ~/.codex/hooks.json (codex/compatibility.md, Rules).",
+                      "hooks": {"PreToolUse": guards}}, indent=2))
+else:
+    print("# Rendered by install.sh from authorizations.json (version {}). Inert: the user applies it (codex/compatibility.md, Rules).".format(auth["version"]))
+    for e in (e for e in rules if e["tool"] == "bash"):
+        print("# {}: {}".format(e["id"], e["why"]))
+        print("prefix_rule(pattern={}, decision={})".format(json.dumps(e["match"].split()), json.dumps(codex_decision[e["mode"]])))
 ' "$1" "$R"
 }
 
@@ -387,7 +378,8 @@ link "$R/ENGINEERING-COORDINATOR.md" "$INSTALL_HOME/.agents/ENGINEERING-COORDINA
 for f in "$R"/codex/agents/*.toml; do copy_role "$f" "$INSTALL_HOME/.codex/agents/$(basename "$f")"; done
 build "$INSTALL_HOME/.codex/AGENTS.md" "$R/codex/AGENTS.md" "$R/global/CLAUDE.md" \
   "$R/output-styles/orchestrator.md" "$R/codex/compatibility.md"
-render codex "$INSTALL_HOME/.codex/agent-skills/rules.toml"
+render codex-rules "$INSTALL_HOME/.codex/agent-skills/conveyor.rules"
+render codex-hooks "$INSTALL_HOME/.codex/agent-skills/hooks.json"
 INSTALL_STAGE=codex-complete
 fi
 
@@ -403,7 +395,8 @@ done
 
 echo "Settings are not edited by this script. Merge by hand:"
 echo "  Claude: $INSTALL_HOME/.claude/agent-skills/settings.snippet.json into ~/.claude/settings.json"
-echo "  Codex:  $INSTALL_HOME/.codex/agent-skills/rules.toml per codex/compatibility.md § Rules, and"
-echo "          add $R/codex/hooks/session-start.py as a SessionStart hook in ~/.codex/hooks.json, then trust it with /hooks"
+echo "  Codex:  $INSTALL_HOME/.codex/agent-skills/conveyor.rules into ~/.codex/rules/ and"
+echo "          $INSTALL_HOME/.codex/agent-skills/hooks.json into ~/.codex/hooks.json per codex/compatibility.md § Rules, and"
+echo "          add $R/codex/hooks/session-start.py as a SessionStart hook in ~/.codex/hooks.json, then trust them with /hooks"
 INSTALL_STAGE=complete
 [ "$DRY" = 1 ] || commit_transaction
