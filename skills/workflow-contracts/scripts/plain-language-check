@@ -2,7 +2,7 @@
 """Advisory plain-language check: long sentences, likely passive voice, filler.
 
 Usage: plain-language-check [--config FILE] [FILE]   (stdin when FILE is absent or "-")
-Prints "<line>: <kind>: <detail>" per finding. Always exits 0: advice, never a gate.
+Prints "<line>: <kind>: <detail>" per finding. Exits 0 (advice, never a gate), except 2 on bad command-line flags.
 Rules and limits: skills/workflow-contracts/references/plain-language.md.
 """
 import argparse
