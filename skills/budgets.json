@@ -40,7 +40,7 @@
    "long": 0
   },
   "skills/agent-coordination/SKILL.md": {
-   "bytes": 15668,
+   "bytes": 15749,
    "long": 10
   },
   "skills/agent-coordination/references/approval-attempts.md": {
@@ -136,7 +136,7 @@
    "long": 1
   },
   "skills/implement/SKILL.md": {
-   "bytes": 13032,
+   "bytes": 13241,
    "long": 6
   },
   "skills/implement/references/review-axes.md": {
@@ -188,7 +188,7 @@
    "long": 0
   },
   "skills/test-review/SKILL.md": {
-   "bytes": 16547,
+   "bytes": 16696,
    "long": 7
   },
   "skills/test-review/references/hosted-review.md": {
@@ -196,7 +196,7 @@
    "long": 0
   },
   "skills/ui-design/SKILL.md": {
-   "bytes": 7093,
+   "bytes": 7198,
    "long": 0
   },
   "skills/ui-design/references/approval-pairs.md": {
@@ -281,6 +281,10 @@
   },
   "skills/workflow-contracts/references/work-trace.md": {
    "bytes": 3520,
+   "long": 0
+  },
+  "skills/workflow-contracts/references/plain-language.md": {
+   "bytes": 2101,
    "long": 0
   }
  }

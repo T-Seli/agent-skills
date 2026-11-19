@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Advisory plain-language check: long sentences, likely passive voice, filler.
+
+Usage: plain-language-check [--config FILE] [FILE]   (stdin when FILE is absent or "-")
+Prints "<line>: <kind>: <detail>" per finding. Always exits 0: advice, never a gate.
+Rules and limits: skills/workflow-contracts/references/plain-language.md.
+"""
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "plain-language.json"
+
+
+def sentences(text, procedure_re):
+    """Yield (line number, sentence, is_procedure) for each sentence."""
+    for number, line in enumerate(text.splitlines(), 1):
+        procedure = bool(procedure_re.match(line))
+        for part in re.split(r"(?<=[.!?])\s+", line.strip()):
+            if part:
+                yield number, part, procedure
+
+
+def passive(sentence, be_forms, irregular):
+    words = re.findall(r"[A-Za-z']+", sentence.lower())
+    for i, word in enumerate(words[:-1]):
+        if word in be_forms:
+            nxt = words[i + 1]
+            if nxt in irregular or (len(nxt) > 4 and nxt.endswith("ed")):
+                return f"{word} {nxt}"
+    return None
+
+
+def check(text, cfg):
+    procedure_re = re.compile(cfg["procedure_line_pattern"])
+    be_forms, irregular = set(cfg["be_forms"]), set(cfg["irregular_participles"])
+    findings = []
+    for number, sentence, procedure in sentences(text, procedure_re):
+        limit = cfg["procedure_max_words" if procedure else "descriptive_max_words"]
+        count = len(sentence.split())
+        if count > limit:
+            findings.append(f"{number}: long: {count} words, limit {limit}")
+        found = passive(sentence, be_forms, irregular)
+        if found:
+            findings.append(f"{number}: passive: \"{found}\"")
+        lowered = sentence.lower()
+        for phrase in cfg["filler"]:
+            if re.search(rf"\b{re.escape(phrase)}\b", lowered):
+                findings.append(f"{number}: filler: \"{phrase}\"")
+    return findings
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("file", nargs="?", default="-")
+    ap.add_argument("--config", default=str(DEFAULT_CONFIG))
+    args = ap.parse_args()
+    cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
+    text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
+    for line in check(text, cfg):
+        print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

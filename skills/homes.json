@@ -91,6 +91,11 @@
    "id": "belt-timeline",
    "pattern": "Conveyor: <UTC time>",
    "home": "skills/workflow-contracts/conveyor.md"
+  },
+  {
+   "id": "plain-language",
+   "pattern": "ASD-STE100",
+   "home": "skills/workflow-contracts/references/plain-language.md"
   }
  ]
 }

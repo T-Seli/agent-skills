@@ -1,0 +1,9 @@
+{
+ "note": "Advisory limits for scripts/plain-language-check. Change values here, not in the code.",
+ "procedure_max_words": 20,
+ "descriptive_max_words": 25,
+ "procedure_line_pattern": "^\\s*(\\d+[.)]|[-*])\\s",
+ "be_forms": ["am", "is", "are", "was", "were", "be", "been", "being"],
+ "irregular_participles": ["bought", "built", "chosen", "done", "driven", "given", "gone", "held", "kept", "known", "made", "paid", "run", "seen", "sent", "set", "shown", "sold", "taken", "told", "written"],
+ "filler": ["in order to", "please be advised", "as per", "at this point in time", "due to the fact that", "kindly", "utilize", "utilise", "leverage", "touch base", "circle back", "reach out", "going forward", "at your earliest convenience", "needless to say", "it should be noted that"]
+}
