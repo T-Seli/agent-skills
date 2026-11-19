@@ -86,6 +86,23 @@ class IssuesAndDecisionsText(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, rounds)
         self.assertNotIn('#\\d+', rounds)  # patterns stay in conveyor.json
+        self.assertIn("the question text and the recommended option's description", rounds)
+        self.assertNotIn("as the recommended option's `preview`", rounds)
+
+    def test_a_kinds_approval_is_not_asked_by_the_worker(self):
+        body = text(WC / 'decisions.md')
+        self.assertNotIn('production action, asked by the executing worker', body)
+        self.assertIn('one with a kind is prepared by the worker and cleared at the coordinator by its go card and click', body)
+        self.assertIn('one with no kind is asked by the executing worker', body)
+
+    def test_deploy_receipt_is_a_record_not_a_go_ahead(self):
+        deploy = text('skills/deploy/SKILL.md')
+        for s in (s for s in re.split(r'(?<=\.)\s+|\n', deploy) if 'Approved:' in s):
+            with self.subTest(sentence=s):
+                self.assertIn('never a permission', s)
+                self.assertNotIn('proceed', s)
+        self.assertIn("every non-branch § Deploy `Targets` entry needs the user's own go-ahead in this session, each time", deploy)
+        self.assertEqual(deploy.count("own go-ahead"), 1)
 
     def test_coordinator_reads_resume_after_compaction(self):
         self.assertRegex(text('skills/agent-coordination/references/coordinator-mode.md'),
