@@ -16,7 +16,7 @@ GATES = {
     "audit": "weekly independent audit",
     "plan": "major plan, spec or decision",
 }
-DEFAULTS = {"on": True, "deadline_h": 2}
+DEFAULTS = {"on": True, "deadline_h": 2, "outside": True}
 SHA = re.compile(r"[0-9a-f]{40}")
 PRIVATE = re.compile(
     r"gh[pousr]_\w{16,}|github_pat_\w+|xox[a-z]-[\w-]+|sk-\w{16,}|AKIA[0-9A-Z]{16}|-----BEGIN|eyJ[\w-]{5,}\."
@@ -87,7 +87,8 @@ def reconcile(verdict_state, worker):
 
 
 def gate_settings(layers, gate):
-    """layers: dicts from global to narrowest, each {gate: {key: value}}; narrower wins per key."""
+    """layers: dicts from global to narrowest, each {gate: {key: value}}; narrower wins per key.
+    `outside: False` in a repo's layer skips the outside reviewer: the fresh-context local review runs at once."""
     if gate not in GATES:
         raise ValueError(f"unknown gate {gate!r}")
     out = dict(DEFAULTS)
@@ -109,6 +110,8 @@ def watch_step(record, now, state, worker=None):
         if worker is not None and reconcile(state, worker) == "needs-human" and not record.get("escalated"):
             return {"action": "escalate", "state": "needs-human"}
         return {"action": "close", "state": state}
+    if not record.get("outside", True) and "fallback_at" not in record:
+        return {"action": "fallback"}
     since = record.get("fallback_at", record["sent_at"])
     if now <= since + record["deadline_h"] * 3600:
         return {"action": "wait"}
