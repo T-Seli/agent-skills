@@ -30,7 +30,7 @@ Consent: contracts.md § Consent; decision dependencies: `${CLAUDE_SKILL_DIR}/..
 
 Consume the current [research packet](../workflow-contracts/references/research.md) with the accepted spec; recheck only drift/new uncertainty. It grants no upgrade, snippet-execution or scope authority.
 
-For UI/frontend work, consume the selected [UI design packet](../ui-design/SKILL.md), preserve the product design system, and verify rendered states/interactions in authorized scope. Offline: compose `company.implement company.ui-design`; unresolved design choices hold only dependent work.
+For UI/frontend work, consume the selected [UI design packet](../ui-design/SKILL.md), preserve the product design system, and verify rendered states/interactions in authorized scope. Offline: compose `company.implement company.ui-design`; unresolved design choices hold only dependent work. A prototype, demo or mockup is validated in the browser before it is shown ([ui-design approval-pairs](../ui-design/references/approval-pairs.md#validate-before-showing)).
 
 A change that adds or edits user-visible or error text words it per [plain language](../workflow-contracts/references/plain-language.md); an existing live template is reworded only with the owner's approval.
 

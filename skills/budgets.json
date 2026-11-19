@@ -96,7 +96,7 @@
    "long": 10
   },
   "skills/agent-coordination/references/worker-execution.md": {
-   "bytes": 20889,
+   "bytes": 20977,
    "long": 12
   },
   "skills/agent-coordination/references/workspace-and-train.md": {
@@ -136,7 +136,7 @@
    "long": 1
   },
   "skills/implement/SKILL.md": {
-   "bytes": 12632,
+   "bytes": 12804,
    "long": 6
   },
   "skills/implement/references/review-axes.md": {
@@ -188,7 +188,7 @@
    "long": 0
   },
   "skills/test-review/SKILL.md": {
-   "bytes": 16035,
+   "bytes": 16185,
    "long": 7
   },
   "skills/test-review/references/hosted-review.md": {
@@ -196,11 +196,11 @@
    "long": 0
   },
   "skills/ui-design/SKILL.md": {
-   "bytes": 7198,
+   "bytes": 7310,
    "long": 0
   },
   "skills/ui-design/references/approval-pairs.md": {
-   "bytes": 819,
+   "bytes": 1480,
    "long": 0
   },
   "skills/ui-design/references/design.md": {

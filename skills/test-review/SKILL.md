@@ -29,7 +29,7 @@ Intent per commit: its action item in `TASK/action-items.md` (the log's `impleme
 
 Use [research evidence](../workflow-contracts/references/research.md) for claim/source and installed-version checks, and [review evidence](../workflow-contracts/references/review-evidence.md) for real coverage, owner/acceptance and optimization claims.
 
-For UI/frontend or visualization changes, load [ui-design](../ui-design/SKILL.md) and compare the exact rendered artifact, interaction/state matrix and accessible alternatives with the selected design packet. Offline: compose `company.test-review company.ui-design`; automated checks alone are not visual or human acceptance. Production today, the base for a change users see: `${CLAUDE_SKILL_DIR}/../workflow-contracts/data-access.md` § Live app.
+For UI/frontend or visualization changes, load [ui-design](../ui-design/SKILL.md) and compare the exact rendered artifact, interaction/state matrix and accessible alternatives with the selected design packet. Offline: compose `company.test-review company.ui-design`; automated checks alone are not visual or human acceptance. A prototype without a `Chrome validation:` record ([approval-pairs](../ui-design/references/approval-pairs.md#validate-before-showing)) is a blocker. Production today, the base for a change users see: `${CLAUDE_SKILL_DIR}/../workflow-contracts/data-access.md` § Live app.
 
 New customer-facing text that breaks [plain language](../workflow-contracts/references/plain-language.md) is advice in the report, never a blocker.
 
