@@ -3,7 +3,7 @@
 Whoever gathers bug evidence reads this file: blueprint itself in Answer mode, the scout in Plan mode. Return the items below alongside the usual answer.
 
 ## Timeline (Answer mode: one entity, alert or incident)
-Find the entity with the project's § Observe `Lookup`; read-only queries (per `workflow-contracts/data-access.md`), logs and the code path only.
+Find the entity with the project's § Observe `Lookup`; read-only queries and the live app (per `workflow-contracts/data-access.md`), logs and the code path only.
 - **Events, in order**, one per line: `<time> — <what happened> — <source>` (row id, log line or `path:line`). All times in one timezone, named once.
 - **What happened · when · why**, one line each, each marked proven or inferred.
 - **n** for any claim about more than one record (e.g. "3 of 40 calls since 09-28 UTC"). An empty result proves nothing: say what was searched, where and over which window.

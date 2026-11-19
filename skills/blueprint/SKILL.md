@@ -24,7 +24,7 @@ For UI/frontend or visualization choices, also load [ui-design](../ui-design/SKI
 
 ## Answer mode
 1. **State the question** in one sentence. A reported cause is a hypothesis, not a fact.
-2. **Gather evidence** yourself: the project's § Observe `Lookup` for the entity, read-only queries per `${CLAUDE_SKILL_DIR}/../workflow-contracts/data-access.md`, logs, the code path. A bug, alert or trace follows `${CLAUDE_SKILL_DIR}/references/bug-mode.md`, Timeline included.
+2. **Gather evidence** yourself: the project's § Observe `Lookup` for the entity, read-only queries per `${CLAUDE_SKILL_DIR}/../workflow-contracts/data-access.md` (what users see: its § Live app), logs, the code path. A bug, alert or trace follows `${CLAUDE_SKILL_DIR}/references/bug-mode.md`, Timeline included.
 3. **Reply** (Answer report). The fix is S (one obvious change the evidence pins) → end with the `Fix:` line; implement it now if a go-ahead was already given (contracts.md § Consent), else stop for "fix it". The fix isn't S → end with `Fix: needs a plan` and switch to Plan mode, reusing these facts: the scout fills only what is missing.
 
 ## Plan mode
