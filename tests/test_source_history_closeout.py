@@ -458,6 +458,15 @@ class CleanupGateRefinementTests(unittest.TestCase):
 ROOT = Path(__file__).resolve().parents[1]
 
 
+GH_STUB = """import json, subprocess
+branches = subprocess.run(["git", "branch", "--format=%(refname:short)", "--list", "feat/*"],
+                          capture_output=True, text=True).stdout.split()
+session = "local_" + "-".join("a" * n for n in (8, 4, 4, 4, 12))
+print(json.dumps([{"number": 1, "state": "OPEN", "labels": [{"name": "lane:build"}], "comments": [
+    {"body": f"Claimed: branch `{branch}` \\u00b7 session {session}"} for branch in branches]}]))
+"""
+
+
 class SweepTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -473,6 +482,13 @@ class SweepTests(unittest.TestCase):
         self.config.write_text("{}")
         self.sleepers = []
         self.addCleanup(lambda: [p.kill() for p in self.sleepers])
+        # The sweep command keeps worktrees whose branch no open belt issue claims; the temp repo has no GitHub
+        # remote, so a stub `gh` answers with one belt issue claiming every feat/* branch.
+        self.gh_dir = self.tmp / "gh-bin"
+        self.gh_dir.mkdir()
+        gh = self.gh_dir / "gh"
+        gh.write_text(f"#!{sys.executable}\n" + GH_STUB)
+        gh.chmod(0o755)
 
     def merged_worktree(self, name, *flags):
         path = self.tmp / name
@@ -491,6 +507,7 @@ class SweepTests(unittest.TestCase):
 
     def sweep(self, *args, **extra_env):
         env = dict(os.environ, AGENT_SKILLS_CONFIG=str(self.config), PYTHONDONTWRITEBYTECODE="1", **extra_env)
+        env["PATH"] = f"{self.gh_dir}{os.pathsep}{env['PATH']}"
         return subprocess.run([sys.executable, "-m", "agent_skills.safeguard_cli", "sweep", str(self.main),
                                "--base", "main", *args], cwd=ROOT, env=env, capture_output=True, text=True)
 
