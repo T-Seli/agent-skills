@@ -54,7 +54,7 @@ class WorktreeSweep(unittest.TestCase):
 class TestSlotRoute(unittest.TestCase):
     def test_contracts_routes_run_and_test_commands_through_the_slot(self):
         line = next(l for l in text(CONTRACTS).splitlines() if l.startswith('- Sections, read by name'))
-        self.assertIn("""/workflow-contracts/scripts/safeguard-cli" test-slot [--weight <suites run at once>] '<cmd>'""", line)
+        self.assertIn("""`~/.agents/skills/workflow-contracts/scripts/safeguard-cli test-slot [--weight <suites run at once>] '<cmd>'`""", line)
         self.assertIn("`Test slot` is `runner`", line)
         self.assertIn('75', line)
 
