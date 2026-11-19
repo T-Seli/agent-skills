@@ -405,9 +405,6 @@ class InvocationTests(unittest.TestCase):
     def test_issues_cli_invocations_in_skills_match(self):
         self.assertEqual(self.mismatches("issues-cli"), [])
 
-    # T4 owns the skill text; contracts.md still runs `test-slot` through ${CLAUDE_SKILL_DIR}.
-    # Remove this marker when T4 lands: an unexpected success fails the suite.
-    @unittest.expectedFailure
     def test_safeguard_cli_invocations_in_skills_match(self):
         self.assertEqual(self.mismatches("safeguard-cli"), [])
 
