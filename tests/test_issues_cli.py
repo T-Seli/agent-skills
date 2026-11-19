@@ -162,7 +162,11 @@ def stub_knowledge(test, notice=None, domains=('deploy', 'policy'), pages=None, 
             return cls()
 
         def __init__(self):
-            self.notice = notice
+            self.notice, self.brain = notice, None if notice else Path('brain')
+
+        @staticmethod
+        def _known_ids(brain, kind):
+            return {r[1] for r in calls['record'] if r[0] == kind}
 
         def domains(self):
             return list(domains)

@@ -14,10 +14,12 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from . import layout
+from .task_contract import packet, validate_packet
 from .test_slot import configured_reserve, configured_slots, slot_dir
 from .work_trace import validate as validate_work_trace, preview as trace_preview
 
@@ -366,6 +368,8 @@ STAMP = '%Y-%m-%d %H:%MZ'
 CAPTURE_WINDOW, SPOOL_LATE = timedelta(minutes=10), timedelta(minutes=15)
 INBOX_LATE, BACKLOG_OLD, WEEK = timedelta(hours=24), timedelta(days=30), timedelta(days=7)
 FALLBACK_STARTS = 1  # conveyor.json sweep.fallback_starts: at most one per sweep
+# The board reads closed belt issues only this far back, in one search; a result at the limit may have left some out.
+CLOSED_WINDOW, CLOSED_LIMIT = timedelta(days=14), 200
 UNREACHABLE = re.compile(r'error connecting to|could not resolve host|dial tcp|i/o timeout|connection (refused|reset)'
                          r'|network is unreachable|TLS handshake timeout|HTTP 50[234]', re.I)
 FIELDS = 'number,title,body,labels,comments,state,createdAt,url,closedByPullRequestsReferences'
@@ -906,10 +910,14 @@ def decide(gh, repo, n, text, question, session, log=None, scope=None):
     if k is None:
         return f'#{n} decision recorded; Knowledge: none, so no decision row'
     if k.notice:
-        return f'#{n} decision recorded; decision row PENDING: {k.notice}'
-    ident = re.sub(r'[^a-z0-9]+', '-', f"{repo.split('/')[1]}-{n}-{at:%Y%m%d%H%M}".lower()).strip('-')
-    out = k.record('decision', ident, at.strftime('%Y-%m-%d'), question, text, scope=scope)
+        return f'#{n} decision recorded; decision row PENDING: {k.notice}; the first sweep after the brain is mapped writes it'
+    out = k.record('decision', decision_id(repo, n, at), at.strftime('%Y-%m-%d'), question, text, scope=scope)
     return f"#{n} decision recorded; decision row {out['path']}"
+
+
+def decision_id(repo, n, at):
+    """A decision row's id: the repo, issue number and the `Decision:` line's minute, so the sweep's back-fill finds it."""
+    return re.sub(r'[^a-z0-9]+', '-', f"{repo.split('/')[1]}-{n}-{at:%Y%m%d%H%M}".lower()).strip('-')
 
 
 def origin(d):
@@ -942,7 +950,7 @@ def short_card(text, hidden=()):
     hits = [name for name, p in spec['refuse'].items() if re.search(p, text)] + [h for h in hidden if h in text]
     if hits:
         raise Refused(f"short card refused: {', '.join(hits)}")
-    m = re.fullmatch(r'([^?.!\n]+\?)(.*?)(?:[A-Z][A-Za-z ]{0,24}:\s*)?https?://\S+', text, re.S)
+    m = re.fullmatch(r'([^?\n]+\?)(.*?)(?:[A-Z][A-Za-z ]{0,24}:\s*)?https?://\S+', text, re.S)  # the question runs to its ?
     if not m or len(re.findall(r'https?://', text)) != 1:
         raise Refused('short card refused: --short needs one plain question first and one link last')
     body = m[2].strip()
@@ -1069,9 +1077,15 @@ def open_belt(gh, repo):
     return [i for group in by.values() for i in group], by
 
 
-def closed_belt(gh, repo):
-    """Closed belt issues in any lane: the registry reads them too (conveyor.json registry.source)."""
-    issues = json.loads(gh(['issue', 'list', '-R', repo, '--state', 'closed', '--limit', '1000', '--json', FIELDS]))
+def closed_belt(gh, repo, t):
+    """Belt issues closed within CLOSED_WINDOW of `t`, from one search; raises when the search fills CLOSED_LIMIT. A
+    session whose issues all closed earlier is done, and the single-session lookup by id (registry.lookup) finds them."""
+    since = (t - CLOSED_WINDOW).strftime('%Y-%m-%d')
+    issues = json.loads(gh(['issue', 'list', '-R', repo, '--state', 'closed', '--search', f'closed:>={since}',
+                            '--limit', str(CLOSED_LIMIT), '--json', FIELDS]))
+    if len(issues) >= CLOSED_LIMIT:
+        raise RuntimeError(f'{len(issues)} issues closed since {since} fill the board limit of {CLOSED_LIMIT}; '
+                           'some may be missing, so the board is not printed')
     return [i for i in issues if lane_of(i)]
 
 
@@ -1112,15 +1126,16 @@ def where(i):
 
 
 def registry_lines(issues):
-    """One line per registry session over open and closed belt `issues`; done once none of its issues is open and
-    unparked (conveyor.json registry.done)."""
+    """One line per registry session that holds open work over open and recently closed belt `issues`, then the count
+    of done sessions: none of their issues is open and unparked (conveyor.json registry.done)."""
     reg = registry(issues)
-    out = [f'Sessions: {len(reg)} on the belt']
-    for s, held in sorted(reg.items()):
-        state = 'working' if any(unfinished(i) for i, _ in held) else 'done'
+    working = {s: held for s, held in reg.items() if any(unfinished(i) for i, _ in held)}
+    out = [f'Sessions: {len(working)} working']
+    for s, held in sorted(working.items()):
         parts = [f"claimed #{i['number']} ({where(i)})" for i, role in held if role == 'claim']
         parts += [f"owns #{i['number']} ({where(i)})" for i, role in held if role == 'owner']
-        out.append(f"- {s} · {state} · {', '.join(parts)}")
+        out.append(f"- {s} · working · {', '.join(parts)}")
+    out.append(f'Done sessions: {len(reg) - len(working)} (closed issues read back {CLOSED_WINDOW.days} days)')
     return out
 
 
@@ -1146,14 +1161,46 @@ def test_slots():
     return free, total, reserve
 
 
+def reviewer_contract(repo, n, head, pr_url, prompt):
+    """(task id, contract file value) of the fallback reviewer: a small fixed contract, built and checked with
+    agent_skills.task_contract, for a read-only test-review of one exact head whose only write is its verdict."""
+    task, owner = re.sub(r'[^A-Za-z0-9._-]+', '-', f'review-fallback-{repo}-{n}-{head}')[:80], 'review-fallback'
+    goal, gate = f'Fresh-context test-review of {pr_url} at head {head} ({repo}#{n})', f'Reviewed: {head} YES|NO'
+    contract = dict(
+        user_goal=goal, canonical_issue_ref=f'{repo}#{n}', canonical_owner=owner, deliverable_id=f'review-{n}',
+        revision=1, constraints=['read-only: no edits, commits, pushes, merges, releases or deploys',
+                                 'budget: one /test-review run on this head, no retries, within the route cost cap',
+                                 f'only writes: the Reviewer: and {gate} lines on {repo}#{n}'],
+        priority_source_ref='contracts.md § Defaults Review fallback', acceptance_ref=f'{repo}#{n}',
+        environment='local checkout, read-only', changed_criteria='no verdict on this head after Review fallback',
+        next_action='run /test-review on the head and post the verdict', source_ref=pr_url,
+        requested_artifact='review-verdict', authority_ref='conveyor.json sweep.fallback_starts',
+        artifact_ref=f'{pr_url} at {head}', gates=[f'{gate} and Reviewer: · fallback on {repo}#{n}'])
+    p = packet(task_id=task, revision=1, owner=owner, scope=goal, baseline=head,
+               exclusions=['edits', 'commits', 'pushes', 'merges', 'releases', 'deploys'],
+               deliverables=[f'{gate} on {repo}#{n}'], acceptance=[{'id': 'verdict', 'check': f'one {gate} on this head'}],
+               context_refs=[pr_url], source_hashes={'conveyor.json': hashlib.sha256(
+                   layout.contract('conveyor.json').read_bytes()).hexdigest()},
+               package_hashes={'prompt': hashlib.sha256(prompt.encode()).hexdigest()},
+               stop_conditions=['the PR head moves', 'a write beyond the verdict lines is needed'],
+               escalation_conditions=['tests cannot run', 'the head cannot be checked out'])
+    validate_packet(p)
+    return task, {'contract': contract, 'acceptance_packet': p}
+
+
 def start_reviewer(repo, n, head, pr_url):
-    """The review fallback: a fresh-context reviewer session through delegate.py runs test-review on that head."""
+    """The review fallback: a fresh-context reviewer session through delegate.py, bound to reviewer_contract."""
     prompt = (f'Run /test-review on {pr_url} at head {head} ({repo}#{n}). You are the fresh-context reviewer started '
               f'after Review fallback. Post `Reviewer: session <your session id> · head {head} · fallback` and '
               f'`Reviewed: {head} YES|NO` on the issue.\n')
-    subprocess.run([sys.executable, str(layout.ROOT / 'skills' / 'agent-coordination' / 'scripts' / 'delegate.py'),
-                    'start', '--prompt-file', '-', '--cwd', str(project()[0]), '--name', f'review-fallback-{n}',
-                    '--reason', 'review fallback', '--legacy-unbound'], input=prompt, text=True, capture_output=True, check=True)
+    task, value = reviewer_contract(repo, n, head, pr_url, prompt)
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / 'contract.json'
+        path.write_text(json.dumps(value))
+        subprocess.run([sys.executable, str(layout.ROOT / 'skills' / 'agent-coordination' / 'scripts' / 'delegate.py'),
+                        'start', '--prompt-file', '-', '--cwd', str(project()[0]), '--name', f'review-fallback-{n}',
+                        '--task-id', task, '--reason', 'review fallback', '--contract-file', str(path)],
+                       input=prompt, text=True, capture_output=True, check=True)
 
 
 def knowledge_digest(t):
@@ -1218,6 +1265,34 @@ def log_closed(gh, repo, closed, violations, wrote, notes):
         wrote.append(f"knowledge log #{i['number']}: {out['path']}")
 
 
+def backfill_decisions(repo, issues, violations, wrote, notes):
+    """conveyor.json knowledge.unmapped_brain.decide: once the brain is mapped, each `Decision:` line on a belt issue
+    without its decision row gets one, by decision_id, so a rerun writes nothing new; scope is decide's default."""
+    pattern = re.compile(receipt('decision')['pattern'])
+    found = [(i['number'], m) for i in issues for line in corrected(comment_lines(i), comment_lines(i))
+             if (m := pattern.match(line))]
+    k = knowledge() if found else None
+    if k is None:
+        return
+    if k.notice:
+        notes.append(f'decision rows: {k.notice}; {len(found)} Decision: line(s) wait for it')
+        return
+    known = k._known_ids(k.brain, 'decision')  # rows and inbox files; knowledge.py has no public id list
+    for n, m in found:
+        at = parse_stamp(m['time'])
+        ident = decision_id(repo, n, at)
+        if ident in known:
+            continue
+        try:
+            out = k.record('decision', ident, at.strftime('%Y-%m-%d'), m['question'], m['text'],
+                           scope=decision_scope(None, repo))
+        except ValueError as e:
+            violations.append(f'decision row refused for #{n}: {e}')
+            continue
+        known.add(ident)
+        wrote.append(f"decision row #{n}: {out['path']}")
+
+
 def board(gh, repo, weekly=False, write=True):
     """The board (conveyor.md § Sweep) as (lines, counts). With `write` it also flushes the spool, starts review
     fallbacks and logs closed issues, each with a receipt; without, it is read-only. It names the next items to pull
@@ -1257,9 +1332,10 @@ def board(gh, repo, weekly=False, write=True):
             asks.append(f"- #{i['number']} {i['title']} (needs-human)")
         elif asked and (not decided or parse_stamp(asked[-1]) > parse_stamp(decided[-1])):
             asks.append(f"- #{i['number']} {i['title']} (asked {asked[-1]})")
-    closed = closed_belt(gh, repo)
+    closed = closed_belt(gh, repo, t)
     if write:
         log_closed(gh, repo, [i for i in closed if lane_of(i) == 'closed'], violations, wrote, notes)
+        backfill_decisions(repo, [*issues, *closed], violations, wrote, notes)
     if weekly:
         old = [i for i in by['backlog'] if t - parse_iso(i['createdAt']) > BACKLOG_OLD]
         if old:
@@ -1293,8 +1369,8 @@ def board(gh, repo, weekly=False, write=True):
         f'Parked: {len(parked)}', *[f"- #{i['number']} {i['title']}" + (
             f" · waiting on {why[i['number']]['who']} until {why[i['number']]['until']} since {why[i['number']]['time']}"
             if i['number'] in why else '') for i in parked],
-        *registry_lines([*issues, *closed]),
         f'Violations: {len(violations)}', *[f'- {v}' for v in violations],
+        *registry_lines([*issues, *closed]),  # after Violations, so the resume cap cuts sessions first
         f'Wrote: {len(wrote)}', *[f'- {w}' for w in wrote], *notes]
     counts = {'questions': len(asks), 'in-progress': len(by['in-progress']), 'in-review': len(by['in-review']),
               'parked': len(parked)}

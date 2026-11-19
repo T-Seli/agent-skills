@@ -63,6 +63,9 @@ class Belt:
     def names(self, n):
         return issues_cli.label_names(self.issues[n])
 
+    def close(self, n, age=timedelta(0)):
+        self.issues[n].update(state='CLOSED', closedAt=iso(self.clock() - age))
+
     def comment(self, n, body):
         self.issues[n]['comments'].append({'author': {'login': 'me'}, 'body': body})
 
@@ -90,9 +93,11 @@ class Belt:
             return json.dumps(self.issues[int(args[2])])
         if args[:2] == ['issue', 'list']:
             state, label = self.opt(args, '--state'), self.opt(args, '--label')
+            since = re.fullmatch(r'closed:>=(\d{4}-\d{2}-\d{2})', self.opt(args, '--search') or 'closed:>=0000-00-00')[1]
             found = [i for i in reversed(self.issues.values())
-                     if (state == 'all' or i['state'] == state.upper()) and (not label or label in issues_cli.label_names(i))]
-            return json.dumps(found)
+                     if (state == 'all' or i['state'] == state.upper()) and (not label or label in issues_cli.label_names(i))
+                     and (i['state'] == 'OPEN' or i['closedAt'][:10] >= since)]
+            return json.dumps(found[:int(self.opt(args, '--limit'))])
         if args[:2] == ['issue', 'edit']:
             i = self.issues[int(args[2])]
             drop = (self.opt(args, '--remove-label') or '').split(',')
@@ -105,7 +110,7 @@ class Belt:
             self.comment(int(args[2]), stdin.strip())
             return ''
         if args[:2] == ['issue', 'close']:
-            self.issues[int(args[2])]['state'] = 'CLOSED'
+            self.close(int(args[2]))
             self.issues[int(args[2])]['reason'] = self.opt(args, '--reason')
             self.comment(int(args[2]), self.opt(args, '--comment').strip())
             return ''
@@ -725,6 +730,12 @@ class Spec5(BeltCase):
         self.assertEqual(self.gh.writes(), [])
         self.assertEqual(self.short(n, SHORT).strip(), SHORT)
 
+    def test_9_the_question_runs_to_its_question_mark(self):
+        """Fix4 item 4: periods inside the question do not end it."""
+        n = self.at('in-review')
+        text = 'Ship after 5 p.m. today? Staff see the new wording tomorrow morning. Before and after: https://x.test/p/1'
+        self.assertEqual(self.short(n, text).strip(), text)
+
     def test_9_the_card_prints_plain_labels_never_internal_names(self):
         n = self.at('ready-to-release')
         self.gh.link_pr(n)
@@ -818,10 +829,11 @@ class Sweep(BeltCase):
         self.at('next')
         self.gh.add(lane='next', comments=('Claimed: branch `x` · session not-a-session-id',))
         out = self.sweep()
-        self.assertIn('Sessions: 3 on the belt', out)
+        self.assertIn('Sessions: 2 working', out)
         self.assertIn(f'- {BUILDER} · working · claimed #{working} (in-progress)', out)
-        self.assertIn(f'- {REVIEWER} · done · claimed #{parked} (in-progress, parked)', out)
         self.assertIn(f'- {COORD} · working · owns #3 (next), owns #{working} (in-progress)', out)
+        self.assertIn('Done sessions: 1 (closed issues read back 14 days)', out)  # REVIEWER holds only a parked issue
+        self.assertNotIn(REVIEWER, out)
         self.assertNotIn('not-a-session-id', out)
 
     def test_registry_reads_closed_belt_issues_and_a_closed_issue_never_keeps_a_session_working(self):
@@ -833,16 +845,48 @@ class Sweep(BeltCase):
         parked = self.gh.add(lane='in-progress', labels=('parked',), comments=(claim(BUILDER),))
         self.gh.add(comments=(claim(RELEASE_OWNER),))  # closed but never on the belt
         for n in (gone, mixed_closed, 5):
-            self.gh.issues[n]['state'] = 'CLOSED'
+            self.gh.close(n)
         out = self.sweep()
-        self.assertIn(['issue', 'list', '-R', REPO, '--state', 'closed', '--limit', '1000', '--json', issues_cli.FIELDS],
-                      [a for a, _ in self.gh.calls])
-        self.assertIn('Sessions: 4 on the belt', out)
-        self.assertIn(f'- {REVIEWER} · done · claimed #{gone} (closed)', out)
-        self.assertIn(f'- {COORD} · done · owns #{gone} (closed)', out)
+        self.assertIn('Sessions: 1 working', out)
         self.assertIn(f'- {REVIEWER2} · working · claimed #{mixed_open} (in-progress), claimed #{mixed_closed} (closed)', out)
-        self.assertIn(f'- {BUILDER} · done · claimed #{parked} (in-progress, parked)', out)
-        self.assertNotIn(RELEASE_OWNER, out)
+        self.assertIn('Done sessions: 3 (closed issues read back 14 days)', out)  # REVIEWER, COORD and BUILDER
+        for done in (REVIEWER, COORD, BUILDER, RELEASE_OWNER):
+            self.assertNotIn(done, out)
+
+    def test_the_board_fetches_closed_issues_only_inside_the_window(self):
+        """Fix4 item 1: one search with a closed: date qualifier; an issue closed earlier is never fetched."""
+        claim = lambda s: f'Claimed: branch `feat/c` · session {s}'  # noqa: E731
+        old = self.gh.add(lane='closed', comments=(claim(REVIEWER),))
+        recent = self.gh.add(lane='closed', comments=(claim(REVIEWER2),))
+        self.gh.close(old, age=timedelta(days=15))
+        self.gh.close(recent, age=timedelta(days=13))
+        out = self.sweep()
+        self.assertIn(['issue', 'list', '-R', REPO, '--state', 'closed', '--search', 'closed:>=2026-11-04',
+                       '--limit', str(issues_cli.CLOSED_LIMIT), '--json', issues_cli.FIELDS], [a for a, _ in self.gh.calls])
+        self.assertFalse([a for a, _ in self.gh.calls if a[:2] == ['issue', 'list'] and '--search' not in a
+                          and self.gh.opt(a, '--state') != 'open'])
+        self.assertIn('Done sessions: 1', out)  # REVIEWER2 only: the old issue was not read
+        self.assertEqual([issue for issue, _ in self.k['log']], [recent])
+
+    def test_a_closed_search_at_the_limit_fails_loudly(self):
+        """Fix4 item 1: a search result at the fetch limit may have left issues out, so no board is printed."""
+        for _ in range(3):
+            self.gh.close(self.gh.add(lane='closed'))
+        with unittest.mock.patch.object(issues_cli, 'CLOSED_LIMIT', 3):
+            code, out, err = run(self.gh, 'sweep', '--repo', REPO)
+        self.assertEqual(code, 1)
+        self.assertIn('3 issues closed since 2026-11-04 fill the board limit of 3', err)
+        self.assertNotIn('Lanes:', out)
+        with unittest.mock.patch.object(issues_cli, 'CLOSED_LIMIT', 4):
+            self.assertIn('Lanes:', self.sweep())
+
+    def test_violations_come_before_sessions(self):
+        """Fix4 item 1: the resume cap cuts sessions, never violations."""
+        self.at('inbox')
+        self.gh.issues[1]['body'] = 'old\n\nCaptured: 2026-11-17 10:00Z · source chat\n'
+        self.at('in-progress')
+        lines = self.sweep().split('\n')
+        self.assertLess(lines.index('Violations: 1'), lines.index('Sessions: 2 working'))
 
     def test_weekly_adds_the_backlog_age_question_counts_and_the_knowledge_changes(self):
         self.k = stub_knowledge(self, changes=[CHANGE])
@@ -854,6 +898,41 @@ class Sweep(BeltCase):
         self.assertIn('Knowledge digest: 1 change(s) this week', out)
         self.assertIn(f'- brain:decisions.md · record colour decision · undo: revert {"f" * 12} in brain', out)
         self.assertEqual(self.k['changes'], ['2026-11-11T12:00:00+00:00'])
+
+
+class FallbackReviewer(unittest.TestCase):
+    """Fix4 item 3: the fallback reviewer starts with a fixed contract file, never --legacy-unbound."""
+    FAKE = ('import json, sys\nfrom pathlib import Path\na = sys.argv[1:]\n'
+            'value = json.loads(Path(a[a.index("--contract-file") + 1]).read_text()) if "--contract-file" in a else None\n'
+            'Path(__file__).with_name("calls.json").write_text(json.dumps({"argv": a, "contract": value, "prompt": sys.stdin.read()}))\n')
+
+    def test_the_start_carries_a_bound_contract_file(self):
+        belt_project(self)
+        fake = Path(tempfile.mkdtemp())
+        script = fake / 'skills/agent-coordination/scripts/delegate.py'
+        script.parent.mkdir(parents=True)
+        script.write_text(self.FAKE)
+        with unittest.mock.patch.object(layout, 'ROOT', fake):
+            issues_cli.start_reviewer(REPO, 7, HEAD[:7], f'https://github.com/{REPO}/pull/507')
+        call = json.loads((script.parent / 'calls.json').read_text())
+        self.assertIn('--contract-file', call['argv'])
+        self.assertNotIn('--legacy-unbound', call['argv'])
+        self.assertFalse(Path(call['argv'][call['argv'].index('--contract-file') + 1]).exists())  # removed after the start
+        task = call['argv'][call['argv'].index('--task-id') + 1]
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills/agent-coordination/scripts'))
+        self.addCleanup(sys.path.remove, sys.path[0])
+        import tasks
+        from agent_skills import producer_contract
+        from agent_skills.task_contract import validate_packet
+        value = call['contract']
+        self.assertTrue(validate_packet(value['acceptance_packet']))
+        record = producer_contract.bind(tasks, tasks.new_task(task, task, worker_kind='claude', owner='assistant',
+                                                              repo='.', worktree='.', source_thread='top-level'), value)
+        self.assertEqual(record['acceptance_packet']['target_baseline'], HEAD[:7])
+        self.assertIn('read-only: no edits, commits, pushes, merges, releases or deploys', value['contract']['constraints'])
+        self.assertTrue(any(x.startswith('budget:') for x in value['contract']['constraints']))
+        self.assertEqual(value['acceptance_packet']['package_hashes']['prompt'],
+                         issues_cli.hashlib.sha256(call['prompt'].encode()).hexdigest())
 
 
 class Knowledge(BeltCase):
@@ -879,6 +958,40 @@ class Knowledge(BeltCase):
         self.cli('close', '--repo', REPO, str(m), '--log', str(self.log), '--learned', 'none')
         self.assertIn(f'- knowledge log refused for #{m}: brain: not configured on this machine', self.sweep())
 
+    def brain(self):
+        brain = self.root / 'brain'
+        brain.mkdir()
+        (brain / 'decisions.md').write_text('# Decisions\n\n| id | status | date | switch | rule | source | scope |\n'
+                                            '|---|---|---|---|---|---|---|\n')
+        subprocess.run(['git', '-C', str(brain), 'init', '-q', '-b', 'main'], check=True)
+        return brain
+
+    def test_the_sweep_back_fills_pending_decision_rows_once_the_brain_is_mapped(self):
+        """Fix4 item 2: unmapped, the sweep writes nothing; mapped, each Decision: line gets its row once."""
+        real_knowledge(self, self.root)
+        brain, n, m = self.brain(), self.at('next'), self.at('backlog')
+        self.cli('decide', '--repo', REPO, str(n), 'Keep the grey colour', '--question', Q, '--session', COORD)
+        self.t += timedelta(minutes=1)
+        self.cli('decide', '--repo', REPO, str(m), 'Ship on Friday', '--question', Q, '--session', COORD)
+        out = self.sweep()
+        self.assertIn('decision rows: brain: not configured on this machine; 2 Decision: line(s) wait for it', out)
+        self.assertFalse((brain / 'inbox').exists())
+        self.configure(knowledge_stores={'acme/brain': str(brain)})
+        out = self.sweep()
+        self.assertIn(f'- decision row #{n}: inbox/', out)
+        self.assertIn(f'- decision row #{m}: inbox/', out)
+        rows = sorted(x.read_text() for x in (brain / 'inbox').glob('*.md'))
+        self.assertEqual(len(rows), 2)
+        self.assertIn(f'id: r-{n}-202611181200\n', rows[0] + rows[1])
+        self.assertIn(f'id: r-{m}-202611181201\n', rows[0] + rows[1])
+        self.assertIn(f'kind: decision\nid: r-{m}-202611181201\ndate: 2026-11-18\nsource: {Q}\nscope: repo:r\n'
+                      'text: Ship on Friday\n', rows[0] + rows[1])
+        writes = len(self.gh.writes())
+        out = self.sweep()
+        self.assertNotIn('decision row', out)
+        self.assertEqual(len(list((brain / 'inbox').glob('*.md'))), 2)
+        self.assertEqual(len(self.gh.writes()), writes)
+
     def test_decision_scope_is_a_parameter(self):
         n = self.at('next')
         self.cli('decide', '--repo', REPO, str(n), 'Grey everywhere', '--question', Q, '--session', COORD, '--scope', 'global')
@@ -902,7 +1015,7 @@ class Knowledge(BeltCase):
         stub = sys.modules['agent_skills.knowledge'].Knowledge
         names = [x for x in ('open', *functions) if hasattr(stub, x)]
         self.assertEqual(set(names), {'open', 'domains', 'pages', 'find', 'record', 'collect', 'log', 'changes'})
-        for name in names:
+        for name in names + ['_known_ids']:  # the sweep's decision back-fill reads _known_ids
             self.assertEqual(inspect.signature(getattr(stub, name)), inspect.signature(getattr(KNOWLEDGE.Knowledge, name)), name)
         brain = self.root / 'brain'
         brain.mkdir()
@@ -958,7 +1071,7 @@ class Resume(BeltCase):
         first = self.resume()
         self.assertIn('Resume for coordinator · o/r', first)
         self.assertIn('Lanes: ', first)
-        self.assertIn('Sessions: 2 on the belt', first)
+        self.assertIn('Sessions: 2 working', first)
         self.assertIn(f'Since checkpoint: none earlier in {self.role_log}', first)
         self.assertEqual(self.gh.writes(), [])  # read-only toward GitHub
         marks = [line for line in self.role_log.read_text().split('\n') if line.startswith('Checkpoint:')]
@@ -985,6 +1098,15 @@ class Resume(BeltCase):
         self.assertLess(len(out.rstrip('\n')), cap['chars'])
         self.assertIn('cut at the resume cap', out)
         self.assertRegex(out.rstrip('\n').split('\n')[-1], CHECKPOINT)
+
+    def test_the_cap_never_cuts_violations(self):
+        """Fix4 item 1: seventy working sessions overflow the cap after the violation line, not before it."""
+        for k in range(70):
+            self.gh.add(lane='in-progress', comments=(f'Claimed: branch `feat/w` · session b0000000-0000-4000-8000-{k:012d}',))
+        out = self.resume()
+        self.assertRegex(out, r'\n- lane over limit: in-progress 70 of \d+\nSessions: 70 working\n')
+        self.assertIn('cut at the resume cap', out)
+        self.assertLessEqual(len(out.rstrip('\n').split('\n')), CONVEYOR['resume']['cap']['lines'])
 
     def test_only_sessions_named_in_roles(self):
         out = self.cli('resume', '--session', OWNER2, ok=False)
