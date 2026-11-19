@@ -57,9 +57,14 @@ def main():
     ap.add_argument("file", nargs="?", default="-")
     ap.add_argument("--config", default=str(DEFAULT_CONFIG))
     args = ap.parse_args()
-    cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
-    for line in check(text, cfg):
+    try:
+        cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
+        text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
+        findings = check(text, cfg)
+    except (OSError, UnicodeDecodeError, ValueError, KeyError, TypeError, re.error) as e:
+        print(f"plain-language-check: skipped: {type(e).__name__}: {e}", file=sys.stderr)
+        return 0
+    for line in findings:
         print(line)
     return 0
 

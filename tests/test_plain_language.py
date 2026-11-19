@@ -58,6 +58,25 @@ class PlainLanguageCheck(unittest.TestCase):
         self.assertEqual(run(stdin=junk).returncode, 0)
         self.assertEqual(run(stdin="").returncode, 0)
 
+    def assert_advisory_failure(self, r):
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        self.assertEqual(len(r.stderr.strip().splitlines()), 1)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_missing_input_file_exits_zero(self):
+        self.assert_advisory_failure(run(str(FIX / "no-such-file.txt")))
+
+    def test_missing_config_exits_zero(self):
+        self.assert_advisory_failure(run("--config", str(FIX / "no-such.json"), stdin="Hi.\n"))
+
+    def test_malformed_or_incomplete_config_exits_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad, partial = Path(d) / "bad.json", Path(d) / "partial.json"
+            bad.write_text("{not json")
+            partial.write_text("{}")
+            self.assert_advisory_failure(run("--config", str(bad), stdin="Hi.\n"))
+            self.assert_advisory_failure(run("--config", str(partial), stdin="Hi.\n"))
+
 
 if __name__ == "__main__":
     unittest.main()
