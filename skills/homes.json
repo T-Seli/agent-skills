@@ -22,6 +22,11 @@
    "home": "ENGINEERING-COORDINATOR.md"
   },
   {
+   "id": "decision-cards",
+   "pattern": "Decision cards \\(",
+   "home": "skills/workflow-contracts/decisions.md"
+  },
+  {
    "id": "release-card",
    "pattern": "Release card template",
    "home": "skills/agent-coordination/references/coordinator-release.md"
@@ -91,6 +96,11 @@
    "id": "belt-timeline",
    "pattern": "Conveyor: <UTC time>",
    "home": "skills/workflow-contracts/conveyor.md"
+  },
+  {
+   "id": "live-app",
+   "pattern": "One agent drives it at a time",
+   "home": "skills/workflow-contracts/data-access.md"
   },
   {
    "id": "plain-language",

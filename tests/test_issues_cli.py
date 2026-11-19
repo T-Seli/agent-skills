@@ -5,12 +5,15 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 import unittest.mock
 from pathlib import Path
 
 from agent_skills import issues_cli
+from agent_skills import knowledge as KNOWLEDGE  # the real module, imported before any stub replaces it
 
 REPO = 'o/r'
 PLAN = '# Plan: add widgets\n\nBase: main\n'
@@ -71,7 +74,15 @@ class FakeGh:
             raise subprocess.CalledProcessError(1, ['gh', *args], stderr='HTTP 502: Bad Gateway')
         if args[:2] == ['issue', 'create']:
             self.next += 1
+            labels = args[args.index('--label') + 1].split(',') if '--label' in args else []
+            self.issues[self.next - 1] = {'number': self.next - 1, 'title': args[args.index('--title') + 1], 'body': stdin,
+                                          'labels': [{'name': x} for x in labels], 'comments': [], 'state': 'OPEN',
+                                          'assignees': [], 'author': {'login': self.viewer}}
             return f'https://github.com/{REPO}/issues/{self.next - 1}\n'
+        if args[:2] == ['label', 'list']:
+            return ''
+        if args[:2] == ['issue', 'list']:
+            return '[]'
         if args[:2] == ['api', 'user']:
             return self.viewer + '\n'
         if args[0] == 'api' and re.fullmatch(rf'repos/{REPO}/issues/\d+', args[1]):
@@ -113,10 +124,103 @@ def run(gh, *argv):
     return code, out.getvalue(), err.getvalue()
 
 
-def spec_body():
+def spec_body(text='## Problem Statement\n\nNo widgets.\n\nDone when: a saved widget reads back\n'):
     f = Path(tempfile.mkdtemp()) / 'spec.md'
-    f.write_text('## Problem Statement\n\nNo widgets.\n')
+    f.write_text(text)
     return str(f)
+
+
+SESSION = '5e5510a0-0000-4000-8000-000000000001'
+BELT = ('--owner', 'thomas', '--domain', 'deploy', '--session', SESSION)
+
+
+class KnowledgeError(ValueError):
+    pass
+
+
+def real_knowledge(test, root):
+    """The real agent_skills.knowledge over a wiki at `root`/wiki (belt_project's § Map), with no brain store mapped,
+    so writes refuse as conveyor.json knowledge.unmapped_brain says."""
+    (root / 'wiki' / 'pages').mkdir(parents=True)
+    (root / 'wiki' / 'index.md').write_text('# Wiki\n\n| Task words | Read | Domain |\n|---|---|---|\n'
+                                            '| ship | [release](pages/release.md) | deploy |\n')
+    (root / 'wiki' / 'pages' / 'release.md').write_text('# Release\nverified: 2026-11-02 @ abc1234\n')
+    patcher = unittest.mock.patch.dict(sys.modules, {'agent_skills.knowledge': KNOWLEDGE})
+    patcher.start()
+    test.addCleanup(patcher.stop)
+
+
+def stub_knowledge(test, notice=None, domains=('deploy', 'policy'), pages=None, changes=()):
+    """Stands in for agent_skills.knowledge where a brain store would be needed, with the real module's signatures and
+    return shapes (Knowledge.test_the_stub_matches_the_real_module); records what issues-cli asked of it."""
+    calls = {'open': [], 'record': [], 'log': [], 'changes': []}
+
+    class Knowledge:
+        @classmethod
+        def open(cls, brain=None, wiki=None, config_path=None):
+            calls['open'].append((brain, wiki))
+            return cls()
+
+        def __init__(self):
+            self.notice, self.brain = notice, None if notice else Path('brain')
+
+        @staticmethod
+        def _known_ids(brain, kind):
+            return {r[1] for r in calls['record'] if r[0] == kind}
+
+        def domains(self):
+            return list(domains)
+
+        def pages(self, domain):
+            return (pages or {}).get(domain, [])
+
+        def find(self, words):
+            return [{'file': 'decisions.md', 'id': 'grey', 'text': 'Grey everywhere', 'store': 'brain',
+                     'source': 'https://x.test/q/1', 'score': 1, 'pending': False}]
+
+        def record(self, kind, id, date, source, text, scope='global'):
+            if notice:
+                raise KnowledgeError(notice)
+            calls['record'].append((kind, id, date, source, text, scope))
+            return {'path': f'inbox/20261118T120000Z-{kind}-{id}.md'}
+
+        def log(self, issue, lines):
+            if notice:
+                raise KnowledgeError(notice)
+            calls['log'].append((issue, lines))
+            return {'path': 'log/2026-11.md'}
+
+        def collect(self):
+            if notice:
+                raise KnowledgeError(notice)
+            return {'folded': [], 'branch': None}
+
+        def changes(self, since):
+            calls['changes'].append(since)
+            return list(changes)
+
+    module = types.ModuleType('agent_skills.knowledge')
+    module.Knowledge, module.KnowledgeError = Knowledge, KnowledgeError
+    patcher = unittest.mock.patch.dict(sys.modules, {'agent_skills.knowledge': module})
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    return calls
+
+
+def belt_project(test, knowledge='brain `acme/brain` · wiki `wiki`', defaults='', config=None):
+    """A project folder set up only through its CLAUDE.md, as the working directory, with a fixed release id."""
+    root = Path(tempfile.mkdtemp()).resolve()
+    (root / 'CLAUDE.md').write_text(f'# p\n\n## Map\n- Knowledge: {knowledge}\n\n## Defaults\n{defaults}')
+    (root / 'workers.json').write_text(json.dumps(config or {}))
+    old = os.getcwd()
+    os.chdir(root)
+    test.addCleanup(os.chdir, old)
+    for patcher in (unittest.mock.patch.object(issues_cli.layout, 'release_id', return_value='f' * 7),
+                    unittest.mock.patch.dict(os.environ, {'AGENT_SKILLS_CONFIG': str(root / 'workers.json'),
+                                                     'AGENT_SKILLS_TEST_SLOTS': str(root / 'slots')})):
+        patcher.start()
+        test.addCleanup(patcher.stop)
+    return root
 
 
 SHA = 'a' * 40
@@ -153,9 +257,13 @@ def evidence(issues, deployment=False):
 
 
 class Publish(unittest.TestCase):
+    def setUp(self):
+        belt_project(self)
+        stub_knowledge(self)
+
     def test_spec_then_tickets_as_sub_issues_with_blocked_by(self):
         d, gh = draft(), FakeGh()
-        code, out, _ = run(gh, 'publish', '--repo', REPO, str(d), '--title', 'Spec: widgets',
+        code, out, _ = run(gh, 'publish', '--repo', REPO, str(d), *BELT, '--title', 'Spec: widgets',
                            '--body-file', spec_body(), '--label', 'ready-for-agent')
         self.assertEqual(code, 0)
         creates = [(a, s) for a, s in gh.writes() if a[:2] == ['issue', 'create']]
@@ -190,17 +298,19 @@ class Publish(unittest.TestCase):
 
     def test_republish_creates_nothing(self):
         d, gh = draft(), FakeGh()
-        run(gh, 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        run(gh, 'publish', '--repo', REPO, str(d), *BELT, '--title', 'T', '--body-file', spec_body())
         before = len(gh.calls)
-        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d))
+        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d), *BELT)
         self.assertEqual(code, 0)
         self.assertEqual([a for a, _ in gh.calls[before:] if issues_cli.is_write(a)], [])
 
     def test_partly_published_reuses_existing_issue_numbers(self):
         items = ITEMS.replace('**1. Store widgets** · M', '**1. Store widgets** · M · issue #50')
         d, gh = draft(plan=f'# Plan: add widgets\nIssue: {REPO}#40\n', items=items,
-                      text=TEXT.replace('## 1.', '## 9.')), FakeGh()  # a published ticket needs no issue text
-        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d))
+                      text=TEXT.replace('## 1.', '## 9.')), FakeGh(issues={40: {
+                          'number': 40, 'title': 'Spec', 'body': 'Done when: widgets show\n', 'labels': [],
+                          'comments': [], 'state': 'OPEN'}})  # a published ticket needs no issue text
+        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d), *BELT)
         self.assertEqual(code, 0)
         creates = [s for a, s in gh.writes() if a[:2] == ['issue', 'create']]
         self.assertEqual(len(creates), 2)
@@ -213,12 +323,12 @@ class Publish(unittest.TestCase):
     def test_rerun_after_a_failed_link_adds_the_link_and_creates_nothing(self):
         d = draft()
         gh = FakeGh(fail=lambda a: a[:3] == ['api', '-X', 'POST'] and a[3].endswith('/issues/102/dependencies/blocked_by'))
-        code, _, err = run(gh, 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        code, _, err = run(gh, 'publish', '--repo', REPO, str(d), *BELT, '--title', 'T', '--body-file', spec_body())
         self.assertEqual(code, 1)
         self.assertIn('502', err)
         self.assertIn('**2. Show widgets** · S · after #1 · issue #102', (d / 'action-items.md').read_text())
         before = len(gh.calls)
-        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d))
+        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d), *BELT)
         self.assertEqual(code, 0)
         rerun_creates = [a[a.index('--title') + 1] for a, _ in gh.calls[before:] if a[:2] == ['issue', 'create']]
         self.assertEqual(rerun_creates, ['Count saved widgets'])  # only the ticket never reached; #101 and #102 not repeated
@@ -228,9 +338,9 @@ class Publish(unittest.TestCase):
 
     def test_single_task_without_tickets_gets_one_issue(self):
         d, gh = draft(items=None), FakeGh()
-        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d), '--title', 'Fix X', '--body-file', spec_body())
+        code, _, _ = run(gh, 'publish', '--repo', REPO, str(d), *BELT, '--title', 'Fix X', '--body-file', spec_body())
         self.assertEqual(code, 0)
-        self.assertEqual(len(gh.writes()), 1)
+        self.assertEqual(len([a for a, _ in gh.writes() if a[:2] == ['issue', 'create']]), 1)
 
     def test_fails_loudly_before_any_write(self):
         cases = [
@@ -243,7 +353,7 @@ class Publish(unittest.TestCase):
         ]
         for d, extra in cases:
             gh = FakeGh()
-            code, _, err = run(gh, 'publish', '--repo', REPO, str(d), *extra)
+            code, _, err = run(gh, 'publish', '--repo', REPO, str(d), *BELT, *extra)
             self.assertNotEqual(code, 0)
             self.assertTrue(err.strip())
             self.assertEqual(gh.writes(), [])
@@ -251,7 +361,7 @@ class Publish(unittest.TestCase):
     def test_dry_run_prints_writes_and_changes_nothing(self):
         d, gh = draft(), FakeGh()
         before = (d / 'plan.md').read_text(), (d / 'action-items.md').read_text()
-        code, out, _ = run(gh, '--dry-run', 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        code, out, _ = run(gh, '--dry-run', 'publish', '--repo', REPO, str(d), *BELT, '--title', 'T', '--body-file', spec_body())
         self.assertEqual(code, 0)
         self.assertEqual(gh.writes(), [])
         self.assertEqual(out.count('gh issue create'), 4)
@@ -267,7 +377,7 @@ def issue(assignees=(), author='me', comments=(), body=''):
 class Claim(unittest.TestCase):
     def claim(self, data, *extra):
         gh = FakeGh(issues={7: data})
-        code, out, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1', *extra)
+        code, out, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', '11111111-1111-4111-8111-111111111111', *extra)
         return code, gh.writes(), err
 
     def test_unassigned_own_issue_is_assigned_and_commented(self):
@@ -276,7 +386,8 @@ class Claim(unittest.TestCase):
         self.assertEqual(writes[0][0], ['issue', 'edit', '7', '-R', REPO, '--add-assignee', '@me'])
         self.assertEqual(writes[1][0][:2], ['issue', 'comment'])
         self.assertIn('`feat/x`', writes[1][1])
-        self.assertIn('s1', writes[1][1])
+        self.assertIn('11111111-1111-4111-8111-111111111111', writes[1][1])
+        self.assertRegex(writes[2][1].strip(), r'^Conveyor: .* · claim · ')
 
     def test_someone_elses_assignment_is_refused(self):
         code, writes, err = self.claim(issue(assignees=['hayk']), '--approved')
@@ -290,98 +401,100 @@ class Claim(unittest.TestCase):
         self.assertEqual(writes, [])
         code, writes, _ = self.claim(issue(author='hayk'), '--approved')
         self.assertEqual(code, 0)
-        self.assertEqual(len(writes), 2)
+        self.assertEqual(len(writes), 3)  # assign, claim note, timeline line
 
     def test_repeat_claim_writes_nothing(self):
-        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session s1']))
+        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session 11111111-1111-4111-8111-111111111111']))
         self.assertEqual(code, 0)
         self.assertEqual(writes, [])
 
 
     def test_second_session_under_the_same_login_is_refused_when_the_other_note_landed_first(self):
-        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session s2')
-        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session 22222222-2222-4222-8222-222222222222')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', '11111111-1111-4111-8111-111111111111')
         self.assertNotEqual(code, 0)
         self.assertIn('claimed meanwhile', err)
-        self.assertIn('session s2', err)
+        self.assertIn('session 22222222-2222-4222-8222-222222222222', err)
 
     def test_takeover_posts_a_fresh_note_even_when_an_identical_old_one_exists(self):
-        history = ['Claimed: branch `feat/x` · session s1', 'Claimed: branch `feat/y` · session s2']
+        history = ['Claimed: branch `feat/x` · session 11111111-1111-4111-8111-111111111111', 'Claimed: branch `feat/y` · session 22222222-2222-4222-8222-222222222222']
         code, writes, _ = self.claim(issue(assignees=['me'], comments=history), '--takeover')
         self.assertEqual(code, 0)
-        self.assertEqual(len(writes), 1)
-        self.assertIn('session s1', writes[0][1])
+        self.assertEqual(len(writes), 2)  # claim note, timeline line
+        self.assertRegex(writes[1][1].strip(), r'^Conveyor: .* · claim · ')
+        self.assertIn('session 11111111-1111-4111-8111-111111111111', writes[0][1])
 
     def test_a_loser_retracts_and_the_winner_stays_the_owner(self):
         self.assertEqual(issues_cli.claim_owner([
-            {'body': 'Claimed: branch `a` · session s2'}, {'body': 'Claimed: branch `b` · session s1'},
-            {'body': 'Released: session s1 · lost claim to session s2'}]), 's2')
-        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session s2')
-        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+            {'body': 'Claimed: branch `a` · session 22222222-2222-4222-8222-222222222222'}, {'body': 'Claimed: branch `b` · session 11111111-1111-4111-8111-111111111111'},
+            {'body': 'Released: session 11111111-1111-4111-8111-111111111111 · lost claim to session 22222222-2222-4222-8222-222222222222'}]), '22222222-2222-4222-8222-222222222222')
+        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session 22222222-2222-4222-8222-222222222222')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', '11111111-1111-4111-8111-111111111111')
         self.assertNotEqual(code, 0)
-        self.assertIn('Released: session s1', gh.issues[7]['comments'][-1]['body'])
-        self.assertEqual(issues_cli.claim_owner(gh.issues[7]['comments']), 's2')
+        self.assertIn('Released: session 11111111-1111-4111-8111-111111111111', gh.issues[7]['comments'][-1]['body'])
+        self.assertEqual(issues_cli.claim_owner(gh.issues[7]['comments']), '22222222-2222-4222-8222-222222222222')
 
     def test_a_release_note_from_another_login_does_not_free_the_claim(self):
-        comments = [{'author': {'login': 'me'}, 'body': 'Claimed: branch `a` · session s1'},
-                    {'author': {'login': 'hayk'}, 'body': 'Released: session s1 · lost claim to hayk'}]
-        self.assertEqual(issues_cli.claim_owner(comments), 's1')
+        comments = [{'author': {'login': 'me'}, 'body': 'Claimed: branch `a` · session 11111111-1111-4111-8111-111111111111'},
+                    {'author': {'login': 'hayk'}, 'body': 'Released: session 11111111-1111-4111-8111-111111111111 · lost claim to hayk'}]
+        self.assertEqual(issues_cli.claim_owner(comments), '11111111-1111-4111-8111-111111111111')
         comments[1]['author']['login'] = 'me'
         self.assertIsNone(issues_cli.claim_owner(comments))
 
     def test_a_rival_note_from_another_login_between_the_reads_loses_the_claim(self):
-        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session s9', rival_login='hayk')
-        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+        gh = FakeGh(issues={7: issue()}, rival='Claimed: branch `feat/y` · session 99999999-9999-4999-8999-999999999999', rival_login='hayk')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', '11111111-1111-4111-8111-111111111111')
         self.assertNotEqual(code, 0)
-        self.assertIn('session s9', err)
-        self.assertEqual(issues_cli.claim_owner(gh.issues[7]['comments']), 's9')
+        self.assertIn('session 99999999-9999-4999-8999-999999999999', err)
+        self.assertEqual(issues_cli.claim_owner(gh.issues[7]['comments']), '99999999-9999-4999-8999-999999999999')
 
     def test_a_rival_assignee_appearing_between_the_reads_loses_the_claim(self):
         gh = FakeGh(issues={7: issue()}, rival_assignee='hayk')
-        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', 's1')
+        code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x', '--session', '11111111-1111-4111-8111-111111111111')
         self.assertNotEqual(code, 0)
         self.assertIn('hayk', err)
         self.assertIsNone(issues_cli.claim_owner(gh.issues[7]['comments']))
 
     def test_successor_same_branch_gets_current_session_pointer(self):
-        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session old-session']), '--takeover')
+        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session 00000000-0000-4000-8000-000000000000']), '--takeover')
         self.assertEqual(code, 0)
-        self.assertEqual(len(writes), 1)
-        self.assertIn('session s1', writes[0][1])
+        self.assertEqual(len(writes), 2)  # claim note, timeline line
+        self.assertRegex(writes[1][1].strip(), r'^Conveyor: .* · claim · ')
+        self.assertIn('session 11111111-1111-4111-8111-111111111111', writes[0][1])
 
     def test_existing_claim_by_another_session_is_refused_without_takeover(self):
-        code, writes, err = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/y` · session s2']))
+        code, writes, err = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/y` · session 22222222-2222-4222-8222-222222222222']))
         self.assertNotEqual(code, 0)
         self.assertEqual(writes, [])
-        self.assertIn('session s2', err)
+        self.assertIn('session 22222222-2222-4222-8222-222222222222', err)
         self.assertIn('--takeover', err)
 
     def test_claim_note_from_a_different_login_is_also_refused(self):
         data = issue(assignees=['me'])
-        data['comments'] = [{'author': {'login': 'hayk'}, 'body': 'Claimed: branch `feat/y` · session s9'}]
+        data['comments'] = [{'author': {'login': 'hayk'}, 'body': 'Claimed: branch `feat/y` · session 99999999-9999-4999-8999-999999999999'}]
         code, writes, err = self.claim(data)
         self.assertNotEqual(code, 0)
         self.assertEqual(writes, [])
 
     def test_our_own_latest_claim_is_not_blocked_by_an_older_one(self):
-        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/y` · session s2', 'Claimed: branch `feat/x` · session s1']))
+        code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/y` · session 22222222-2222-4222-8222-222222222222', 'Claimed: branch `feat/x` · session 11111111-1111-4111-8111-111111111111']))
         self.assertEqual(code, 0)
         self.assertEqual(writes, [])
 
     def test_session_defaults_to_the_desktop_session_id(self):
         gh = FakeGh(issues={7: issue()})
-        env = {'CLAUDE_CODE_HOST_SESSION_ID': 'local_abc', 'CLAUDE_CODE_SESSION_ID': 'cli-123'}
+        env = {'CLAUDE_CODE_HOST_SESSION_ID': 'local_abcabcab-0000-4000-8000-000000000abc', 'CLAUDE_CODE_SESSION_ID': '12312312-0000-4000-8000-000000000123'}
         with unittest.mock.patch.dict(os.environ, env):
             code, _, _ = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x')
         self.assertEqual(code, 0)
-        self.assertIn('session local_abc', gh.writes()[1][1])
+        self.assertIn('session local_abcabcab-0000-4000-8000-000000000abc', gh.writes()[1][1])
 
     def test_session_falls_back_to_the_cli_id_and_fails_without_either(self):
         gh = FakeGh(issues={7: issue()})
-        with unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_SESSION_ID': 'cli-123'}):
+        with unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_SESSION_ID': '12312312-0000-4000-8000-000000000123'}):
             os.environ.pop('CLAUDE_CODE_HOST_SESSION_ID', None)
             self.assertEqual(run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x')[0], 0)
-        self.assertIn('session cli-123', gh.writes()[1][1])
+        self.assertIn('session 12312312-0000-4000-8000-000000000123', gh.writes()[1][1])
         gh = FakeGh(issues={7: issue()})
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             code, _, err = run(gh, 'claim', '--repo', REPO, '7', '--branch', 'feat/x')
@@ -412,9 +525,13 @@ class Tick(unittest.TestCase):
 
 class Close(unittest.TestCase):
     """Trunk flow has no PR to close issues: after the deploy record, the session closes the task's own issues."""
+    def setUp(self):
+        belt_project(self)
+        stub_knowledge(self)
+
     def published(self):
         d = draft()
-        run(FakeGh(), 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        run(FakeGh(), 'publish', '--repo', REPO, str(d), *BELT, '--title', 'T', '--body-file', spec_body())
         return d  # spec #100, tickets #101-#103
 
     def test_closes_every_open_task_issue_with_the_deployed_sha(self):
@@ -504,9 +621,13 @@ class EvidenceGuards(unittest.TestCase):
 
 
 class Closes(unittest.TestCase):
+    def setUp(self):
+        belt_project(self)
+        stub_knowledge(self)
+
     def test_lists_the_spec_and_every_ticket(self):
         d = draft()
-        run(FakeGh(), 'publish', '--repo', REPO, str(d), '--title', 'T', '--body-file', spec_body())
+        run(FakeGh(), 'publish', '--repo', REPO, str(d), *BELT, '--title', 'T', '--body-file', spec_body())
         code, out, _ = run(FakeGh(), 'closes', str(d))
         self.assertEqual(code, 0)
         self.assertEqual(out.split('\n')[:4], ['Closes o/r#100', 'Closes o/r#101', 'Closes o/r#102', 'Closes o/r#103'])
