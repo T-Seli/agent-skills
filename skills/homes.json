@@ -22,6 +22,11 @@
    "home": "ENGINEERING-COORDINATOR.md"
   },
   {
+   "id": "decision-cards",
+   "pattern": "Decision cards \\(",
+   "home": "skills/workflow-contracts/decisions.md"
+  },
+  {
    "id": "release-card",
    "pattern": "Release card template",
    "home": "skills/agent-coordination/references/coordinator-release.md"

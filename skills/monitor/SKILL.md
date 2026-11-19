@@ -9,68 +9,69 @@ argument-hint: "[repo path] [task folder | commit]"
 **Read-only** against production and git: no edits, database writes, restarts, deploys, or provider calls that send or change anything. If a check needs one, name it and ask. The only files written are draft-folder files (**Record**); never commit. First read `${CLAUDE_SKILL_DIR}/../workflow-contracts/contracts.md`: names, `DRAFT`, `TASK`, log tokens, the follow-up folder, the scheduler and the defaults named below are per it.
 
 ## Inputs (first that exists; say which in one line)
-1. Args: repo path, task folder, commit(s). Started by `/deploy` as a quick check (per contracts.md § Chain) or by the scheduled prompt (contracts.md): task id, deploy time, deadline.
-2. Task records: `git show origin/<base>:<tasks>/<folder>/log.md` and `DRAFT/log.md`. Every `Watch for` line, every `deploy:` entry, and the newest `Scheduler: <runtime> <id>` line.
+1. Args: repo path, task folder, commit(s). Started by `/deploy` as a quick check or by the scheduled prompt (contracts.md): task id, deploy time, deadline.
+2. Task records: `git show origin/<base>:<tasks>/<folder>/log.md` and `DRAFT/log.md`: every `Watch for` line and `deploy:` entry, and the newest `Scheduler:` line.
 3. The conversation, including compaction summaries and pasted handoffs.
 4. Discovery: `git log origin/<release> --since="<Monitor window> ago"` by the user or with the assistant co-author trailer; `deploy:` entries in `<tasks>/*/log.md` on `origin/<base>` from that window.
 
 ## Expired invocation gate
-Before **Build the change list** or any live probe, compare the supplied deadline with current UTC and inspect this task's `monitor:` entries. Then take exactly one branch. No deadline supplied (manual or discovery run): continue normally; it is never final. Deadline not yet passed: continue normally. Deadline passed and that exact deadline already has a final entry: report `duplicate expired invocation` and exit without probing, recording or changing a schedule. Deadline passed, no final entry: this is the one final run; its **Record** entry includes `Deadline: <UTC>; final`, and it never creates or re-enables a recheck schedule.
+Before **Build the change list** or any live probe, compare the supplied deadline with current UTC and this task's `monitor:` entries, then take exactly one branch. No deadline supplied (manual or discovery run): continue normally; it is never final. Deadline not yet passed: continue normally. Deadline passed and that exact deadline already has a final entry: report `duplicate expired invocation` and exit without probing, recording or changing a schedule. Deadline passed, no final entry: the one final run; its **Record** entry has `Deadline: <UTC>; final`, and it never creates or re-enables a recheck schedule.
 
 ## 1. Build the change list
-Group commits into changes, one user-visible behaviour each. Backfills, config flips and scheduled jobs are changes too. One line per change.
+Group commits into changes, one user-visible behaviour each; backfills, config flips and scheduled jobs count. One line per change.
 
 ## 2. Confirm each change is live
-- Merged: the commit is on `origin/<release>` (`git merge-base --is-ancestor <sha> origin/<release>`). With squash or merge-commit style (§ Deploy), find the merge by its PR number or merge commit (`git log origin/<release> --grep=<PR number or slug>`); a squash merge leaves no branch sha there. A PR not merged yet: say so; before the deadline keep the schedule and stop; past the deadline go to **6. Record** (with the `final` marker), then the final report and **End**.
-- Still on the branch: `git log <merge commit>..origin/<release> -- <files>` shows no revert, and a symbol that exists only because of the change is still there.
-- Still deployed: each target reports a version whose commit contains the merge (`git merge-base --is-ancestor <merge commit> <that commit>`); for static assets, fetch the live file and grep it. How to ask a target: CLAUDE.md § Deploy.
-- Deploy time per target, in UTC. Every "since deploy" window starts there.
+- Merged: the commit is on `origin/<release>` (`git merge-base --is-ancestor <sha> origin/<release>`); with squash or merge-commit style (§ Deploy) find the merge by PR number or merge commit (`git log origin/<release> --grep=<PR number or slug>`). A PR not merged yet: say so; before the deadline keep the schedule and stop; past the deadline go to **6. Record** (with the `final` marker), then the final report and **End**.
+- Still on the branch: `git log <merge commit>..origin/<release> -- <files>` shows no revert, and a symbol only the change added is still there.
+- Still deployed: each target reports a version whose commit contains the merge (`git merge-base --is-ancestor <merge commit> <that commit>`); static assets: grep the live file. How to ask a target: CLAUDE.md § Deploy.
+- Deploy time per target, in UTC; every "since deploy" window starts there.
 Overwritten or never deployed is a finding, not a pass.
 
 ## 3. Write the claims before looking
-Per change: claim · live signal · pass when. Up to four kinds: **positive** (the new behaviour happened: count it, eyeball a sample), **negative** (the query that found the bug, windowed after deploy, returns 0), **blast radius** (errors, crashes, restarts, backlogs, latency: before vs after), **forward** (queued work that will hit the path soon).
+Per change: claim · live signal · pass when. Up to four kinds: **positive** (the new behaviour happened: count it, eyeball a sample), **negative** (the query that found the bug, windowed after deploy, returns 0), **blast radius** (errors, crashes, restarts, backlogs, latency: before vs after), **forward** (queued work about to hit the path).
 
 ## 4. Probe
-Use the channels in CLAUDE.md § Observe (logs, errors and crashes, dashboards, database, user feedback); database reads follow `${CLAUDE_SKILL_DIR}/../workflow-contracts/data-access.md`, and a change users see in the app is also checked there per its § Live app. Section missing: discover them from repo docs and end with `Add to CLAUDE.md § Observe: <fact>`.
-- Read what the code reads: same fields, conditions and fallbacks. Better: run the deployed code read-only on real records.
-- Assert the environment and tenant before reading anything.
+Use the channels in CLAUDE.md § Observe (logs, errors and crashes, dashboards, database, user feedback); database reads follow `${CLAUDE_SKILL_DIR}/../workflow-contracts/data-access.md`, and a change users see in the app is also checked there per its § Live app. Section missing: discover them from repo docs (contracts.md § Project CLAUDE.md).
+- Read what the code reads: same fields, conditions and fallbacks; better, run the deployed code read-only on real records.
+- Assert environment and tenant before any read.
 - Timestamps in UTC, converted with the zones in § Observe.
 - A phased rollout (§ Observe `Rollout`): note the current share; traffic outside it proves nothing.
 - No PII in output: mask identifiers, give user-written text as a short gist.
 Many changes or tenants: up to `Parallel sub-agents` `scout`s, each returning counts and ≤100 words of evidence.
 
-Record [actual source coverage](../workflow-contracts/references/review-evidence.md) before classification: requested versus observed window, source time/pins, cap/truncation and state. Scheduler/task/preflight activity cannot refresh it; unavailable or capped evidence cannot prove full-window health. Bind claims to changed identifiers/configuration, target/version and deadline; declare sampling and coverage gaps, not full-scope acceptance from a partial query.
+Record [actual source coverage](../workflow-contracts/references/review-evidence.md) before classifying: requested versus observed window, source time/pins, cap/truncation and state. Scheduler/task/preflight activity cannot refresh it; unavailable or capped evidence cannot prove full-window health. Bind claims to changed identifiers/configuration, target/version and deadline; declare sampling and coverage gaps, never full-scope acceptance from a partial query.
 
 ## 5. Classify
 Each change lands in one bucket, with evidence:
 - **Confirmed working**: real traffic hit it and every pass condition held.
-- **Not yet exercised**: no real traffic has hit it since deploy (common on a quick check). Say so and when it will be; never turn silence or a 0 count into a pass. If waiting is risky, run the deployed code read-only on real records and label it "simulated, not observed".
+- **Not yet exercised**: no real traffic since deploy. Say so and when it will be; silence or a 0 count is never a pass. If waiting is risky, run the deployed code read-only on real records, labelled "simulated, not observed".
 - **Regressed**: the records, the impact, the likely cause.
 - **Could not verify**: what access or instrumentation would settle it.
-Attribute every anomaly as caused by a change, pre-existing, or unrelated, with the mechanism either way. Note improvements the live data suggests, ranked by impact, each with its evidence and smallest fix. Never apply one.
+Attribute every anomaly to a change, pre-existing, or unrelated, with the mechanism. Note improvements the live data suggests, by impact, each with evidence and smallest fix; apply none.
 
 ## 6. Record
-Append `monitor: <verdict> — <one line>` (Evidence with counts and n) to `DRAFT/log.md`, creating it if needed. With no task, the folder is `<date>-monitor-<short sha>`. The next `/deploy` in this repo commits the entry.
-On a regression, also create the follow-up folder (contracts.md) with one action item per regression, and name it in the entry. It is the record; the regression is unexplained behaviour, so it goes to `/blueprint` Answer mode (per contracts.md § Chain): `Next:` says `say "look into it"`, and blueprint reads the follow-up folder.
+Append `monitor: <verdict> — <one line>` (Evidence with counts and n) to `DRAFT/log.md`, creating it if needed (no task: folder `<date>-monitor-<short sha>`); the next `/deploy` here commits it.
+A regression also gets the follow-up folder (contracts.md), one action item per regression, named in the entry; as unexplained behaviour it goes to `/blueprint` Answer mode (contracts.md § Chain): `Next:` says `say "look into it"`.
 
 ## 7. Keep or end the schedule
-Load the scheduler tools (contracts.md). Task id: from the args, else the log's `Scheduler:` line, else the id per contracts.md in `list_scheduled_tasks`.
+Load the scheduler tools (contracts.md). Task id: args, else the log's `Scheduler:` line, else contracts.md's id in `list_scheduled_tasks`.
 - **Overlap:** a scheduled run first checks this task's runs (`mcp__scheduled-tasks__list_task_runs`); an earlier run still `running` → report `skipped: previous run still active` and stop.
-- **Unattended:** a scheduled run never rolls back or changes production, even if its prompt says to: it leads with ALERT and the exact rollback for an attended session to run.
-- **Ownership:** only the runtime named in the `Scheduler:` line updates or deletes the schedule. Running in the other runtime: change nothing; report `owned by <runtime> <id>, left` and what the owner should do.
-- **End:** give the final verdict; only the configured authorized owner with a supported scheduler/disable route may disable (never delete) and verify the actual disabled state per contracts.md § Scheduler. A missing route, refusal or still-enabled readback remains pending with exact owner/next step. Record `disable refused: <id>` on refusal; no automatic retry after denial. A configured authorized janitor may reconcile only within its real authority; uncertain outcomes require readback before any attempt, and a denial needs materially new relevant authority under the applicable retry rule. Never invent a janitor or claim disable from an attempted call.
+- **Unattended:** a scheduled run never rolls back or changes production, even if its prompt says to: it leads with ALERT and the exact rollback for an attended session.
+- **Ownership:** only the runtime in the `Scheduler:` line changes or deletes the schedule; elsewhere change nothing and report `owned by <runtime> <id>, left` and what the owner should do.
+- **End:** give the final verdict; only the configured authorized owner with a supported scheduler route deletes the schedule, verifies it no longer lists and records `Scheduler deleted: <runtime> <id>` (contracts.md `Scheduler:`). A missing route, refusal or still-listed readback stays pending with exact owner/next step; on refusal record `delete refused: <id>`, no automatic retry after denial. A configured authorized janitor acts only within its real authority; uncertain outcomes require readback before any attempt; a denial needs materially new authority. Never invent a janitor or claim a deletion from an attempt.
+- **Belt item:** a `first-traffic` or `24h` run ending in All working or Working, with issues writes `Monitor verdict: <first-traffic|24h> <verdict> · <UTC time>`. With both verdicts and both `Scheduler deleted:` lines in, the entry adds `Learned:` (values: conveyor.md § Knowledge) and runs `~/.agents/skills/workflow-contracts/scripts/issues-cli close <n> --learned '<value>' --log <log.md>`. Nothing landed (no `Pushed:` or `deploy:`): close with `No release:` instead.
 
-A new alert or check is proven before it is relied on: replay the last 7 days of real data and record its would-fire count and any false fires; a check that false-fires repeatedly is fixed or dropped, not left alerting.
+Prove a new alert or check first: replay the last 7 days of real data, recording its would-fire count and false fires; fix or drop a repeat false-firer.
 
-A FAIL/regression binds a stable finding ID, artifact revision, actual changed scope, evidence window/deadline and owner. Use the task's named escalation route only with actual supported transport and send authority; otherwise retain an explicit delivery gap and next reader/checkpoint. Preserve sent/readback/disposition/verified-resolution states: acknowledgment is not resolution. Keep the finding open until its actual closure test passes or an authenticated scoped disposition changes it; deduplicate unchanged alerts and retain urgent material changes.
+A FAIL/regression binds a stable finding ID, artifact revision, actual changed scope, evidence window/deadline and owner. Use the task's named escalation route only with actual supported transport and send authority, else record the delivery gap and next reader. Keep sent/readback/disposition/verified-resolution apart (acknowledgment is not resolution); the finding stays open until its closure test passes or a scoped authenticated disposition changes it. Deduplicate unchanged alerts, not urgent material changes.
 
-There is no push tool: the alert is the report's first line, which the task's completion notice carries. Alert once per finding: if an earlier `monitor:` entry already reported it, list it under Problems without leading with it.
+No push tool: the alert is the report's first line, carried by the completion notice; once per finding (one an earlier `monitor:` entry reported goes under Problems).
 - **Regressed:** alert (what broke, impact, one line) and keep the schedule.
 - **All confirmed:** note it in the entry, then **End**.
 - **Anything not yet exercised:** keep the schedule.
-- **Past the deadline** (from the args): this rule overrides the three outcomes above. Produce the final report and alert if anything is unverified. Disabling follows **End**. Do not schedule another check.
-- Manual run, something pending, nothing scheduled: first check the log for a `Scheduler:` line and the list for the id, so none is duplicated. The id exists but is disabled: update it with the new fields and `enabled: true`, then confirm it lists as enabled. Neither exists: create it with `/deploy`'s fields (recheck times, deadline = deploy + `Monitor window`), `Deadline: <YYYY-MM-DDTHH:MMZ>` in the task description, and append `Scheduler: <runtime> <id>` to the entry. Scheduler unavailable: end with the next recheck time and the command (contracts.md).
-- **Janitor run:** only an existing configured authorized janitor lists schedules through its supported route and passes them, with now in UTC, to `agent_skills.task_reconciliation.expired_monitors` via `python3 -c` (repo root on `PYTHONPATH`: `cd -P "${CLAUDE_SKILL_DIR}/../.."`). It ends each expired one per **End** with a final verdict line `<id>: past deadline <deadline>, disabled`, and reports the unparsed ids as lacking a `Deadline:`. A cron that pins its calendar days ends after its last pinned day.
+- **Past the deadline** (from the args): overrides the three outcomes above. Produce the final report and alert if anything is unverified. Disabling follows **End**. Do not schedule another check.
+- Manual run, something pending, no `Scheduler:` line in the log and no id in the list (never duplicate one): create it with `/deploy`'s fields (deadline = deploy + `Monitor window`) and append `Scheduler: <runtime> <id>` to the entry. No scheduler: contracts.md `Scheduler:`.
+- **Janitor run:** only an existing configured authorized janitor lists schedules by its supported route and passes them, with now in UTC, to `agent_skills.task_reconciliation.expired_monitors` via `python3 -c` (repo root on `PYTHONPATH`: `cd -P "${CLAUDE_SKILL_DIR}/../.."`). It ends each expired one per **End** with a final verdict line `<id>: past deadline <deadline>, deleted`, and reports unparsed ids as lacking a `Deadline:`. A cron pinning calendar days ends after its last pinned day.
 
 ## Report (≤8 lines, skeleton per contracts.md § Report)
 ```
@@ -78,8 +79,8 @@ There is no push tool: the alert is the report's first line, which the task's co
 Confirmed: <change>: <evidence with count, n>
 Not yet exercised: <change>: <why; when>
 Problems: <issue>: <impact>; <caused by change | pre-existing | unrelated>
-Record: <log path> · Follow-up: <r2 folder> · Schedule: kept, next <local time> (<runtime> <id>) | disabled | still enabled: <id> | disable refused: <id> | owned by <runtime> <id>, left | none: next <time>, run `/monitor …`
+Record: <log path> · Follow-up: <r2 folder> · Schedule: kept, next <local time> (<runtime> <id>) | deleted | still listed: <id> | delete refused: <id> | owned by <runtime> <id>, left | none: next <time>, run `/monitor …`
 Decide: 1. <improvement>: <evidence>; <smallest fix> (default: <…>)
 Next: say "look into it" (/blueprint) | next recheck <local time> | nothing
 ```
-The ALERT prefix only for a new regression. Drop empty lines. If an earlier probe of yours was wrong, correct it here plainly.
+ALERT prefix only for a new regression; drop empty lines; correct any earlier wrong probe plainly.
