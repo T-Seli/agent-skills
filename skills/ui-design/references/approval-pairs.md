@@ -7,6 +7,7 @@ Approval views are never files: SendUserFile or attachments may not render for t
 
 ## Validate before showing
 A prototype, demo or UI mockup reaches the user only after its builder has used it in the browser as a user would. Never show one that has not been checked this way.
-- Open it in the browser tool (its own skill's tab rules) and use every interaction; check each state (empty, loading, error, long content); for animation, capture several frames; read the console for errors; check narrow width where it applies.
+- Limits: only under the task's scoped browser authorization (contracts.md § Consent). Interactions stay inside the prototype: never submit, send, delete or buy anything real, never write live data, never type a credential. Close the tabs you opened.
+- Open it in the browser tool that drives the user's own browser (Claude in Chrome where installed; its skill's tab rules) and use every interaction; a headless screenshot does not count; check each state (empty, loading, error, long content); for animation, capture several frames; read the console for errors; check narrow width where it applies.
 - Fix what you find and check again.
 - Record it: `Chrome validation: <URL> · <interactions and states checked> · console <clean | errors> · <screenshots or GIF>`. Show those screenshots or the GIF with the prototype.
