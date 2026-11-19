@@ -1069,6 +1069,12 @@ def open_belt(gh, repo):
     return [i for group in by.values() for i in group], by
 
 
+def closed_belt(gh, repo):
+    """Closed belt issues in any lane: the registry reads them too (conveyor.json registry.source)."""
+    issues = json.loads(gh(['issue', 'list', '-R', repo, '--state', 'closed', '--limit', '1000', '--json', FIELDS]))
+    return [i for i in issues if lane_of(i)]
+
+
 def since(i):
     c = captured(i.get('body', ''))
     return c[1] if c else parse_iso(i['createdAt'])
@@ -1085,7 +1091,7 @@ def pull_order(backlog):
 
 def registry(issues):
     """conveyor.json registry: {session: [(issue, 'owner'|'claim')]} from the latest `Owner:` and the holding `Claimed:`
-    session on each open belt issue, in the session_id forms only."""
+    session on each belt issue, open or closed, in the session_id forms only."""
     form, out = re.compile(belt()['session_id']['pattern']), {}
     for i in issues:
         lines = comment_lines(i)
@@ -1097,14 +1103,23 @@ def registry(issues):
     return out
 
 
+def unfinished(i):
+    return i['state'] == 'OPEN' and 'parked' not in label_names(i)
+
+
+def where(i):
+    return 'closed' if i['state'] != 'OPEN' else f"{lane_of(i)}{', parked' if 'parked' in label_names(i) else ''}"
+
+
 def registry_lines(issues):
+    """One line per registry session over open and closed belt `issues`; done once none of its issues is open and
+    unparked (conveyor.json registry.done)."""
     reg = registry(issues)
     out = [f'Sessions: {len(reg)} on the belt']
     for s, held in sorted(reg.items()):
-        claims = [i for i, role in held if role == 'claim']
-        state = 'working' if any('parked' not in label_names(i) for i in claims) else 'done' if claims else 'owner'
-        parts = [f"claimed #{i['number']} ({lane_of(i)}{', parked' if 'parked' in label_names(i) else ''})" for i in claims]
-        parts += [f"owns #{i['number']}" for i, role in held if role == 'owner']
+        state = 'working' if any(unfinished(i) for i, _ in held) else 'done'
+        parts = [f"claimed #{i['number']} ({where(i)})" for i, role in held if role == 'claim']
+        parts += [f"owns #{i['number']} ({where(i)})" for i, role in held if role == 'owner']
         out.append(f"- {s} · {state} · {', '.join(parts)}")
     return out
 
@@ -1242,10 +1257,9 @@ def board(gh, repo, weekly=False, write=True):
             asks.append(f"- #{i['number']} {i['title']} (needs-human)")
         elif asked and (not decided or parse_stamp(asked[-1]) > parse_stamp(decided[-1])):
             asks.append(f"- #{i['number']} {i['title']} (asked {asked[-1]})")
-    closed = json.loads(gh(['issue', 'list', '-R', repo, '--state', 'closed', '--label', 'lane:closed', '--limit', '100',
-                            '--json', 'number,comments']))
+    closed = closed_belt(gh, repo)
     if write:
-        log_closed(gh, repo, closed, violations, wrote, notes)
+        log_closed(gh, repo, [i for i in closed if lane_of(i) == 'closed'], violations, wrote, notes)
     if weekly:
         old = [i for i in by['backlog'] if t - parse_iso(i['createdAt']) > BACKLOG_OLD]
         if old:
@@ -1279,7 +1293,7 @@ def board(gh, repo, weekly=False, write=True):
         f'Parked: {len(parked)}', *[f"- #{i['number']} {i['title']}" + (
             f" · waiting on {why[i['number']]['who']} until {why[i['number']]['until']} since {why[i['number']]['time']}"
             if i['number'] in why else '') for i in parked],
-        *registry_lines(issues),
+        *registry_lines([*issues, *closed]),
         f'Violations: {len(violations)}', *[f'- {v}' for v in violations],
         f'Wrote: {len(wrote)}', *[f'- {w}' for w in wrote], *notes]
     counts = {'questions': len(asks), 'in-progress': len(by['in-progress']), 'in-review': len(by['in-review']),

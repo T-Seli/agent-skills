@@ -330,8 +330,9 @@ class Lanes(BeltCase):
         self.assertEqual(self.gh.lane(n), 'monitoring')
 
     def test_a_later_rolled_back_line_undoes_landed_until_a_newer_push(self):
-        """Fix2 item 3 (contract PR #24): receipts.landed.undone_by and the rolled_back receipt."""
+        """Fix2 item 3, rechecked in fix3 item 4 against main: receipts.landed.undone_by and the rolled_back receipt."""
         self.assertIn('Rolled back:', CONVEYOR['receipts']['landed']['undone_by'])
+        self.assertRegex(f'Rolled back: {HEAD[:7]} to main', CONVEYOR['receipts']['rolled_back']['pattern'])
         claude = (self.root / 'CLAUDE.md').read_text()
         (self.root / 'CLAUDE.md').write_text(claude + '\n## Deploy\n- Targets: none (the pipeline ends at the merge)\n')
         n = self.at('ready-to-release')
@@ -820,8 +821,28 @@ class Sweep(BeltCase):
         self.assertIn('Sessions: 3 on the belt', out)
         self.assertIn(f'- {BUILDER} · working · claimed #{working} (in-progress)', out)
         self.assertIn(f'- {REVIEWER} · done · claimed #{parked} (in-progress, parked)', out)
-        self.assertIn(f'- {COORD} · owner · owns #3, owns #{working}', out)
+        self.assertIn(f'- {COORD} · working · owns #3 (next), owns #{working} (in-progress)', out)
         self.assertNotIn('not-a-session-id', out)
+
+    def test_registry_reads_closed_belt_issues_and_a_closed_issue_never_keeps_a_session_working(self):
+        """Fix3 item 2 (contract #24 registry.source and registry.done)."""
+        claim = lambda s: f'Claimed: branch `feat/c` · session {s}'  # noqa: E731
+        gone = self.gh.add(lane='in-review', comments=(f'Owner: thomas · session {COORD} · 2026-11-18 11:00Z', claim(REVIEWER)))
+        mixed_closed = self.gh.add(lane='in-review', comments=(claim(REVIEWER2),))
+        mixed_open = self.gh.add(lane='in-progress', comments=(claim(REVIEWER2),))
+        parked = self.gh.add(lane='in-progress', labels=('parked',), comments=(claim(BUILDER),))
+        self.gh.add(comments=(claim(RELEASE_OWNER),))  # closed but never on the belt
+        for n in (gone, mixed_closed, 5):
+            self.gh.issues[n]['state'] = 'CLOSED'
+        out = self.sweep()
+        self.assertIn(['issue', 'list', '-R', REPO, '--state', 'closed', '--limit', '1000', '--json', issues_cli.FIELDS],
+                      [a for a, _ in self.gh.calls])
+        self.assertIn('Sessions: 4 on the belt', out)
+        self.assertIn(f'- {REVIEWER} · done · claimed #{gone} (closed)', out)
+        self.assertIn(f'- {COORD} · done · owns #{gone} (closed)', out)
+        self.assertIn(f'- {REVIEWER2} · working · claimed #{mixed_open} (in-progress), claimed #{mixed_closed} (closed)', out)
+        self.assertIn(f'- {BUILDER} · done · claimed #{parked} (in-progress, parked)', out)
+        self.assertNotIn(RELEASE_OWNER, out)
 
     def test_weekly_adds_the_backlog_age_question_counts_and_the_knowledge_changes(self):
         self.k = stub_knowledge(self, changes=[CHANGE])
