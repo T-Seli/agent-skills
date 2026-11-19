@@ -487,7 +487,10 @@ def guard_hook(decide):
         verdict = decide(json.load(sys.stdin))
     except Exception as exc:  # noqa: BLE001 - fail closed and say why
         verdict = ("deny", f"Guard error, refused: {type(exc).__name__}: {exc}")
-    if verdict and verdict[0] != "allow":
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": verdict[0],
-                                                 "permissionDecisionReason": verdict[1]}}))
+    if verdict:
+        word, _, note = verdict[0].partition(" (")  # a contract value reads "deny (why)": the word decides
+        reason = f"{verdict[1]} ({note}" if note else verdict[1]
+        if word != "allow":
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": word,
+                                                     "permissionDecisionReason": reason}}))
     return 0
