@@ -29,7 +29,7 @@ Intent per commit: its action item in `TASK/action-items.md` (the log's `impleme
 
 Use [research evidence](../workflow-contracts/references/research.md) for claim/source and installed-version checks, and [review evidence](../workflow-contracts/references/review-evidence.md) for real coverage, owner/acceptance and optimization claims.
 
-For UI/frontend or visualization changes, load [ui-design](../ui-design/SKILL.md) and compare the exact rendered artifact, interaction/state matrix and accessible alternatives with the selected design packet. Offline: compose `company.test-review company.ui-design`; automated checks alone are not visual or human acceptance.
+For UI/frontend or visualization changes, load [ui-design](../ui-design/SKILL.md) and compare the exact rendered artifact, interaction/state matrix and accessible alternatives with the selected design packet. Offline: compose `company.test-review company.ui-design`; automated checks alone are not visual or human acceptance. Production today, the base for a change users see: `${CLAUDE_SKILL_DIR}/../workflow-contracts/data-access.md` § Live app.
 
 ## 1. Tests (before reading any code)
 Check the current decision/spec revision, domain invariants, exclusions and each slice’s user-visible acceptance per `${CLAUDE_SKILL_DIR}/../workflow-contracts/decisions.md`. Reopened assumptions invalidate only affected evidence; passing checks never resolve unanswered user choices.

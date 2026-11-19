@@ -17,3 +17,12 @@ How any skill reads production data. Tools, servers and tables come from the pro
 - Read-only always. A needed write goes to the user as a decision (contracts.md § Consent).
 - A scout gets the database, the recipe and the question in its brief, and returns counts and ids, not rows.
 - When the task or dispatch declares a database or connector capability, brief the scout once a readiness check passes for it in the scout's own environment and auth context (worker-execution.md); a missing, stale or mismatched declared capability blocks that dispatch and is reported as a gap. The receipt records an earlier authorized observation and never grants access; capabilities the task does not declare don't gate it. Never probe or create access to find out.
+
+## Live app
+When a question, claim or check concerns what users see in the app, look at the real app too, without being asked. It adds to database, log and code evidence and never replaces it.
+- Where: the project's `CLAUDE.md` § Observe `App checks` (URLs, views, roles to compare). Missing: take them from the task or repo docs, else ask once; end with `Add to CLAUDE.md § Observe: <fact>`.
+- How: the browser where the user is already signed in, following that browser tool's own skill (check open tabs first, work in your own new tab, close it after). One agent drives it at a time. Not connected: say so, mark that claim `Could not verify`, continue.
+- Allowed: open pages and records, search and filter, switch view or role (view-as), scroll, screenshots, page text, network requests (status and payload).
+- Never: a control that changes state (claim, reply, send, mark handled, save a setting, any submit), or typing a credential. A sign-in page: stop and ask the user to sign in.
+- Compare views when access may differ (admin, a staff role, view-as) and name the ones checked.
+- Evidence per finding: URL, view and role, screenshot, the request's status; payloads as ids and counts, never PII.

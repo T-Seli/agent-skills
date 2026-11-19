@@ -96,7 +96,7 @@
    "long": 10
   },
   "skills/agent-coordination/references/worker-execution.md": {
-   "bytes": 20784,
+   "bytes": 20889,
    "long": 12
   },
   "skills/agent-coordination/references/workspace-and-train.md": {
@@ -112,11 +112,11 @@
    "long": 0
   },
   "skills/blueprint/SKILL.md": {
-   "bytes": 10788,
+   "bytes": 10822,
    "long": 0
   },
   "skills/blueprint/references/bug-mode.md": {
-   "bytes": 2520,
+   "bytes": 2537,
    "long": 0
   },
   "skills/deploy/SKILL.md": {
@@ -148,7 +148,7 @@
    "long": 1
   },
   "skills/monitor/SKILL.md": {
-   "bytes": 11195,
+   "bytes": 11272,
    "long": 2
   },
   "skills/prime-context/SKILL.md": {
@@ -188,7 +188,7 @@
    "long": 0
   },
   "skills/test-review/SKILL.md": {
-   "bytes": 16547,
+   "bytes": 16670,
    "long": 7
   },
   "skills/test-review/references/hosted-review.md": {
@@ -232,7 +232,7 @@
    "long": 0
   },
   "skills/workflow-contracts/data-access.md": {
-   "bytes": 1935,
+   "bytes": 3140,
    "long": 0
   },
   "skills/workflow-contracts/decisions.md": {
@@ -244,7 +244,7 @@
    "long": 5
   },
   "skills/workflow-contracts/project-CLAUDE-template.md": {
-   "bytes": 6313,
+   "bytes": 6397,
    "long": 0
   },
   "skills/workflow-contracts/references/ci-evidence.md": {

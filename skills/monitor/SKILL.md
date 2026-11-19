@@ -31,7 +31,7 @@ Overwritten or never deployed is a finding, not a pass.
 Per change: claim · live signal · pass when. Up to four kinds: **positive** (the new behaviour happened: count it, eyeball a sample), **negative** (the query that found the bug, windowed after deploy, returns 0), **blast radius** (errors, crashes, restarts, backlogs, latency: before vs after), **forward** (queued work about to hit the path).
 
 ## 4. Probe
-Use the channels in CLAUDE.md § Observe (logs, errors and crashes, dashboards, database, user feedback); database reads follow `${CLAUDE_SKILL_DIR}/../workflow-contracts/data-access.md`. Section missing: discover them from repo docs (contracts.md § Project CLAUDE.md).
+Use the channels in CLAUDE.md § Observe (logs, errors and crashes, dashboards, database, user feedback); database reads follow `${CLAUDE_SKILL_DIR}/../workflow-contracts/data-access.md`, and a change users see in the app is also checked there per its § Live app. Section missing: discover them from repo docs (contracts.md § Project CLAUDE.md).
 - Read what the code reads: same fields, conditions and fallbacks; better, run the deployed code read-only on real records.
 - Assert environment and tenant before any read.
 - Timestamps in UTC, converted with the zones in § Observe.

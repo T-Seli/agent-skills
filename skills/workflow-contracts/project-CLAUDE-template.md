@@ -55,6 +55,7 @@
 - Dashboards / alerts: <where>
 - Lookup: <entity → database/schema.table, key, joins, time column, trace order; or the path of a recipes file> | none
 - Database checks: <the read-only SQL tool and its targets; how a tenant resolves to its database; the large tables to explain first> | none
+- App checks: <app URLs; views and roles to compare, e.g. admin and view-as> | none
 - User feedback: <support inbox, reviews, feedback tracker> | none
 - Traffic timing: <when real traffic exercises each path, e.g. business hours, nightly batch>
 - Rollout: <phased percentages and how to read the current stage> | none
