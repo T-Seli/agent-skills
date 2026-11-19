@@ -101,6 +101,11 @@
    "id": "live-app",
    "pattern": "One agent drives it at a time",
    "home": "skills/workflow-contracts/data-access.md"
+  },
+  {
+   "id": "plain-language",
+   "pattern": "ASD-STE100",
+   "home": "skills/workflow-contracts/references/plain-language.md"
   }
  ]
 }

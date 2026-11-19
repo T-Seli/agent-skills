@@ -31,6 +31,8 @@ Use [research evidence](../workflow-contracts/references/research.md) for claim/
 
 For UI/frontend or visualization changes, load [ui-design](../ui-design/SKILL.md) and compare the exact rendered artifact, interaction/state matrix and accessible alternatives with the selected design packet. Offline: compose `company.test-review company.ui-design`; automated checks alone are not visual or human acceptance. Production today, the base for a change users see: `${CLAUDE_SKILL_DIR}/../workflow-contracts/data-access.md` § Live app.
 
+New customer-facing text that breaks [plain language](../workflow-contracts/references/plain-language.md) is advice in the report, never a blocker.
+
 ## 1. Tests (before reading any code)
 Check the current decision/spec revision, domain invariants, exclusions and each slice’s user-visible acceptance per `${CLAUDE_SKILL_DIR}/../workflow-contracts/decisions.md`. Reopened assumptions invalidate only affected evidence; passing checks never resolve unanswered user choices.
 Classify changed paths and risk first. Small prompt/KB/instruction fixes get semantic synthetic cases and producer-path checks per `${CLAUDE_SKILL_DIR}/../workflow-contracts/behavior.md`; exact generated wording is no acceptance oracle. Reuse evidence only after comparing its source, tests, dependencies and environment, citing the comparison. Never repeat paid/live simulations merely for freshness; new external runs need scoped authority. Consent, integrity, exact-source and shared-release checks still apply.

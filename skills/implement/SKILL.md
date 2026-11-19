@@ -32,6 +32,8 @@ Consume the current [research packet](../workflow-contracts/references/research.
 
 For UI/frontend work, consume the selected [UI design packet](../ui-design/SKILL.md), preserve the product design system, and verify rendered states/interactions in authorized scope. Offline: compose `company.implement company.ui-design`; unresolved design choices hold only dependent work.
 
+A change that adds or edits user-visible or error text words it per [plain language](../workflow-contracts/references/plain-language.md); an existing live template is reworded only with the owner's approval.
+
 ## Steps
 0. **Deployment readiness.** Before deployment-related work starts or resumes, run contracts.md's read-only deployment-readiness preflight, reusing still-current source-bound evidence.
 1. **Sync.** No remote: skip. Else `git fetch origin`, then `git rev-list --left-right --count <base>...origin/<base>`:

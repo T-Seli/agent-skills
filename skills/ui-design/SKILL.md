@@ -93,7 +93,7 @@ Review compares the exact rendered candidate and representative interactions
 against the selected direction/current product, including narrow screens and
 long or missing content. Code review, an HTTP success, a screenshot alone or an
 automated accessibility score cannot establish usability or full accessibility.
-Report actual checks and limits; human acceptance and release stay separate.
+Report actual checks and limits; human acceptance and release stay separate. Proposed UI and error text follows [plain language](../workflow-contracts/references/plain-language.md).
 
 For the offline selector, explicitly compose `company.ui-design` with the phase
 skill (at most three skills); a link alone does not load another skill's body or

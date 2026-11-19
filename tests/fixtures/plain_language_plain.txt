@@ -1,0 +1,6 @@
+Hello,
+
+We moved your appointment. The technician cannot come on the day you booked.
+
+1. Reply with a time that works for you.
+2. We confirm the new time in one message.
