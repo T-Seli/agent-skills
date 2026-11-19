@@ -1,0 +1,4 @@
+- [Review rule](review-rule.md) — synthetic process rule
+- [Acme billing fact](acme-billing.md) — synthetic domain fact
+- [Editor preference](editor-pref.md) — synthetic personal preference
+- [Loose note](loose-note.md) — synthetic note without frontmatter
