@@ -23,7 +23,7 @@ Every move is `issues-cli lane <n> <lane>`: it checks the entry rule and refuses
 | Lane | Entry receipts | Called at |
 |---|---|---|
 | `inbox` | `Captured:` | `capture`, `feed` |
-| `backlog` | `domain`, `kind`, `size` labels | sort pass |
+| `backlog` | `domain`, `kind`, `size` labels | `issues-cli sort <n>` (`--dry-run` prints) |
 | `next` | `Owner:`, `domain`, `Done when:` | `publish` |
 | `in-progress` | `Claimed:`, brief; size S or M; Build below limit | implement Start |
 | `in-review` | `implement: done`, linked PR | implement done |

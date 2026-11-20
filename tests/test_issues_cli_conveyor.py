@@ -1133,3 +1133,68 @@ class Limits(BeltCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Sort(BeltCase):
+    """`issues-cli sort`: inbox to backlog in one gated move (conveyor.md § Lanes)."""
+    ARGS = ('--domain', 'deploy', '--kind', 'bug', '--size', 'S')
+
+    def sort(self, n, *extra, ok=True):
+        return self.cli('sort', '--repo', REPO, str(n), *(extra or self.ARGS), ok=ok)
+
+    def test_a_valid_sort_labels_and_moves_with_one_receipt_comment(self):
+        n = self.gh.add(lane='inbox')
+        self.sort(n)
+        self.assertEqual(self.gh.lane(n), 'backlog')
+        self.assertTrue({'domain:deploy', 'kind:bug', 'size:S'} <= set(self.gh.names(n)))
+        self.assertNotIn('needs-human', self.gh.names(n))
+        self.assertTrue({'domain:deploy', 'kind:bug', 'size:S'} <= self.gh.labels)
+        comments = self.gh.issues[n]['comments']
+        self.assertEqual(len(comments), 1)
+        self.assertIn('Sorted: domain:deploy · kind:bug · size:S', comments[0]['body'])
+        [t] = self.gh.timeline(n)
+        self.assertEqual((t['command'], t['from'], t['to']), ('sort', 'inbox', 'backlog'))
+
+    def test_needs_decision_sets_needs_human(self):
+        n = self.gh.add(lane='inbox')
+        self.sort(n, *self.ARGS, '--needs-decision')
+        self.assertIn('needs-human', self.gh.names(n))
+
+    def test_an_old_label_is_replaced(self):
+        n = self.gh.add(lane='inbox', labels=['kind:chore', 'size:L', 'domain:policy'])
+        self.sort(n)
+        self.assertEqual(sorted(x for x in self.gh.names(n) if x.split(':')[0] in ('domain', 'kind', 'size')),
+                         ['domain:deploy', 'kind:bug', 'size:S'])
+
+    def test_each_bad_value_is_named_and_nothing_is_written(self):
+        n = self.gh.add(lane='inbox')
+        out = self.sort(n, '--domain', 'nope', '--kind', 'epic', '--size', 'XL', ok=False)
+        for bad in ('domain', 'nope', 'kind', 'epic', 'size', 'XL'):
+            self.assertIn(bad, out)
+        self.assertEqual(self.gh.writes(), [])
+
+    def test_an_issue_outside_inbox_is_refused(self):
+        n = self.gh.add(lane='backlog')
+        self.assertIn('lane:inbox', self.sort(n, ok=False))
+        self.assertEqual(self.gh.writes(), [])
+
+    def test_a_closed_issue_is_refused(self):
+        n = self.gh.add(lane='inbox')
+        self.gh.close(n)
+        self.assertIn('closed', self.sort(n, ok=False))
+        self.assertEqual(self.gh.writes(), [])
+
+    def test_the_gate_still_refuses_a_held_issue_and_nothing_is_written(self):
+        n = self.gh.add(lane='inbox', labels=['hold'])
+        self.assertIn('hold', self.sort(n, ok=False))
+        self.assertEqual(self.gh.writes(), [])
+
+    def test_dry_run_prints_the_label_changes_and_writes_nothing(self):
+        n = self.gh.add(lane='inbox', labels=['size:L'])
+        out = self.cli('sort', '--repo', REPO, str(n), *self.ARGS, '--dry-run')
+        self.assertIn('--add-label', out)
+        self.assertIn('size:S', out)
+        self.assertIn('--remove-label', out)
+        self.assertEqual(self.gh.lane(n), 'inbox')
+        self.assertEqual(self.gh.issues[n]['comments'], [])
+        self.assertEqual(self.gh.labels, set())
