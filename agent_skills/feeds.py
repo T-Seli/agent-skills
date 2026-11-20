@@ -8,12 +8,39 @@ import re
 UPDATED = re.compile(r'^Source updated: \d{4}-\d{2}-\d{2} \d{2}:\d{2}Z · (.+)$')
 
 
+REQUIRED = ('id', 'kind', 'key_fields', 'priority', 'enabled', 'max_new')
+
+
+def layer(cli, where, found):
+    if not isinstance(found, list) or not all(isinstance(e, dict) and isinstance(e.get('id'), str) for e in found):
+        raise cli.Refused(f'{where}: feeds must be a list of objects, each with an id')
+    return found
+
+
+def entries(cli):
+    """Shared entries, then the project's feeds.json (project root), then the machine config's `feeds`: merged by id,
+    field by field, the narrower layer winning. A missing file is normal; a malformed one is refused."""
+    path = cli.project()[0] / 'feeds.json'
+    try:
+        project = layer(cli, str(path), json.loads(path.read_text())) if path.exists() else []
+    except ValueError:
+        raise cli.Refused(f'{path} is not JSON')
+    merged = {e['id']: dict(e) for e in cli.belt()['feeds']['entries']}
+    for where, found in ((str(path), project), ('machine config feeds', layer(cli, 'machine config feeds', cli.machine_config().get('feeds', [])))):
+        for e in found:
+            merged.setdefault(e['id'], {}).update(e)
+            if missing := [f for f in REQUIRED if f not in merged[e['id']]]:
+                raise cli.Refused(f"{where}: feed {e['id']} lacks {', '.join(missing)}")
+    return list(merged.values())
+
+
 def entry(cli, name):
-    found = next((e for e in cli.belt()['feeds']['entries'] if e['id'] == name), None)
+    every = entries(cli)
+    found = next((e for e in every if e['id'] == name), None)
     if found is None:
-        raise cli.Refused(f"unknown feed {name}; declared feeds: {', '.join(e['id'] for e in cli.belt()['feeds']['entries'])}")
+        raise cli.Refused(f"unknown feed {name}; declared feeds: {', '.join(e['id'] for e in every)}")
     if not found['enabled']:
-        raise cli.Refused(f'feed {name} is disabled in conveyor.json feeds.entries; nothing was read or written')
+        raise cli.Refused(f'feed {name} is disabled; set enabled in feeds.json or the machine config to use it')
     return found
 
 
