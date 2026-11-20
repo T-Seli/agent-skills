@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from agent_skills import issues_cli
 from test_issues_cli import REPO
-from test_issues_cli_conveyor import BUILDER, CONVEYOR, TIMELINE, BeltCase
+from test_issues_cli_conveyor import BUILDER, CONVEYOR, COORD, Q, TIMELINE, BeltCase
 from test_issues_dispatch import DispatchCase
 
 PARKED = re.compile(CONVEYOR['receipts']['parked']['pattern'])
@@ -240,23 +240,62 @@ class TimeBoxes(ParkCase):
         self.assertEqual(self.gh.writes(), [])
         self.assertIn(f'- past its time box: #{n} in-progress S', '\n'.join(lines))
 
-    def test_a_card_waiting_on_the_owner_is_flagged_at_one_box_and_never_parked(self):
-        n = self.at('next')
-        self.gh.comment(n, f'Conveyor: 2026-11-18 12:00Z · ask · next → next · head - · tests - · skills {"f" * 7} · schedules -')
-        self.t += timedelta(hours=3)
-        self.assertNotIn('past its box', self.sweep())
-        self.t += timedelta(hours=2)
-        out = self.sweep()
-        self.assertIn(f'- #{n} Widget (asked 2026-11-18 12:00Z, past its 4 h box)', out)
-        self.assertIn('Need from you: 1', out)
-        self.assertEqual((self.gh.lane(n), 'parked' in self.gh.names(n)), ('next', False))
-
     def test_the_boxes_come_from_the_contract_not_the_code(self):
         self.root.joinpath('CLAUDE.md').write_text(self.root.joinpath('CLAUDE.md').read_text() + '- Time boxes: Build S 1 h, M 2 days · a card 30 min\n')
         n = self.at('in-progress')
         self.t += timedelta(hours=2)
         self.sweep()
         self.assertEqual((len(self.asks(n)), self.stalled(n)), (0, True))  # 2.5 h since the last receipt is past two 1 h boxes
+
+
+class CardPark(ParkCase):
+    defaults = LIMITS
+
+    def card(self):
+        n = self.at('next')
+        self.gh.comment(n, f'Conveyor: 2026-11-18 12:00Z · ask · next → next · head - · tests - · skills {"f" * 7} · schedules -')
+        return n
+
+    def test_a_card_is_flagged_at_its_box_and_parked_once_waiting_for_the_decision(self):
+        n = self.card()
+        self.t += timedelta(hours=4)  # exactly the box
+        self.gh.calls.clear()
+        self.assertNotIn('past its', self.sweep())
+        self.assertNotIn('parked', self.gh.names(n))
+        self.t += timedelta(minutes=1)
+        out = self.sweep()
+        self.assertIn(f'- #{n} Widget (asked 2026-11-18 12:00Z, past its 4 h box)', out)  # stays on the owner's list
+        self.assertIn(f'- parked #{n} (card unanswered past 4 h)', out)
+        [m] = self.line(n, PARKED)
+        self.assertEqual((m['until'], m['why']), ('event:decided', "waiting on the owner's answer"))
+        self.assertEqual(self.gh.lane(n), 'next')
+        self.assertIn('parked', self.gh.names(n))
+        self.sweep()
+        self.assertEqual(len(self.line(n, PARKED)), 1)
+
+    def test_decide_posts_the_event_and_the_next_sweep_unparks(self):
+        n = self.card()
+        self.t += timedelta(hours=5)
+        self.sweep()
+        self.cli('decide', '--repo', REPO, str(n), 'Yes', '--question', Q, '--session', COORD)
+        self.assertIn('Event: decided', self.gh.lines(n))
+        out = self.sweep()
+        self.assertNotIn('parked', self.gh.names(n))
+        self.assertEqual(self.line(n, UNPARKED)[0]['how'], 'event:decided')
+        self.assertIn(f'- unparked #{n} (event:decided)', out)
+        self.assertEqual(len(self.line(n, PARKED)), 1)  # answered: not parked again
+        self.assertNotIn('Widget (asked', out)
+
+    def test_dry_run_writes_nothing(self):
+        n = self.card()
+        self.t += timedelta(hours=5)
+        self.gh.calls.clear()
+        self.cli('--dry-run', 'sweep', '--repo', REPO)
+        self.assertEqual(self.gh.writes(), [])
+        self.assertNotIn('parked', self.gh.names(n))
+
+    def test_the_until_value_comes_from_config(self):
+        self.assertEqual(CONVEYOR['park']['card_until'], 'event:decided')
 
 
 class DispatchSkips(DispatchCase):

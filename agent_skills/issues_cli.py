@@ -960,7 +960,8 @@ def decide(gh, repo, n, text, question, session, log=None, scope=None):
     line = f'Decision: {text} · {stamp(at)} · question {question} · session {session}'
     if not re.fullmatch(receipt('decision')['pattern'], line):
         raise Refused(f'malformed decision line: {line}')
-    record(gh, repo, n, conveyor_line('decide', cur, cur), log_path, [line])
+    until = belt()['park']['card_until']
+    record(gh, repo, n, conveyor_line('decide', cur, cur), log_path, [line, f"Event: {re.match(belt()['park']['until']['event'], until)['name']}"])
     if k is None:
         return f'#{n} decision recorded; Knowledge: none, so no decision row'
     if k.notice:
@@ -1161,6 +1162,14 @@ def unpark(gh, repo, n, log=None):
         raise Refused(f'#{n} is not parked or stalled')
     lift(gh, repo, d, 'manual', 'unpark', task_log(log)[0])
     return f"#{n} unparked ({lane_of(d)})"
+
+
+def pending_ask(i):
+    """Time of the last `ask` card the owner has not answered with a `Decision:` since, or None."""
+    lines = comment_lines(i)
+    asked = [x['time'] for x in timeline_of(lines) if x['command'] == 'ask']
+    decided = [m['time'] for line in lines if (m := re.match(receipt('decision')['pattern'], line))]
+    return asked[-1] if asked and (not decided or parse_stamp(asked[-1]) > parse_stamp(decided[-1])) else None
 
 
 def unpark_due(i, t):
@@ -1502,8 +1511,14 @@ def board(gh, repo, weekly=False, write=True):
             if 'parked' in label_names(i) and (how := unpark_due(i, t)):
                 lift(gh, repo, i, how, 'sweep')
                 wrote.append(f"unparked #{i['number']} ({how})")
+        cfg, carded = belt()['park'], set()
         for i in issues:
-            if not (late := past_box(i, t, boxes)):
+            if not frees_slot(i) and (asked := pending_ask(i)) and t - parse_stamp(asked) > boxes['card'][0]:
+                park(gh, repo, i['number'], cfg['card_until'], cfg['card_why'])
+                carded.add(i['number'])
+                wrote.append(f"parked #{i['number']} (card unanswered past {boxes['card'][1]})")
+        for i in issues:
+            if i['number'] in carded or not (late := past_box(i, t, boxes)):
                 continue
             passed, last, text = late
             quiet = f"no receipt since {stamp(last)} · box {text}"
@@ -1539,14 +1554,12 @@ def board(gh, repo, weekly=False, write=True):
     if waiting and t - min(parse_stamp(e['at']) for e in waiting) > SPOOL_LATE:
         violations.append(f'spool over 15 min: {len(waiting)} capture(s) not yet filed')
     for i in issues:
-        lines = comment_lines(i)
-        asked = [x['time'] for x in timeline_of(lines) if x['command'] == 'ask']
-        decided = [m['time'] for line in lines if (m := re.match(receipt('decision')['pattern'], line))]
+        asked = pending_ask(i)
         if 'needs-human' in label_names(i):
             asks.append(f"- #{i['number']} {i['title']} (needs-human)")
-        elif asked and (not decided or parse_stamp(asked[-1]) > parse_stamp(decided[-1])):
-            late = f", past its {boxes['card'][1]} box" if t - parse_stamp(asked[-1]) > boxes['card'][0] else ''
-            asks.append(f"- #{i['number']} {i['title']} (asked {asked[-1]}{late})")
+        elif asked:
+            late = f", past its {boxes['card'][1]} box" if t - parse_stamp(asked) > boxes['card'][0] else ''
+            asks.append(f"- #{i['number']} {i['title']} (asked {asked}{late})")
     closed = closed_belt(gh, repo, t)
     if write:
         log_closed(gh, repo, [i for i in closed if lane_of(i) == 'closed'], violations, wrote, notes)
