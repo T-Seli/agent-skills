@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 from . import layout
@@ -104,6 +105,12 @@ def live_or_none(cli):
         return None
 
 
+def hold_text(why, r, path):
+    task = r.get('task_id', '?')
+    return (f'{why} (task {task}); never retried automatically. Run `delegate.py status {task}`: if no run exists, '
+            f'delete {path} and the next tick starts a fresh task; if one exists, let it finish or close it first')
+
+
 def plan(cli, gh, repo, cfg):
     """(batch [(issue, kind)], skipped [(issue, reason)], held [(issue, reason)]), in priority order, read-only."""
     issues, by = cli.open_belt(gh, repo)
@@ -123,11 +130,11 @@ def plan(cli, gh, repo, cfg):
         elif size not in sizes:
             skipped.append((i, f"size not allowed: {size or 'no size label'} (allowed {', '.join(sizes)})"))
         elif r and r['status'] == 'submission_pending':
-            held.append((i, f'delegate start outcome unknown (receipt {path}); never retried automatically, check the worker, then delete the receipt'))
+            held.append((i, hold_text('delegate start outcome unknown', r, path)))
         elif r and r['status'] == 'verified' and live is not None and r.get('session_id') in live:
             skipped.append((i, 'started: waiting for the worker to claim'))
         elif r and r['status'] == 'verified':
-            held.append((i, f"started but no running worker shown and still in next (receipt {path}); never retried automatically"))
+            held.append((i, hold_text('started but no running worker shown and still in next', r, path)))
         elif mark and mark['state'] == 'active' and any(cli.unfinished(x) for x, _ in reg.get(mark['session'], [])):
             skipped.append((i, f"marker: active session {mark['session']} still in the registry"))
         elif stop:
@@ -160,10 +167,15 @@ def refusal_reason(out, err):
         return err.strip() or 'refused'
 
 
-def contract(cli, repo, n, title, prompt, kind):
+def new_task_id(repo, n):
+    """One id per attempt: delegate refuses an id it has already used, so a retry never reuses one."""
+    return re.sub(r'[^A-Za-z0-9._-]+', '-', f'conveyor-{repo}-{n}')[:70] + f'-{uuid.uuid4().hex[:8]}'
+
+
+def contract(cli, repo, n, title, prompt, kind, task):
     """(task id, contract file value): a small fixed contract checked by agent_skills.task_contract; the worker's
     only outward actions are its own task branch and draft PR (build) or none (investigate)."""
-    task, owner = re.sub(r'[^A-Za-z0-9._-]+', '-', f'conveyor-{repo}-{n}')[:80], 'conveyor-dispatch'
+    owner = 'conveyor-dispatch'
     goal = f'{kind.capitalize()} {repo}#{n}: {title}'
     gate = 'implement: done on the issue' if kind == 'build' else 'an answer, a plan or a card on the issue'
     out = dict(
@@ -183,7 +195,7 @@ def contract(cli, repo, n, title, prompt, kind):
                    stop_conditions=['the issue is closed or parked', 'a step beyond the plan is needed'],
                    escalation_conditions=['tests cannot run', 'the Done when cannot be met'])
     cli.validate_packet(p)
-    return task, {'contract': out, 'acceptance_packet': p}
+    return {'contract': out, 'acceptance_packet': p}
 
 
 def start_one(cli, gh, repo, i, kind, cfg, log):
@@ -191,10 +203,11 @@ def start_one(cli, gh, repo, i, kind, cfg, log):
     built, `submission_pending` just before delegate is called, `verified` once it returns admission. Only a still
     `reserved` receipt or delegate's documented refusal exit proves the prompt was never sent, so only they release."""
     n, path = i['number'], state_path(cfg, repo, i['number'])
-    write_receipt(path, {'status': 'reserved', 'issue': n, 'repo': repo})
+    task = (read_receipt(path) or {}).get('task_id') or new_task_id(repo, n)  # a crash after `reserved` resumes its id
+    write_receipt(path, {'status': 'reserved', 'issue': n, 'repo': repo, 'task_id': task})
     try:
         prompt = f"{cli.brief(gh, repo, n, log)}\n\n{cfg['prompts'][kind]}\n"
-        task, value = contract(cli, repo, n, i['title'], prompt, kind)
+        value = contract(cli, repo, n, i['title'], prompt, kind, task)
     except (cli.Refused, subprocess.CalledProcessError, OSError, ValueError, RuntimeError) as e:
         path.unlink()
         return 'waits', f'#{n} {getattr(e, "stderr", None) or e}'.strip()

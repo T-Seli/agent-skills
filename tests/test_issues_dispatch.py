@@ -322,6 +322,76 @@ class SafeReserve(DispatchCase):
         self.assertEqual(self.delegate_calls, [])
 
 
+class UniqueAttempts(DispatchCase):
+    """A task id is never reused: delegate refuses an existing one with FileExistsError (exit 1)."""
+    def setUp(self):
+        super().setUp()
+        self.seen = set()
+        real = self.fake_delegate
+
+        def once(argv, stdin, timeout):
+            task = argv[argv.index('--task-id') + 1]
+            if task in self.seen:
+                return 1, '', 'FileExistsError: task exists'
+            self.seen.add(task)
+            return real(argv, stdin, timeout)
+        dispatch.run_delegate.side_effect = once
+
+    def ids(self):
+        return [c[0][c[0].index('--task-id') + 1] for c in self.delegate_calls]
+
+    def test_a_retry_after_a_released_reservation_starts_a_new_task(self):
+        self.item()
+        self.result = (3, json.dumps({'refused': 'busy'}) + '\n', '')
+        self.dispatch()
+        self.result = (0, ADMITTED, '')
+        self.assertIn('started: #1', self.dispatch())
+        first, second = self.ids()
+        self.assertNotEqual(first, second)
+
+    def test_a_new_attempt_after_a_finished_one_starts_a_new_task(self):
+        n = self.item()
+        self.dispatch()
+        self.live = set()
+        for p in self.state.glob('*.json'):  # the owner checked the finished worker and cleared its receipt
+            p.unlink()
+        out = self.dispatch()
+        self.assertIn(f'started: #{n}', out)
+        self.assertEqual(len(set(self.ids())), 2)
+
+    def test_a_crash_after_reserved_resumes_with_the_recorded_id(self):
+        n = self.item()
+        self.state.mkdir()
+        (self.state / f'{REPO.replace("/", "-")}-{n}.json').write_text(json.dumps({'status': 'reserved', 'task_id': 'conveyor-recorded-1'}))
+        self.dispatch()
+        self.assertEqual(self.ids(), ['conveyor-recorded-1'])
+
+    def test_reserved_records_the_task_id_before_the_brief_is_built(self):
+        n = self.item()
+        seen = []
+        real = issues_cli.brief
+        def spy(*a, **k):
+            seen.append(json.loads(next(self.state.glob('*.json')).read_text()))
+            return real(*a, **k)
+        with unittest.mock.patch.object(issues_cli, 'brief', side_effect=spy):
+            self.dispatch()
+        self.assertEqual(seen[0]['status'], 'reserved')
+        self.assertEqual(seen[0]['task_id'], self.ids()[0])
+
+    def test_the_hold_text_names_the_task_and_a_way_out_that_does_not_loop(self):
+        n = self.item()
+        self.result = (1, '', 'boom')
+        self.dispatch()
+        task = self.ids()[0]
+        out = self.dispatch()
+        self.assertIn(f'delegate.py status {task}', out)
+        self.assertIn('no run exists', out)
+        for p in self.state.glob('*.json'):
+            p.unlink()
+        self.result = (0, ADMITTED, '')
+        self.assertIn(f'started: #{n}', self.dispatch())
+
+
 class DryRun(DispatchCase):
     def test_it_writes_nothing_starts_nothing_and_says_why_each_other_item_waits(self):
         self.configure(dispatch={'state_dir': str(self.state), 'sizes_allowed': ['S']})
