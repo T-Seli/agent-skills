@@ -10,6 +10,7 @@ from test_issues_dispatch import DispatchCase
 
 PARKED = re.compile(CONVEYOR['receipts']['parked']['pattern'])
 UNPARKED = re.compile(CONVEYOR['receipts']['unparked']['pattern'])
+ASKED = re.compile(CONVEYOR['receipts']['receipt_asked']['pattern'])
 STALLED = re.compile(CONVEYOR['receipts']['stalled']['pattern'])
 MARKER = re.compile(CONVEYOR['dispatch']['marker']['pattern'])
 LIMITS = '- Lane limits: Build 1 (0 kept free for `prio:now`, at most 1 size M) · Review 1 · Investigate 1 · Release 1 train of ≤6 PRs · Sessions 10\n'
@@ -146,67 +147,92 @@ class TimeBoxes(ParkCase):
     def stalled(self, n):
         return 'stalled' in self.gh.names(n)
 
-    def test_an_s_item_stalls_after_four_hours_without_a_receipt_not_before(self):
-        n = self.at('in-progress')  # last receipt 11:30Z
-        self.t = self.t.replace(hour=15, minute=30)  # exactly 4 h
+    def asks(self, n):
+        return self.line(n, ASKED)
+
+    def test_nothing_happens_before_one_box_then_one_ask_then_stalled_after_two(self):
+        n = self.at('in-progress')  # last receipt 11:30Z, S box 4 h
+        self.t = self.t.replace(hour=15, minute=30)  # exactly one box
+        self.gh.calls.clear()
         self.sweep()
-        self.assertFalse(self.stalled(n))
+        self.assertEqual((self.gh.writes(), self.stalled(n), self.asks(n)), ([], False, []))
         self.t += timedelta(minutes=1)
         out = self.sweep()
+        [m] = self.asks(n)
+        self.assertEqual((m['since'], m['box'], m['session']), ('2026-11-18 11:30Z', '4 h', BUILDER))
+        self.assertIn(f'Receipt asked: 1 · #{n}', self.board(out, 'Receipt asked:'))
+        self.assertFalse(self.stalled(n))
+        self.assertNotIn('Receipt asked', self.gh.timeline(n)[-1]['command'])
+        self.t += timedelta(hours=3)  # still under two boxes: never asked again
+        self.sweep()
+        self.sweep()
+        self.assertEqual(len(self.asks(n)), 1)
+        self.assertFalse(self.stalled(n))
+        self.t = self.t.replace(hour=19, minute=31)  # past two boxes
+        out = self.sweep()
         self.assertTrue(self.stalled(n))
-        [m] = self.line(n, STALLED)
-        self.assertEqual(m['since'], '2026-11-18 11:30Z')
+        [s] = self.line(n, STALLED)
+        self.assertEqual((s['since'], s['box']), ('2026-11-18 11:30Z', '4 h'))
         self.assertEqual(self.gh.timeline(n)[-1]['command'], 'sweep')
         self.assertIn(f'Stalled: 1 · #{n}', self.board(out, 'Stalled:'))
         self.assertEqual((self.gh.lane(n), self.gh.issues[n]['state']), ('in-progress', 'OPEN'))  # never moved or closed
 
-    def test_a_new_receipt_restarts_the_box(self):
+    def test_a_new_receipt_restarts_the_box_and_a_later_miss_is_asked_again(self):
         n = self.at('in-progress')
         self.t += timedelta(hours=3)
         self.gh.comment(n, f'Conveyor: 2026-11-18 14:30Z · brief · in-progress → in-progress · head - · tests - · skills {"f" * 7} · schedules -')
         self.t += timedelta(hours=3)
         self.sweep()
+        self.assertEqual(self.asks(n), [])
+        self.t += timedelta(hours=2)  # 16:30 + ... 8 h after 11:30, 5 h after the new receipt
+        self.sweep()
+        self.assertEqual(len(self.asks(n)), 1)
         self.assertFalse(self.stalled(n))
 
-    def test_an_m_item_has_a_day_and_an_in_review_item_the_same_box(self):
+    def test_an_m_item_has_a_day_and_an_in_review_item_the_same_boxes(self):
         m = self.at('in-progress')
         self.gh.issues[m]['labels'] = [x for x in self.gh.issues[m]['labels'] if x['name'] != 'size:S'] + [{'name': 'size:M'}]
         r = self.at('in-review')
-        self.t += timedelta(hours=23)
+        self.t += timedelta(hours=5)
         self.sweep()
-        self.assertEqual((self.stalled(m), self.stalled(r)), (False, True))
-        self.t += timedelta(hours=2)
+        self.assertEqual((len(self.asks(m)), len(self.asks(r)), self.stalled(r)), (0, 1, False))
+        self.t += timedelta(hours=4)  # 9 h: two S boxes
+        self.sweep()
+        self.assertEqual((len(self.asks(m)), self.stalled(m), self.stalled(r)), (0, False, True))
+        self.t += timedelta(hours=16)  # 25 h: one M box
+        self.sweep()
+        self.assertEqual((len(self.asks(m)), self.stalled(m)), (1, False))
+        self.t += timedelta(hours=24)  # 49 h: two M boxes
         self.sweep()
         self.assertTrue(self.stalled(m))
 
     def test_stalling_frees_the_slot_and_the_lane_count(self):
         n = self.at('in-progress')
-        self.t += timedelta(hours=5)
+        self.t += timedelta(hours=9)
         self.sweep()
         self.assertTrue(self.stalled(n))
         self.assertEqual(issues_cli.room_missing(self.gh, REPO, 'in-progress', ['prio:now']), [])
         self.assertIn('in-progress 0/1', self.board(self.sweep(), 'Lanes:'))
 
-    def test_parked_and_stalled_items_are_not_stalled_again_and_other_lanes_have_no_box(self):
+    def test_parked_and_stalled_items_are_not_asked_or_stalled_and_other_lanes_have_no_box(self):
         parked, other = self.at('in-progress'), self.at('next')
         self.park_for(parked, '2026-12-01')
         self.t += timedelta(days=3)
         self.sweep()
         self.sweep()
-        self.assertFalse(self.stalled(parked))
-        self.assertFalse(self.stalled(other))
+        self.assertEqual((self.stalled(parked), self.stalled(other), self.asks(parked), self.asks(other)), (False, False, [], []))
         self.assertEqual(len(self.line(parked, STALLED)), 0)
 
     def test_manual_unpark_clears_a_stall_and_restarts_the_box(self):
         n = self.at('in-progress')
-        self.t += timedelta(hours=5)
+        self.t += timedelta(hours=9)
         self.sweep()
         self.cli('unpark', '--repo', REPO, str(n))
         self.assertFalse(self.stalled(n))
         self.sweep()
-        self.assertFalse(self.stalled(n))
+        self.assertEqual((self.stalled(n), len(self.asks(n))), (False, 0))
 
-    def test_a_read_only_board_names_the_item_past_its_box_and_writes_nothing(self):
+    def test_a_read_only_board_names_the_item_past_a_box_and_writes_nothing(self):
         n = self.at('in-progress')
         self.t += timedelta(hours=5)
         self.gh.calls.clear()
@@ -214,7 +240,7 @@ class TimeBoxes(ParkCase):
         self.assertEqual(self.gh.writes(), [])
         self.assertIn(f'- past its time box: #{n} in-progress S', '\n'.join(lines))
 
-    def test_a_card_waiting_on_the_owner_past_its_box_is_in_the_attention_list(self):
+    def test_a_card_waiting_on_the_owner_is_flagged_at_one_box_and_never_parked(self):
         n = self.at('next')
         self.gh.comment(n, f'Conveyor: 2026-11-18 12:00Z · ask · next → next · head - · tests - · skills {"f" * 7} · schedules -')
         self.t += timedelta(hours=3)
@@ -223,14 +249,14 @@ class TimeBoxes(ParkCase):
         out = self.sweep()
         self.assertIn(f'- #{n} Widget (asked 2026-11-18 12:00Z, past its 4 h box)', out)
         self.assertIn('Need from you: 1', out)
-        self.assertEqual((self.gh.lane(n), 'parked' in self.gh.names(n)), ('next', False))  # a card is flagged, never parked
+        self.assertEqual((self.gh.lane(n), 'parked' in self.gh.names(n)), ('next', False))
 
     def test_the_boxes_come_from_the_contract_not_the_code(self):
         self.root.joinpath('CLAUDE.md').write_text(self.root.joinpath('CLAUDE.md').read_text() + '- Time boxes: Build S 1 h, M 2 days · a card 30 min\n')
         n = self.at('in-progress')
         self.t += timedelta(hours=2)
         self.sweep()
-        self.assertTrue(self.stalled(n))
+        self.assertEqual((len(self.asks(n)), self.stalled(n)), (0, True))  # 2.5 h since the last receipt is past two 1 h boxes
 
 
 class DispatchSkips(DispatchCase):

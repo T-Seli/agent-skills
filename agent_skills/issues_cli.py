@@ -1189,12 +1189,19 @@ def size_of(i):
 
 
 def past_box(i, t, boxes):
-    """(last receipt time, box text) when an in-progress or in-review item is past its size's time box with no newer
-    receipt; None for other lanes, sizes without a box, or items that already free their slot."""
+    """(boxes passed, last receipt time, box text) when an in-progress or in-review item has gone one or more of its
+    size's time boxes with no newer receipt; None for other lanes, sizes without a box, or items that free their slot."""
     size, last = size_of(i), last_receipt(i)
     if lane_of(i) not in belt()['park']['stalled_lanes'] or frees_slot(i) or size not in boxes or last is None:
         return None
-    return (last, boxes[size][1]) if t - last > boxes[size][0] else None
+    span, text = boxes[size]
+    passed = 2 if t - last > 2 * span else 1 if t - last > span else 0
+    return (passed, last, text) if passed else None
+
+
+def asked_for_receipt(i, last):
+    """True when the sweep already asked for a receipt in this silent stretch (since == the last receipt's time)."""
+    return any((m := re.match(receipt('receipt_asked')['pattern'], x)) and m['since'] == stamp(last) for x in comment_lines(i))
 
 
 def close_belt(gh, repo, n, learned, log=None, no_release=None, why=None):
@@ -1496,11 +1503,18 @@ def board(gh, repo, weekly=False, write=True):
                 lift(gh, repo, i, how, 'sweep')
                 wrote.append(f"unparked #{i['number']} ({how})")
         for i in issues:
-            if (late := past_box(i, t, boxes)):
-                line = f"Stalled: no receipt since {stamp(late[0])} · box {late[1]} · {stamp(t)}"
+            if not (late := past_box(i, t, boxes)):
+                continue
+            passed, last, text = late
+            quiet = f"no receipt since {stamp(last)} · box {text}"
+            if passed == 2:
                 relabel(gh, repo, i['number'], ['stalled'])
-                record(gh, repo, i['number'], conveyor_line('sweep', lane_of(i), lane_of(i)), None, before=[line])
-                wrote.append(f"stalled #{i['number']} (no receipt since {stamp(late[0])})")
+                record(gh, repo, i['number'], conveyor_line('sweep', lane_of(i), lane_of(i)), None,
+                       before=[f"Stalled: {quiet} · {stamp(t)}"])
+                wrote.append(f"stalled #{i['number']} (no receipt since {stamp(last)})")
+            elif not asked_for_receipt(i, last):
+                comment(gh, repo, i['number'], [f"Receipt asked: {quiet} · session {claim_owner(i.get('comments', [])) or '-'} · {stamp(t)}"])
+                wrote.append(f"asked #{i['number']}'s session for a receipt (no receipt since {stamp(last)})")
         if len(wrote) > changed:
             issues, by = open_belt(gh, repo)
     violations += [f"past its time box: #{i['number']} {lane_of(i)} {size_of(i)}" for i in issues if past_box(i, t, boxes)]
@@ -1560,6 +1574,7 @@ def board(gh, repo, weekly=False, write=True):
               'Not read: denial log (its belt source is not built yet)']
     backlog, parked = by['backlog'], [i for i in issues if 'parked' in label_names(i)]
     stalled = [i for i in issues if 'stalled' in label_names(i)]
+    asking = [i for i in issues if not frees_slot(i) and (last := last_receipt(i)) and asked_for_receipt(i, last)]
     count = lambda level: len([i for i in backlog if f'prio:{level}' in label_names(i)])  # noqa: E731
     oldest = f"{int((t - min(since(i) for i in by['inbox'])).total_seconds() // 3600)}h" if by['inbox'] else '-'
     shown = {'next': free, 'in-progress': lim['Build'], 'in-review': lim['Review'], 'ready-to-release': lim['Train']}
@@ -1576,6 +1591,7 @@ def board(gh, repo, weekly=False, write=True):
         f'Parked: {len(parked)}', *[f"- #{i['number']} {i['title']}" + (
             f" · {why[i['number']]['why']} until {why[i['number']]['until']} since {why[i['number']]['time']}"
             if i['number'] in why else '') for i in parked],
+        f"Receipt asked: {len(asking)}" + ''.join(f" · #{i['number']} {lane_of(i)}" for i in asking),
         f"Stalled: {len(stalled)}" + ''.join(f" · #{i['number']} {lane_of(i)}" for i in stalled),
         f'Violations: {len(violations)}', *[f'- {v}' for v in violations],
         *registry_lines([*issues, *closed], live),  # after Violations, so the resume cap cuts sessions first

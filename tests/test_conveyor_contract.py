@@ -80,6 +80,7 @@ class Receipts(unittest.TestCase):
             'unparked': 'Unparked: event:vendor-replied · 2026-11-20 08:00Z',
             'stalled': 'Stalled: no receipt since 2026-11-18 11:30Z · box 4 h · 2026-11-18 16:00Z',
             'event': 'Event: vendor-replied',
+            'receipt_asked': 'Receipt asked: no receipt since 2026-11-18 11:30Z · box 4 h · session b0000000-0000-4000-8000-000000000001 · 2026-11-18 16:00Z',
             'source_key': 'Source-key: tracker-sheet:0123456789abcdef',
         }
         for name, sample in samples.items():

@@ -298,6 +298,12 @@
       "written_by": "sweep",
       "label": "stalled"
     },
+    "receipt_asked": {
+      "source": "issue_comment",
+      "pattern": "^Receipt asked: no receipt since (?P<since>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · box (?P<box>\\S+ \\S+) · session (?P<session>\\S+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z)$",
+      "written_by": "sweep, once per silent stretch, at one time box",
+      "label": "receipt asked"
+    },
     "event": {
       "source": "issue_comment",
       "pattern": "^Event: (?P<name>[A-Za-z0-9._-]+)$",
@@ -633,7 +639,7 @@
   "flow": {
     "park": "issues-cli park <n> --until <date|event:name> --why <text> [--done --left --next]: hand-over comment, label parked, released marker; the lane stays",
     "unpark": "issues-cli unpark <n>, or the sweep when the date has come or the event receipt appears after the Parked: line; the item re-enters dispatch",
-    "time_boxes": "contracts.md § Defaults `Time boxes`; an in-progress or in-review item past its size's box with no new receipt is marked stalled by the sweep; a card past its box is flagged on the board; nothing is closed or moved",
+    "time_boxes": "contracts.md § Defaults `Time boxes`; at one box with no new receipt the sweep asks the item's session for one, once; at two boxes it marks the item stalled; a card past its box is flagged on the board (conveyor.md: then parked); nothing is closed or moved",
     "sizes": "only S and M enter Build; L is split first; an item past its size cap or two boxes ships what is done and files the rest",
     "m_quota": "contracts.md § Defaults `Lane limits`",
     "review_rounds": "after 2 NO rounds the next step is a choice card",
