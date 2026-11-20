@@ -568,6 +568,30 @@
     ],
     "summary_max": 200
   },
+  "dispatch": {
+    "note": "issues-cli dispatch: starts Owner-ready `next` items through delegate.py. The owner overrides any key except marker and heartbeat under `dispatch` in workers.json; the Build limit comes from contracts.md § Defaults unless build_cap_override is set.",
+    "marker": {
+      "template": "<!-- conveyor:v1 {state} {session} -->",
+      "pattern": "^<!-- conveyor:v1 (?P<state>active|released) (?P<session>\\S+) -->$",
+      "written_by": "claim (active), close (released); read from the signed-in login's comments only, first line"
+    },
+    "state_dir": "~/.local/state/agent-skills/conveyor/dispatch",
+    "build_cap_override": null,
+    "sizes_allowed": null,
+    "investigate_kinds": [
+      "question"
+    ],
+    "refusal_exit": 3,
+    "delegate_timeout_seconds": 120,
+    "receipt": "one JSON file per issue in state_dir: reserved, submission_pending, verified",
+    "prompts": {
+      "build": "Build this issue under /implement: claim it with issues-cli claim, work in your own worktree, open a draft PR, never merge or deploy.",
+      "investigate": "Investigate this issue read-only under /blueprint: no edits, commits or pushes; end in an answer, a plan or a card."
+    },
+    "heartbeat": {
+      "pattern": "^Tick: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · started (?P<started>\\d+) · waiting (?P<waiting>\\d+) · held (?P<held>\\d+)$"
+    }
+  },
   "flow": {
     "park": "issues-cli park <n> --waiting-on <who> --until <date|event>: hand-over comment (branch, head, done, next), closeout of the session, slot freed, label parked",
     "unpark": "sweep, on the date or event, at the front of its priority",

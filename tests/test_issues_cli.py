@@ -401,7 +401,7 @@ class Claim(unittest.TestCase):
         self.assertEqual(writes, [])
         code, writes, _ = self.claim(issue(author='hayk'), '--approved')
         self.assertEqual(code, 0)
-        self.assertEqual(len(writes), 3)  # assign, claim note, timeline line
+        self.assertEqual(len(writes), 4)  # assign, claim note, marker, timeline line
 
     def test_repeat_claim_writes_nothing(self):
         code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session 11111111-1111-4111-8111-111111111111']))
@@ -420,7 +420,7 @@ class Claim(unittest.TestCase):
         history = ['Claimed: branch `feat/x` · session 11111111-1111-4111-8111-111111111111', 'Claimed: branch `feat/y` · session 22222222-2222-4222-8222-222222222222']
         code, writes, _ = self.claim(issue(assignees=['me'], comments=history), '--takeover')
         self.assertEqual(code, 0)
-        self.assertEqual(len(writes), 2)  # claim note, timeline line
+        self.assertEqual(len(writes), 3)  # claim note, marker, timeline line
         self.assertRegex(writes[1][1].strip(), r'^Conveyor: .* · claim · ')
         self.assertIn('session 11111111-1111-4111-8111-111111111111', writes[0][1])
 
@@ -458,7 +458,7 @@ class Claim(unittest.TestCase):
     def test_successor_same_branch_gets_current_session_pointer(self):
         code, writes, _ = self.claim(issue(assignees=['me'], comments=['Claimed: branch `feat/x` · session 00000000-0000-4000-8000-000000000000']), '--takeover')
         self.assertEqual(code, 0)
-        self.assertEqual(len(writes), 2)  # claim note, timeline line
+        self.assertEqual(len(writes), 3)  # claim note, marker, timeline line
         self.assertRegex(writes[1][1].strip(), r'^Conveyor: .* · claim · ')
         self.assertIn('session 11111111-1111-4111-8111-111111111111', writes[0][1])
 
