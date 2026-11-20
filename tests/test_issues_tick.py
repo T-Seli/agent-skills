@@ -98,6 +98,32 @@ class Failures(TickCase):
         self.assertIn('== pull ==', out)
 
 
+    def test_an_unexpected_exception_in_a_step_is_that_steps_failure_only(self):
+        ready = self.item()
+        with unittest.mock.patch.object(issues_cli, 'board', side_effect=KeyError('lanes')):
+            out = self.tick(ok=False)
+        self.assertIn("step failed: sweep: 'lanes'", out)
+        self.assertIn('skipped: pull (needs sweep)', out)
+        self.assertIn(f'started: #{ready} (build)', out)
+        with unittest.mock.patch.object(issues_cli, 'open_belt', side_effect=[({}, {'inbox': []}), KeyError('x')]), \
+                unittest.mock.patch.object(dispatch, 'run', side_effect=TypeError('bad')):
+            out = self.tick(ok=False)
+        self.assertIn("step failed: inbox: 'x'", out)
+        self.assertIn('step failed: dispatch: bad', out)
+        self.beat(out)
+
+
+class Log(TickCase):
+    def test_a_logged_tick_writes_exactly_one_heartbeat_line(self):
+        self.item()
+        self.log.write_text('# log\n')
+        out = self.tick('--log', str(self.log))
+        logged = self.log.read_text()
+        self.assertEqual(len([x for x in logged.split('\n') if x.startswith('Tick:')]), 1)
+        self.assertIn(self.beat(out)[0], logged)
+        self.assertIn('started: #1 (build)', logged)  # dispatch's own lines are still logged
+
+
 class DryRun(TickCase):
     def test_dry_run_writes_nothing_anywhere(self):
         path = self.spool()

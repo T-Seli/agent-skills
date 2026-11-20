@@ -239,7 +239,8 @@ def start_one(cli, gh, repo, i, kind, cfg, log):
     return 'started', f'#{n} ({kind}) session {session}'
 
 
-def run(cli, gh, repo, log=None, dry=False):
+def run(cli, gh, repo, log=None, dry=False, beat=True):
+    """`beat=False` keeps dispatch's own Tick: line out of the log, for a caller that writes the one heartbeat."""
     cfg = settings(cli)
     if dry:
         batch, skipped, held = plan(cli, gh, repo, cfg)
@@ -267,10 +268,9 @@ def run(cli, gh, repo, log=None, dry=False):
     heartbeat = f"Tick: {cli.stamp(cli.now())} · started {len(started)} · waiting {len(skipped) + len(waits)} · held {len(holds)}"
     if not re.match(cfg['heartbeat']['pattern'], heartbeat):
         raise cli.Refused(f'malformed heartbeat line: {heartbeat}')
-    lines = [*[f'started: {x}' for x in started], *waits, *holds,
-             *[f"skipped: #{i['number']} {why}" for i, why in skipped], heartbeat]
+    lines = [*[f'started: {x}' for x in started], *waits, *holds, *[f"skipped: #{i['number']} {why}" for i, why in skipped]]
     if log:
         path, _ = cli.task_log(log)
         with path.open('a') as fh:
-            fh.write('\n'.join(lines) + '\n')
-    return '\n'.join(lines)
+            fh.write('\n'.join([*lines, *([heartbeat] if beat else [])]) + '\n')
+    return '\n'.join([*lines, heartbeat])

@@ -103,14 +103,6 @@
       "why": "writes the hand-over and frees the slot"
     },
     {
-      "id": "issues-belt-tick",
-      "tool": "bash",
-      "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli belt-tick",
-      "kind": "bookkeeping",
-      "mode": "allow",
-      "why": "the timer command: sweep, inbox list, pull report, dispatch; starts only what dispatch's caps allow"
-    },
-    {
       "id": "issues-resume",
       "tool": "bash",
       "match": "~/.agents/skills/workflow-contracts/scripts/issues-cli resume",

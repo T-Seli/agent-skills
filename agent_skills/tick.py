@@ -4,15 +4,12 @@ Runs the sweep, lists the inbox for the sort pass, reports `Pull next:`, then di
 A failing step is reported and the independent steps still run; `pull` reads the sweep's board, so it is skipped when
 the sweep failed. The caller passes the issues_cli module as `cli`, so its Refused is the one main() catches."""
 import re
-import subprocess
-
-STEP_ERRORS = (subprocess.CalledProcessError, OSError, ValueError, RuntimeError)
 
 
 def attempt(cli, name, fn, failed):
     try:
         return fn()
-    except (cli.Refused, *STEP_ERRORS) as e:
+    except Exception as e:  # noqa: BLE001 - a step's failure, whatever it is, must not end the tick
         failed.append(f'step failed: {name}: {getattr(e, "stderr", None) or e}'.strip())
         return None
 
@@ -50,7 +47,7 @@ def run(cli, gh, repo, log=None, dry=False):
         out.append('skipped: pull (needs sweep)')
     else:
         out += [x for x in board if x.startswith('Pull next:')]
-    text = attempt(cli, 'dispatch', lambda: dispatch.run(cli, gh, repo, log, dry), failed)
+    text = attempt(cli, 'dispatch', lambda: dispatch.run(cli, gh, repo, log, dry, beat=False), failed)
     out.append('== dispatch ==')
     started, waiting, held = dispatch_counts(text, dry) if text is not None else (0, 0, 0)
     out += [x for x in (text or '').split('\n') if x and not x.startswith('Tick:')]
