@@ -111,6 +111,11 @@
    "id": "prototype-validation",
    "pattern": "## Validate before showing",
    "home": "skills/ui-design/references/approval-pairs.md"
+  },
+  {
+   "id": "tick-prompt",
+   "pattern": "## The tick prompt",
+   "home": "skills/workflow-contracts/references/tick.md"
   }
  ]
 }

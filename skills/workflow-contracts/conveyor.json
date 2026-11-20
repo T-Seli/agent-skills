@@ -616,6 +616,13 @@
       "pattern": "^Tick: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · started (?P<started>\\d+) · waiting (?P<waiting>\\d+) · held (?P<held>\\d+)$"
     }
   },
+  "tick": {
+    "note": "issues-cli belt-tick (`tick` is the criteria command): the one command the 15-minute scheduled task runs; the task definition is references/tick.md",
+    "cadence_minutes": 15,
+    "heartbeat": {
+      "pattern": "^Tick: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · started (?P<started>\\d+) · waiting (?P<waiting>\\d+) · held (?P<held>\\d+) · inbox (?P<inbox>\\d+)$"
+    }
+  },
   "park": {
     "note": "parked and stalled items keep their lane but count toward no limit and are never dispatched",
     "until": {
