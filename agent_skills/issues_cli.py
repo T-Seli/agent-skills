@@ -1486,6 +1486,9 @@ def main(argv=None, gh=None):
     st.add_argument('--domain', required=True); st.add_argument('--kind', required=True)
     st.add_argument('--size', required=True); st.add_argument('--needs-decision', action='store_true')
     st.add_argument('--dry-run', dest='sort_dry_run', action='store_true', help='print the label changes; write nothing')
+    fd = subs.add_parser('feed', parents=[log], help='rows from stdin (JSON lines) of a declared feed: new key to inbox, changed summary to a comment')
+    fd.add_argument('feed'); fd.add_argument('--dry-run', dest='sort_dry_run', action='store_true',
+                    help='print the writes; make none')
     ln = subs.add_parser('lane', parents=[log], help='move a card; refuses naming each missing receipt')
     ln.add_argument('number', type=int); ln.add_argument('lane')
     ln.add_argument('--reason', help='required for a move back: its receipt')
@@ -1550,6 +1553,9 @@ def main(argv=None, gh=None):
             print(prio(gh, args.repo, args.number, args.level, args.log))
         elif args.action == 'sort':
             print(sort(gh, args.repo, args.number, args.domain, args.kind, args.size, args.needs_decision, args.log))
+        elif args.action == 'feed':
+            from . import feeds
+            print(feeds.run(sys.modules[__name__], gh, args.repo, args.feed, sys.stdin.read(), args.log))
         elif args.action == 'lane':
             print(move(gh, args.repo, args.number, args.lane, args.reason, args.log, args.tests, args.learned))
         elif args.action == 'decide':

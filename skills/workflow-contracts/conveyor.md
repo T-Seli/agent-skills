@@ -57,7 +57,7 @@ Limits, time boxes and the train timetable are in contracts.md § Defaults, coun
 `issues-cli park <n> --waiting-on <who> --until <date|event>` writes the hand-over, frees the slot and sets `parked`; the sweep un-parks at the front of its priority. Two time boxes without a receipt park the item as `stalled`. L is split before Build; after 2 NO reviews the next step is a choice card.
 
 ## Feeds
-Each source is one entry in the project's `feeds.json` (conveyor.json `feeds`). A scheduled small-model run only fetches and pipes rows to `issues-cli feed <id>`, which keys, dedupes, captures and never closes. Mail, chat and sheet items store one summary line and the link; customer data stays out of GitHub.
+Each source is one entry in conveyor.json `feeds.entries`. A scheduled small-model run only fetches and pipes rows to `issues-cli feed <id>`, which keys, dedupes, captures and never closes; a disabled feed refuses. Items store one summary line and the link, no customer data.
 
 ## Sweep
 `issues-cli sweep` reads GitHub, git, disk, test slots, the denial log and the registry, and prints questions waiting on the user, lane counts against limits, the backlog line, `Coming to you next`, parked items with age, one line per violation, and the weekly batch. It writes only the un-park, spool flush, fallback start (at most one per sweep, none without a free test slot) and knowledge `log`, each with a receipt.
