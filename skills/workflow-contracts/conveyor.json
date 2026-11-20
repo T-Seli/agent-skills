@@ -294,7 +294,7 @@
     }
   },
   "timeline": {
-    "pattern": "^Conveyor: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · (?P<command>capture|prio|publish|claim|lane|decide|brief|ask|run-approved|sweep|close|feed|park) · (?P<from>[a-z-]+|-) → (?P<to>[a-z-]+|-) · head (?P<head>[0-9a-f]{7,40}|-) · tests (?P<tests>\\S+) · skills (?P<skills>[0-9a-f]{7,40}) · schedules (?P<schedules>\\S+)$",
+    "pattern": "^Conveyor: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · (?P<command>capture|prio|publish|claim|sort|lane|decide|brief|ask|run-approved|sweep|close|feed|park) · (?P<from>[a-z-]+|-) → (?P<to>[a-z-]+|-) · head (?P<head>[0-9a-f]{7,40}|-) · tests (?P<tests>\\S+) · skills (?P<skills>[0-9a-f]{7,40}) · schedules (?P<schedules>\\S+)$",
     "correction": "^Correction: (?P<ref>\\S+) · (?P<field>\\S+) was (?P<wrong>.+) · is (?P<right>.+)$"
   },
   "knowledge": {

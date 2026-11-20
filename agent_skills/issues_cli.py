@@ -682,10 +682,11 @@ def record(gh, repo, n, line, log=None, before=(), close_reason=None):
             fh.write(line + '\n')
 
 
-def move(gh, repo, n, target, reason=None, log=None, tests=None, learned=None, command='lane'):
+def move(gh, repo, n, target, reason=None, log=None, tests=None, learned=None, command='lane', sorting=None):
     """`lane`: copy the stage's receipt lines from --log onto the issue, check the entry rule on the issue and refuse
     naming each missing receipt; a move back needs --reason. Every line is built and checked before the first write,
-    so a refusal writes nothing."""
+    so a refusal writes nothing. `sorting` (sort) is the labels to add and remove and the receipt line, judged and
+    written in the same move."""
     order = lanes()
     if target not in order:
         raise Refused(f"unknown lane {target!r}; lanes: {', '.join(order)}")
@@ -710,7 +711,11 @@ def move(gh, repo, n, target, reason=None, log=None, tests=None, learned=None, c
             raise Refused(f"#{n} {cur or '-'} → {target} skips {', '.join(skipped)}; after next no lane is skipped")
         copied = stage_lines(log_lines, target, comment_lines(d))
         before = [f'Learned: {learned}'] if target == 'closed' and learned else []
+    add, drop = [], []
+    if sorting:
+        add, drop, before = sorting['add'], sorting['remove'], before + [sorting['line']]
     f = Facts(gh, repo, d, copied + before)
+    f.labels = [x for x in f.labels if x not in drop] + add
     if not back:
         missing = missing_for(f, lane_rule(target)['requires']) + room_missing(gh, repo, target, f.labels)
         if missing:
@@ -718,9 +723,31 @@ def move(gh, repo, n, target, reason=None, log=None, tests=None, learned=None, c
     line = conveyor_line(command, cur, target, f.head, tests, schedule_ids(f))
     if copied:
         comment(gh, repo, n, copied)
-    relabel(gh, repo, n, [f'lane:{target}'], [f'lane:{cur}'] if cur else [])
+    relabel(gh, repo, n, [f'lane:{target}', *add], ([f'lane:{cur}'] if cur else []) + drop)
     record(gh, repo, n, line, log_path, before, close_reason='completed' if target == 'closed' else None)
     return f"#{n} {cur or '-'} → {target}"
+
+
+def sort(gh, repo, n, domain, kind, size, needs_decision=False, log=None):
+    """Inbox to backlog: one domain, kind and size label (an old one replaced), `needs-human` on request, one receipt
+    line, then the `lane` gate (backlog) decides entry. Every value is checked before the first write."""
+    labels, k = belt()['labels'], knowledge()
+    wants = {'domain': (f'domain:{domain}', [f'domain:{x}' for x in k.domains()] if k else []),
+             'kind': (f'kind:{kind}', labels['kind']), 'size': (f'size:{size}', labels['size'])}
+    bad = [f"{name} {want.split(':', 1)[1]!r} (allowed: {', '.join(x.split(':', 1)[1] for x in allowed) or 'none'})"
+           for name, (want, allowed) in wants.items() if want not in allowed]
+    if bad:
+        raise Refused(f"#{n} sort refused, unknown value: {'; '.join(bad)}")
+    d = load(gh, repo, n)
+    if d['state'] != 'OPEN':
+        raise Refused(f'#{n} is closed')
+    if lane_of(d) != 'inbox':
+        raise Refused(f"#{n} is not in lane:inbox (it is in {lane_of(d) or 'no lane'}); sort takes inbox issues only")
+    want = [v[0] for v in wants.values()] + (['needs-human'] if needs_decision else [])
+    held = [x for x in label_names(d) if x.split(':')[0] in wants and x not in want]
+    line = f"Sorted: {' · '.join(want)}"
+    return move(gh, repo, n, 'backlog', log=log, command='sort',
+                sorting={'add': [x for x in want if x not in label_names(d)], 'remove': held, 'line': line})
 
 
 def title_of(text):
@@ -1454,6 +1481,11 @@ def main(argv=None, gh=None):
     cap.add_argument('text', help="the words verbatim; '-' reads stdin")
     pr = subs.add_parser('prio', parents=[log], help='set the priority label, or drop at the user\'s word')
     pr.add_argument('number', type=int); pr.add_argument('level', choices=['now', 'next', 'later', 'drop'])
+    st = subs.add_parser('sort', parents=[log], help='inbox to backlog: set domain, kind and size, then pass the lane gate')
+    st.add_argument('number', type=int)
+    st.add_argument('--domain', required=True); st.add_argument('--kind', required=True)
+    st.add_argument('--size', required=True); st.add_argument('--needs-decision', action='store_true')
+    st.add_argument('--dry-run', dest='sort_dry_run', action='store_true', help='print the label changes; write nothing')
     ln = subs.add_parser('lane', parents=[log], help='move a card; refuses naming each missing receipt')
     ln.add_argument('number', type=int); ln.add_argument('lane')
     ln.add_argument('--reason', help='required for a move back: its receipt')
@@ -1506,7 +1538,7 @@ def main(argv=None, gh=None):
     x.add_argument('--why', help='with --no-release: one line on why')
     args = parser.parse_args(argv)
     gh = gh or real_gh
-    if args.dry_run:
+    if args.dry_run or getattr(args, 'sort_dry_run', False):
         gh = DryRun(gh)
     try:
         if args.action == 'publish':
@@ -1516,6 +1548,8 @@ def main(argv=None, gh=None):
             print(capture(gh, args.repo, sys.stdin.read() if args.text == '-' else args.text, args.source, args.tag)[1])
         elif args.action == 'prio':
             print(prio(gh, args.repo, args.number, args.level, args.log))
+        elif args.action == 'sort':
+            print(sort(gh, args.repo, args.number, args.domain, args.kind, args.size, args.needs_decision, args.log))
         elif args.action == 'lane':
             print(move(gh, args.repo, args.number, args.lane, args.reason, args.log, args.tests, args.learned))
         elif args.action == 'decide':
