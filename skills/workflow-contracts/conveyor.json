@@ -524,7 +524,7 @@
     "reconcile": "a merged PR moves its issue by receipts; a PR with no issue gets one; an unlabelled issue goes to sort; a teammate's issue gets labels and comments only"
   },
   "feeds": {
-    "file": "feeds.json in project config, layered; shared code names no source",
+    "file": "shared entries in this file, then feeds.json at the project root, then `feeds` in the machine config (workers.json); merged by id, field by field, the narrower layer wins; shared code names no source",
     "fields": {
       "id": "[a-z0-9-]+",
       "kind": "sheet|mail|chat|alert|github|monitor|meeting",

@@ -141,3 +141,56 @@ class DryRun(FeedCase):
         self.assertNotIn('Feed:', self.log.read_text())
         self.feed('test-feed', [row('2')], '--log', str(self.log))
         self.assertEqual(len(re.findall(r'^Feed: ', self.log.read_text(), re.M)), 1)
+
+
+class Overrides(FeedCase):
+    """Shared entries < the project's feeds.json < the machine config's `feeds`, merged by id, field by field."""
+    def project(self, entries):
+        (self.root / 'feeds.json').write_text(entries if isinstance(entries, str) else json.dumps(entries))
+
+    def test_a_project_override_enables_mail_for_that_project_only(self):
+        shipped = {e['id']: e for e in CONVEYOR['feeds']['entries']}
+        self.assertFalse(shipped['mail']['enabled'])  # the shared file is untouched
+        with unittest.mock.patch.dict(issues_cli.belt(), {'feeds': {**issues_cli.belt()['feeds'],
+                                                                    'entries': list(shipped.values())}}):
+            self.feed('mail', [{'message_id': 'm1', 'summary': 'Invoice', 'link': 'https://x.test/m1'}], ok=False)
+            self.project([{'id': 'mail', 'enabled': True}])
+            out = self.feed('mail', [{'message_id': 'm1', 'summary': 'Invoice', 'link': 'https://x.test/m1'}])
+        self.assertEqual(self.beat(out)['new'], '1')
+
+    def test_a_project_override_changes_max_new(self):
+        self.project([{'id': 'test-feed', 'max_new': 1}])
+        out = self.feed('test-feed', [row('1'), row('2', 'B')])
+        self.assertEqual((self.beat(out)['new'], self.beat(out)['skipped']), ('1', '1'))
+
+    def test_the_machine_config_wins_over_the_project(self):
+        self.project([{'id': 'test-feed', 'max_new': 1}])
+        self.configure(feeds=[{'id': 'test-feed', 'max_new': 3}])
+        out = self.feed('test-feed', [row(str(k), f'a{k}') for k in range(5)])
+        self.assertEqual(self.beat(out)['new'], '3')
+
+    def test_a_malformed_override_refuses_and_writes_nothing(self):
+        for bad in ('{not json', '{"id": "mail"}', json.dumps([{'enabled': True}]),
+                    json.dumps([{'id': 'brand-new', 'enabled': True}])):
+            self.project(bad)
+            out = self.feed('test-feed', [row('1')], ok=False)
+            self.assertIn('feeds.json', out)
+        self.configure(feeds='nope')
+        (self.root / 'feeds.json').unlink()
+        self.assertIn('feeds', self.feed('test-feed', [row('1')], ok=False))
+        self.assertEqual(self.gh.calls, [])
+
+    def test_a_missing_override_file_is_normal(self):
+        self.assertFalse((self.root / 'feeds.json').exists())
+        self.feed('test-feed', [row('1')])
+        self.assertEqual(len(self.gh.issues), 1)
+
+
+class ExactKeyMatch(FeedCase):
+    def test_a_longer_or_quoted_key_in_another_issue_is_not_the_same_key(self):
+        key = feeds.source_key(FEED, row('1'))
+        self.gh.add(body=f'x\nSource-key: {key}0\n')  # the key plus more characters
+        self.gh.add(body=f'see Source-key: {key} in the thread\n')  # inside prose
+        self.feed('test-feed', [row('1')])
+        self.assertEqual(len(self.gh.issues), 3)
+        self.assertIn(f'Source-key: {key}\n', self.gh.issues[3]['body'])
