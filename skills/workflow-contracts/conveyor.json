@@ -524,7 +524,7 @@
     "reconcile": "a merged PR moves its issue by receipts; a PR with no issue gets one; an unlabelled issue goes to sort; a teammate's issue gets labels and comments only"
   },
   "feeds": {
-    "file": "feeds.json in project config, layered; shared code names no source",
+    "file": "shared entries in this file, then feeds.json at the project root, then `feeds` in the machine config (workers.json); merged by id, field by field, the narrower layer wins; shared code names no source",
     "fields": {
       "id": "[a-z0-9-]+",
       "kind": "sheet|mail|chat|alert|github|monitor|meeting",
@@ -532,16 +532,41 @@
       "cadence": "minutes",
       "priority": "prio:now|next|later (alert: now)",
       "key_fields": "stable fields hashed into Source-key, never a row number",
-      "store": "verbatim (the user's own words) or summary-link"
+      "store": "verbatim (the user's own words) or summary-link",
+      "max_new": "new issues per run; the rest are skipped"
     },
     "fetch": "GitHub and local files by the script; a connector-only source by a small-model scheduled run that pipes rows to `issues-cli feed <id>`",
-    "intake": "issues-cli feed <id> keys each row, finds the issue by Source-key, captures new rows to inbox, comments `Source updated` on a changed one, never closes",
+    "intake": "issues-cli feed <id> keys each row, finds the issue by Source-key (open or closed), captures a new key to inbox up to max_new, comments `Source updated` on a changed summary, never closes; it stores the summary and link only",
     "heartbeat": {
-      "pattern": "^Feed: (?P<id>[a-z0-9-]+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · seen (?P<seen>\\d+) · new (?P<new>\\d+)$",
+      "pattern": "^Feed: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · (?P<id>[a-z0-9-]+) · new (?P<new>\\d+) · updated (?P<updated>\\d+) · skipped (?P<skipped>\\d+)$",
       "silent": "two cadences without a heartbeat is a board line; an empty fetch is recorded as empty, a failed fetch as a failure"
     },
     "investigate": "a bug, alert or question at prio:now or prio:next gets a read-only blueprint worker inside the Investigate limit; it ends in an answer, a plan or a card",
-    "build_without_asking": "size S with a plan and no open decision is built and reviewed as a draft PR; M and up, or any choice, reach the user as a plan card first"
+    "build_without_asking": "size S with a plan and no open decision is built and reviewed as a draft PR; M and up, or any choice, reach the user as a plan card first",
+    "entries": [
+      {
+        "id": "chat-alerts",
+        "kind": "alert",
+        "key_fields": [
+          "channel",
+          "ts"
+        ],
+        "priority": "prio:now",
+        "enabled": true,
+        "max_new": 10
+      },
+      {
+        "id": "mail",
+        "kind": "mail",
+        "key_fields": [
+          "message_id"
+        ],
+        "priority": "prio:next",
+        "enabled": false,
+        "max_new": 10
+      }
+    ],
+    "summary_max": 200
   },
   "flow": {
     "park": "issues-cli park <n> --waiting-on <who> --until <date|event>: hand-over comment (branch, head, done, next), closeout of the session, slot freed, label parked",

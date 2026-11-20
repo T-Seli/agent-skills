@@ -93,10 +93,12 @@ class Belt:
             return json.dumps(self.issues[int(args[2])])
         if args[:2] == ['issue', 'list']:
             state, label = self.opt(args, '--state'), self.opt(args, '--label')
-            since = re.fullmatch(r'closed:>=(\d{4}-\d{2}-\d{2})', self.opt(args, '--search') or 'closed:>=0000-00-00')[1]
+            search = self.opt(args, '--search') or 'closed:>=0000-00-00'
+            body = re.fullmatch(r'"(.+)" in:body', search)  # a text search: every state, matched on the body
+            since = '0000-00-00' if body else re.fullmatch(r'closed:>=(\d{4}-\d{2}-\d{2})', search)[1]
             found = [i for i in reversed(self.issues.values())
                      if (state == 'all' or i['state'] == state.upper()) and (not label or label in issues_cli.label_names(i))
-                     and (i['state'] == 'OPEN' or i['closedAt'][:10] >= since)]
+                     and (i['state'] == 'OPEN' or i['closedAt'][:10] >= since) and (not body or body[1] in i['body'])]
             return json.dumps(found[:int(self.opt(args, '--limit'))])
         if args[:2] == ['issue', 'edit']:
             i = self.issues[int(args[2])]
