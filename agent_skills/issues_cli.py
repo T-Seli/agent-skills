@@ -1725,6 +1725,9 @@ def main(argv=None, gh=None):
     pk.add_argument('--dry-run', dest='sort_dry_run', action='store_true', help='print the writes; make none')
     up = subs.add_parser('unpark', parents=[log], help='remove parked (or stalled) by hand; the lane stays')
     up.add_argument('number', type=int)
+    tk = subs.add_parser('belt-tick', parents=[log], help='the timer command: sweep, inbox list, pull report, dispatch, one heartbeat; '
+                         '--dry-run makes every step read-only')
+    tk.add_argument('--dry-run', dest='sort_dry_run', action='store_true', help='read only: write and start nothing')
     dp = subs.add_parser('dispatch', parents=[log], help='start Owner-ready next items as workers; --dry-run prints the batch and skip reasons')
     dp.add_argument('--dry-run', dest='dispatch_dry_run', action='store_true', help='read only: start nothing, write nothing')
     br = subs.add_parser('brief', parents=[log], help="render the station's brief")
@@ -1781,6 +1784,12 @@ def main(argv=None, gh=None):
             print(park(gh, args.repo, args.number, args.until, args.why, args.done, args.left, args.next_action, args.log))
         elif args.action == 'unpark':
             print(unpark(gh, args.repo, args.number, args.log))
+        elif args.action == 'belt-tick':
+            from . import tick as belt_tick
+            text, failed = belt_tick.run(sys.modules[__name__], gh, args.repo, args.log, args.dry_run or args.sort_dry_run)
+            print(text)
+            if failed:
+                return 1
         elif args.action == 'dispatch':
             from . import dispatch
             print(dispatch.run(sys.modules[__name__], gh, args.repo, args.log, args.dry_run or args.dispatch_dry_run))
