@@ -180,6 +180,11 @@ def session_id(session):
     return session
 
 
+def marker(state, session):
+    """conveyor.json dispatch.marker: the one-line comment dispatch reads to see whether a session still holds an issue."""
+    return belt()['dispatch']['marker']['template'].format(state=state, session=session)
+
+
 def claim(gh, repo, n, branch, session, approved, takeover=False):
     session = session_id(session)
     me = gh(['api', 'user', '--jq', '.login']).strip()
@@ -208,6 +213,7 @@ def claim(gh, repo, n, branch, session, approved, takeover=False):
             gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'], f'Released: session {session} · lost claim to {who}\n')
             raise Refused(f'#{n} was claimed meanwhile by {who}; stop and ask the user')
         record(gh, repo, n, line)
+        gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'], marker('active', session) + '\n')
     print(f'#{n} claimed by {me}')
 
 
@@ -1065,19 +1071,29 @@ def brief(gh, repo, n, log=None):
     return '\n'.join(out)
 
 
+def release_marker(gh, repo, n, session):
+    """Close hands the issue back: a `released` marker for the session that held the claim, if any."""
+    if session:
+        gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'], marker('released', session) + '\n')
+
+
 def close_belt(gh, repo, n, learned, log=None, no_release=None, why=None):
     """Close a belt issue: the `closed` lane's receipts with the `Learned:` closing line, or, with --no-release, from
     any lane when nothing landed (`No release:` and `Learned:`; refused once `Pushed:` or `deploy:` is on the issue)."""
     if not learned:
         raise Refused('close needs --learned: none, lesson: <text>, answered: <q> => <a> or page-fix: <path>: <text>')
     if no_release is None:
-        return move(gh, repo, n, 'closed', log=log, learned=learned, command='close')
+        held = claim_owner(load(gh, repo, n)['comments'])
+        done = move(gh, repo, n, 'closed', log=log, learned=learned, command='close')
+        release_marker(gh, repo, n, held)
+        return done
     if not why:
         raise Refused('close --no-release needs --why <one line>')
     d = load(gh, repo, n)
     if d['state'] != 'OPEN':
         raise Refused(f'#{n} is closed')
     cur, (log_path, _) = lane_of(d), task_log(log)
+    held = claim_owner(d['comments'])
     rule = receipt('no_release')
     f = Facts(gh, repo, d)
     landed = [x for x in rule['refused_if'] if have(x, 1, f)]
@@ -1092,6 +1108,7 @@ def close_belt(gh, repo, n, learned, log=None, no_release=None, why=None):
     relabel(gh, repo, n, ['lane:closed'], [f'lane:{cur}'] if cur else [])
     record(gh, repo, n, line, log_path, lines,
            close_reason='not planned' if no_release in ('duplicate', 'declined') else 'completed')
+    release_marker(gh, repo, n, held)
     return f"#{n} {cur or '-'} → closed (no release: {no_release})"
 
 
@@ -1152,18 +1169,37 @@ def where(i):
     return 'closed' if i['state'] != 'OPEN' else f"{lane_of(i)}{', parked' if 'parked' in label_names(i) else ''}"
 
 
-def registry_lines(issues):
+def registry_lines(issues, live=frozenset()):
     """One line per registry session that holds open work over open and recently closed belt `issues`, then the count
-    of done sessions: none of their issues is open and unparked (conveyor.json registry.done)."""
+    of done sessions: none of their issues is open and unparked (conveyor.json registry.done). A session is `working`
+    only when `live` (sessions the job registry says are running) names it, else `unverified`."""
     reg = registry(issues)
-    working = {s: held for s, held in reg.items() if any(unfinished(i) for i, _ in held)}
-    out = [f'Sessions: {len(working)} working']
-    for s, held in sorted(working.items()):
+    open_work = {s: held for s, held in reg.items() if any(unfinished(i) for i, _ in held)}
+    running = [s for s in open_work if s in live]
+    out = [f'Sessions: {len(running)} working' + (f', {len(open_work) - len(running)} unverified' if len(open_work) > len(running) else '')]
+    for s, held in sorted(open_work.items()):
         parts = [f"claimed #{i['number']} ({where(i)})" for i, role in held if role == 'claim']
         parts += [f"owns #{i['number']} ({where(i)})" for i, role in held if role == 'owner']
-        out.append(f"- {s} · working · {', '.join(parts)}")
-    out.append(f'Done sessions: {len(reg) - len(working)} (closed issues read back {CLOSED_WINDOW.days} days)')
+        out.append(f"- {s} · {'working' if s in live else 'unverified'} · {', '.join(parts)}")
+    out.append(f'Done sessions: {len(reg) - len(open_work)} (closed issues read back {CLOSED_WINDOW.days} days)')
     return out
+
+
+def live_sessions():
+    """Sessions of the workers the job registry says are running: `delegate.py status` rows in state `live`. Raises
+    RuntimeError when the registry cannot be read, so a caller never reads silence as proof of work."""
+    done = subprocess.run([sys.executable, str(layout.ROOT / 'skills' / 'agent-coordination' / 'scripts' / 'delegate.py'),
+                           'status'], capture_output=True, text=True)
+    if done.returncode:
+        raise RuntimeError(f'delegate status exited {done.returncode}: {(done.stderr or done.stdout).strip()[-200:]}')
+    rows = [json.loads(x) for x in done.stdout.split('\n') if x.strip()]
+    return {r['session_id'] for r in rows if r.get('state') == 'live' and r.get('session_id')}
+
+
+def unverified_workers(in_progress, live):
+    """In-progress issues with no pull request whose worker is not shown running: nothing moves, the board says so."""
+    return [f"worker activity unverified: #{i['number']}" for i in in_progress
+            if 'parked' not in label_names(i) and not i.get('closedByPullRequestsReferences') and claim_owner(i.get('comments', [])) not in live]
 
 
 def test_slots():
@@ -1374,6 +1410,11 @@ def board(gh, repo, weekly=False, write=True):
         decided = [m for x in recent if (m := re.match(receipt('decision')['pattern'], x)) and in_week(m['time'])]
         notes.append(f'Questions (7 days): asked {cards} ({cards / 7:.1f}/day) · decided {len(decided)} · tell me more {len(more)}')
         notes += knowledge_digest(t)
+    try:
+        live = live_sessions()
+    except RuntimeError as e:
+        live = frozenset()
+        notes.append(f'Live evidence unavailable ({e}): no worker is shown as working')
     from .disk_check import check
     slots = test_slots()
     notes += [check(str(Path.cwd()), machine_config())[1],
@@ -1397,7 +1438,8 @@ def board(gh, repo, weekly=False, write=True):
             f" · waiting on {why[i['number']]['who']} until {why[i['number']]['until']} since {why[i['number']]['time']}"
             if i['number'] in why else '') for i in parked],
         f'Violations: {len(violations)}', *[f'- {v}' for v in violations],
-        *registry_lines([*issues, *closed]),  # after Violations, so the resume cap cuts sessions first
+        *registry_lines([*issues, *closed], live),  # after Violations, so the resume cap cuts sessions first
+        *unverified_workers(by['in-progress'], live),
         f'Wrote: {len(wrote)}', *[f'- {w}' for w in wrote], *notes]
     counts = {'questions': len(asks), 'in-progress': len(by['in-progress']), 'in-review': len(by['in-review']),
               'parked': len(parked)}
@@ -1506,6 +1548,8 @@ def main(argv=None, gh=None):
         ak.add_argument('--' + field.replace('_', '-'), dest=field)
     ak.add_argument('--record', help='go: the action record JSON inside the working directory')
     ak.add_argument('--more', metavar='QUESTION_LINK', help='"Tell me more": record Asked for more; not a decision')
+    dp = subs.add_parser('dispatch', parents=[log], help='start Owner-ready next items as workers; --dry-run prints the batch and skip reasons')
+    dp.add_argument('--dry-run', dest='dispatch_dry_run', action='store_true', help='read only: start nothing, write nothing')
     br = subs.add_parser('brief', parents=[log], help="render the station's brief")
     br.add_argument('number', type=int)
     sw = subs.add_parser('sweep', help='the board; flushes the spool, starts review fallbacks, logs closed issues')
@@ -1556,6 +1600,9 @@ def main(argv=None, gh=None):
         elif args.action == 'feed':
             from . import feeds
             print(feeds.run(sys.modules[__name__], gh, args.repo, args.feed, sys.stdin.read(), args.log))
+        elif args.action == 'dispatch':
+            from . import dispatch
+            print(dispatch.run(sys.modules[__name__], gh, args.repo, args.log, args.dry_run or args.dispatch_dry_run))
         elif args.action == 'lane':
             print(move(gh, args.repo, args.number, args.lane, args.reason, args.log, args.tests, args.learned))
         elif args.action == 'decide':

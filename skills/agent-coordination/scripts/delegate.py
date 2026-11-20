@@ -864,7 +864,7 @@ def status(args):
             params = json.loads((run / 'params.json').read_text())
             supervisor = json.loads((run / 'supervisor.json').read_text())
             receipt = json.loads((run / 'receipt.json').read_text()) if (run / 'receipt.json').exists() else {}
-            row.update(state=run_state(run), started_at=supervisor['started_at'], cwd=params['cwd'],
+            row.update(state=run_state(run), started_at=supervisor['started_at'], cwd=params['cwd'], session_id=params.get('session_id'),
                        depth=params['depth'], cost_usd=receipt.get('cost_usd'),
                        receipt_state='recorded' if receipt else 'not-produced',
                        keep_awake_current=current_protection(run), summary=(receipt.get('report') or {}).get('summary'))

@@ -147,6 +147,10 @@ class BeltCase(unittest.TestCase):
         starter = unittest.mock.patch.object(issues_cli, 'start_reviewer', side_effect=lambda *a: self.started.append(a))
         starter.start()
         self.addCleanup(starter.stop)
+        self.live = set()  # sessions the job registry shows running
+        running = unittest.mock.patch.object(issues_cli, 'live_sessions', side_effect=lambda: self.live)
+        running.start()
+        self.addCleanup(running.stop)
         self.gh = Belt(lambda: self.t)
         self.log = self.root / 'log.md'
         self.log.write_text('# log\n')
@@ -367,7 +371,8 @@ class Lanes(BeltCase):
         self.assertIn('learned (issue comment `Learned:`)', self.lane(n, 'closed', '--learned', 'maybe', ok=False))
         self.cli('close', '--repo', REPO, str(n), '--log', str(self.log), '--learned', 'lesson: widgets need a cache')
         self.assertEqual(self.gh.issues[n]['state'], 'CLOSED')
-        self.assertEqual(self.gh.issues[n]['comments'][-1]['body'].split('\n')[0], 'Learned: lesson: widgets need a cache')
+        self.assertEqual(self.gh.issues[n]['comments'][-2]['body'].split('\n')[0], 'Learned: lesson: widgets need a cache')
+        self.assertEqual(self.gh.issues[n]['comments'][-1]['body'], f'<!-- conveyor:v1 released {BUILDER} -->')
 
     def test_forward_moves_skip_no_lane_after_next_and_stop_on_hold(self):
         n = self.at('next')
@@ -830,6 +835,7 @@ class Sweep(BeltCase):
         self.gh.issues[parked]['comments'] = [{'author': {'login': 'me'}, 'body': f'Claimed: branch `feat/p` · session {REVIEWER}'}]
         self.at('next')
         self.gh.add(lane='next', comments=('Claimed: branch `x` · session not-a-session-id',))
+        self.live = {BUILDER, COORD}
         out = self.sweep()
         self.assertIn('Sessions: 2 working', out)
         self.assertIn(f'- {BUILDER} · working · claimed #{working} (in-progress)', out)
@@ -848,6 +854,7 @@ class Sweep(BeltCase):
         self.gh.add(comments=(claim(RELEASE_OWNER),))  # closed but never on the belt
         for n in (gone, mixed_closed, 5):
             self.gh.close(n)
+        self.live = {REVIEWER2}
         out = self.sweep()
         self.assertIn('Sessions: 1 working', out)
         self.assertIn(f'- {REVIEWER2} · working · claimed #{mixed_open} (in-progress), claimed #{mixed_closed} (closed)', out)
@@ -887,6 +894,7 @@ class Sweep(BeltCase):
         self.at('inbox')
         self.gh.issues[1]['body'] = 'old\n\nCaptured: 2026-11-17 10:00Z · source chat\n'
         self.at('in-progress')
+        self.live = {BUILDER, COORD}
         lines = self.sweep().split('\n')
         self.assertLess(lines.index('Violations: 1'), lines.index('Sessions: 2 working'))
 
@@ -1070,6 +1078,7 @@ class Resume(BeltCase):
 
     def test_board_changes_and_one_checkpoint(self):
         n = self.at('in-review')
+        self.live = {BUILDER, COORD}
         first = self.resume()
         self.assertIn('Resume for coordinator · o/r', first)
         self.assertIn('Lanes: ', first)
@@ -1105,6 +1114,7 @@ class Resume(BeltCase):
         """Fix4 item 1: seventy working sessions overflow the cap after the violation line, not before it."""
         for k in range(70):
             self.gh.add(lane='in-progress', comments=(f'Claimed: branch `feat/w` · session b0000000-0000-4000-8000-{k:012d}',))
+        self.live = {f'b0000000-0000-4000-8000-{k:012d}' for k in range(70)}
         out = self.resume()
         self.assertRegex(out, r'\n- lane over limit: in-progress 70 of \d+\nSessions: 70 working\n')
         self.assertIn('cut at the resume cap', out)

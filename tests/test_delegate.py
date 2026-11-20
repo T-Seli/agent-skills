@@ -116,6 +116,12 @@ class DelegateTests(unittest.TestCase):
         self.assertIn("Worktree start free", json.loads(result.stdout)["refused"])
         self.assertFalse(list(self.dir.glob("claude-*.json")))
 
+    def test_status_rows_name_the_worker_session_so_the_board_can_match_live_evidence(self):
+        launch = json.loads(self.start("--task-id", "t-s").stdout)
+        row = json.loads(self.delegate("status", "t-s").stdout.split("\n")[0])
+        self.assertEqual(row["session_id"], launch["session_id"])
+        self.delegate("wait", "t-s", "--timeout", "30")
+
     def test_start_returns_at_once_and_wait_returns_the_receipt(self):
         began = time.time()
         started = self.start("--task-id", "t-1", env={"AGENT_SKILLS_GRANT": '{"repo": "acme/app"}'})

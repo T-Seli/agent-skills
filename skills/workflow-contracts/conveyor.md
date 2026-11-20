@@ -12,7 +12,7 @@ The one home for the belt. Lanes, receipts, records, cards, feeds, flow and know
 A fixed rule, count, state change or check is a script; judgment is a skill; a direction or a go is a question to the user.
 
 ## Scope and registry
-The belt acts only on its registry: the sessions named in `Owner:` and `Claimed:` receipts on belt issues, open or closed, as `local_<uuid>` for a desktop session or a plain uuid for a headless worker, which ends by itself and is never archived (conveyor.json `registry`). A guard allows a session none of whose belt issues is open and unparked, denies one with such an issue, and asks about a session no belt issue names; it searches by id, never lists every issue. Machine limits (test slots, disk) read real load.
+The belt acts only on its registry: the sessions named in `Owner:` and `Claimed:` receipts on belt issues, open or closed, as `local_<uuid>` for a desktop session or a plain uuid for a headless worker, which ends by itself and is never archived (conveyor.json `registry`). A guard allows a session none of whose belt issues is open and unparked, denies one with such an issue, and asks about a session no belt issue names; it searches by id, never lists every issue.
 
 ## Labels
 One `lane:<name>`, one `domain:<name>`, one `kind:<name>` and, once sorted, one `size:S|M|L` per open belt issue. Priority `prio:now|next|later` is separate from lane `next`. `hold` stops forward moves; `needs-human` waits for the user; `parked` and `stalled` free the slot. A gate needing a missing belt label creates it: additive only, one receipt.
@@ -36,7 +36,7 @@ Gates read receipts only from the issue: body, labels, linked PR and comments. A
 
 `Conveyor: <UTC time> · <command> · <from> → <to> · head <sha|-> · tests <ref|-> · skills <release id> · schedules <ids|->`
 
-Every receipt line is built before the command's first write. Only commands write receipts; the AI writes only a station's judgment fields. A receipt is never edited: a wrong one gets a `Correction:`. No gate treats `Decision:` or `Asked for more` as a go: the only go is `Approved:`.
+Only commands write receipts; the AI writes only a station's judgment fields. A receipt is never edited: a wrong one gets a `Correction:`. No gate treats `Decision:` or `Asked for more` as a go: the only go is `Approved:`.
 
 ## Approvals
 `safeguard-cli run-approved <kind> <id> --digest <d>` is the only route for a go. Each kind maps to one fixed code path; the record carries parameters only, including the targets' current refs as `rollback`, inside the digest. It refuses on each `action_record.refusals` reason, `not-ready` included (a train issue not in `ready-to-release` on its PR head). `release` merges and pushes branches and writes `Pushed:`, never `deploy:`; any other target is refused until a project names deploy targets. A failure after the claim appends `Failed:`.
@@ -52,7 +52,7 @@ A go's kind, id and digest prefix show in the detail and the permission dialog. 
 **Input:** the issue plus the brief `issues-cli brief <n>` renders (body, decisions, the domain's knowledge pages with verified dates). **Output:** the existing `log.md` entry and its tokens (contracts.md § Task log) plus the release id. **Gate:** `issues-cli lane`.
 
 ## Flow
-Limits, time boxes and the train timetable are in contracts.md § Defaults, counted over the registry only. The sweep names the next items by `prio:now`, `next`, `later`, then deadline, then age; `publish` moves them and writes the full spec. Drain before fill: Build pulls nothing while Review is full.
+Limits, time boxes and the train timetable are in contracts.md § Defaults, counted over the registry only. The sweep names the next items by `prio:now`, `next`, `later`, then deadline, then age; `publish` moves them and writes the full spec. Drain before fill: Build pulls nothing while Review is full. `issues-cli dispatch [--dry-run]` starts owned `next` items ([issues.md](issues.md)).
 
 `issues-cli park <n> --waiting-on <who> --until <date|event>` writes the hand-over, frees the slot and sets `parked`; the sweep un-parks at the front of its priority. Two time boxes without a receipt park the item as `stalled`. L is split before Build; after 2 NO reviews the next step is a choice card.
 
@@ -60,7 +60,7 @@ Limits, time boxes and the train timetable are in contracts.md § Defaults, coun
 Each source is one entry in conveyor.json `feeds.entries`; the project's `feeds.json`, then the machine config's `feeds`, override it by id. A scheduled small-model run fetches and pipes rows to `issues-cli feed <id>`, which keys, dedupes, captures and never closes; a disabled feed refuses.
 
 ## Sweep
-`issues-cli sweep` reads GitHub, git, disk, test slots, the denial log and the registry, and prints questions waiting on the user, lane counts against limits, the backlog line, `Coming to you next`, parked items with age, one line per violation, and the weekly batch. It writes only the un-park, spool flush, fallback start (at most one per sweep, none without a free test slot) and knowledge `log`, each with a receipt.
+`issues-cli sweep` reads GitHub, git, disk, test slots, the denial log and the registry (a worker is `working` only while a job runs), and prints questions waiting on the user, lane counts against limits, the backlog line, `Coming to you next`, parked items with age, one line per violation, and the weekly batch. It writes only the un-park, spool flush, fallback start (at most one per sweep, none without a free test slot) and knowledge `log`, each with a receipt.
 
 ## Independent review
 The outside reviewer is asked first (`Review requested:`). With no verdict on the exact head after `Review fallback`, the sweep starts a fresh-context reviewer; its verdict counts. A late NO reopens the item (`needs-human` if released).
