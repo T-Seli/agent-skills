@@ -282,9 +282,27 @@
     },
     "parked": {
       "source": "issue_comment",
-      "pattern": "^Parked: waiting on (?P<who>.+) · until (?P<until>\\S+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · next (?P<next>.+)$",
-      "written_by": "park or sweep (stalled)",
+      "pattern": "^Parked: (?P<why>.+) · until (?P<until>\\d{4}-\\d{2}-\\d{2}|event:[A-Za-z0-9._-]+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z)$",
+      "written_by": "park",
       "label": "parked"
+    },
+    "unparked": {
+      "source": "issue_comment",
+      "pattern": "^Unparked: (?P<how>date|event:[A-Za-z0-9._-]+|manual) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z)$",
+      "written_by": "unpark, or sweep when the date or event has come",
+      "label": "unparked"
+    },
+    "stalled": {
+      "source": "issue_comment",
+      "pattern": "^Stalled: no receipt since (?P<since>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · box (?P<box>\\S+ \\S+) · (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z)$",
+      "written_by": "sweep",
+      "label": "stalled"
+    },
+    "event": {
+      "source": "issue_comment",
+      "pattern": "^Event: (?P<name>[A-Za-z0-9._-]+)$",
+      "written_by": "the session or person who saw it; an `event:<name>` park waits for the first one after its Parked: line",
+      "label": "event seen"
     },
     "source_key": {
       "source": "issue_body",
@@ -294,7 +312,7 @@
     }
   },
   "timeline": {
-    "pattern": "^Conveyor: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · (?P<command>capture|prio|publish|claim|sort|lane|decide|brief|ask|run-approved|sweep|close|feed|park) · (?P<from>[a-z-]+|-) → (?P<to>[a-z-]+|-) · head (?P<head>[0-9a-f]{7,40}|-) · tests (?P<tests>\\S+) · skills (?P<skills>[0-9a-f]{7,40}) · schedules (?P<schedules>\\S+)$",
+    "pattern": "^Conveyor: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · (?P<command>capture|prio|publish|claim|sort|lane|decide|brief|ask|run-approved|sweep|close|feed|park|unpark) · (?P<from>[a-z-]+|-) → (?P<to>[a-z-]+|-) · head (?P<head>[0-9a-f]{7,40}|-) · tests (?P<tests>\\S+) · skills (?P<skills>[0-9a-f]{7,40}) · schedules (?P<schedules>\\S+)$",
     "correction": "^Correction: (?P<ref>\\S+) · (?P<field>\\S+) was (?P<wrong>.+) · is (?P<right>.+)$"
   },
   "knowledge": {
@@ -592,10 +610,30 @@
       "pattern": "^Tick: (?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}Z) · started (?P<started>\\d+) · waiting (?P<waiting>\\d+) · held (?P<held>\\d+)$"
     }
   },
+  "park": {
+    "note": "parked and stalled items keep their lane but count toward no limit and are never dispatched",
+    "until": {
+      "date": "^\\d{4}-\\d{2}-\\d{2}$",
+      "event": "^event:(?P<name>[A-Za-z0-9._-]+)$"
+    },
+    "frees_slot": [
+      "parked",
+      "stalled"
+    ],
+    "stalled_lanes": [
+      "in-progress",
+      "in-review"
+    ],
+    "time_units_minutes": {
+      "min": 1,
+      "h": 60,
+      "day": 1440
+    }
+  },
   "flow": {
-    "park": "issues-cli park <n> --waiting-on <who> --until <date|event>: hand-over comment (branch, head, done, next), closeout of the session, slot freed, label parked",
-    "unpark": "sweep, on the date or event, at the front of its priority",
-    "time_boxes": "contracts.md § Defaults `Time boxes`; one box: ask the session for a receipt once; two: park as stalled",
+    "park": "issues-cli park <n> --until <date|event:name> --why <text> [--done --left --next]: hand-over comment, label parked, released marker; the lane stays",
+    "unpark": "issues-cli unpark <n>, or the sweep when the date has come or the event receipt appears after the Parked: line; the item re-enters dispatch",
+    "time_boxes": "contracts.md § Defaults `Time boxes`; an in-progress or in-review item past its size's box with no new receipt is marked stalled by the sweep; a card past its box is flagged on the board; nothing is closed or moved",
     "sizes": "only S and M enter Build; L is split first; an item past its size cap or two boxes ships what is done and files the rest",
     "m_quota": "contracts.md § Defaults `Lane limits`",
     "review_rounds": "after 2 NO rounds the next step is a choice card",

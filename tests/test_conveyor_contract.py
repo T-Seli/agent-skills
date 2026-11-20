@@ -76,12 +76,15 @@ class Receipts(unittest.TestCase):
             'rolled_back': f'Rolled back: {SHA} to main',
             'failed': 'Failed: release r12 · 2026-11-18 20:41Z · push refused',
             'no_release': 'No release: answered · the board already shows it',
-            'parked': 'Parked: waiting on the user · until 2026-11-20 · 2026-11-18 20:00Z · next pick a vendor',
+            'parked': 'Parked: waiting on the user · until 2026-11-20 · 2026-11-18 20:00Z',
+            'unparked': 'Unparked: event:vendor-replied · 2026-11-20 08:00Z',
+            'stalled': 'Stalled: no receipt since 2026-11-18 11:30Z · box 4 h · 2026-11-18 16:00Z',
+            'event': 'Event: vendor-replied',
             'source_key': 'Source-key: tracker-sheet:0123456789abcdef',
         }
         for name, sample in samples.items():
             self.assertTrue(matches(name, sample), name)
-        for cmd in ('publish', 'claim', 'close', 'lane', 'feed', 'park'):
+        for cmd in ('publish', 'claim', 'close', 'lane', 'feed', 'park', 'unpark'):
             line = f'Conveyor: 2026-11-18 20:00Z · {cmd} · next → in-progress · head {SHA} · tests - · skills {SHA} · schedules -'
             self.assertRegex(line, SCHEMA['timeline']['pattern'])
 

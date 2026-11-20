@@ -80,14 +80,15 @@ def preflight(cli, by, repo, cfg):
     Build and Investigate slots left after the in-progress items and the started items still waiting for their claim."""
     from .disk_check import EXIT_STOP, check
     lim = cli.limits()
-    claimed = [i for i in by['next'] if (r := read_receipt(state_path(cfg, repo, i['number']))) and r['status'] == 'verified']
-    working = [*by['in-progress'], *claimed]
+    claimed = [i for i in cli.counted(by['next']) if (r := read_receipt(state_path(cfg, repo, i['number']))) and r['status'] == 'verified']
+    working = [*cli.counted(by['in-progress']), *claimed]
     inv = len([i for i in working if kind_of(cli, cfg, i) == 'investigate'])
     caps = {'build': cfg['build_cap_override'] or lim['Build'], 'investigate': investigate_limit(cli)}
     used = {'build': len(working) - inv, 'investigate': inv, 'M': len([i for i in working if 'size:M' in cli.label_names(i)])}
     stop = None
-    if len(by['in-review']) >= lim['Review']:
-        stop = f"drain: Review is full ({len(by['in-review'])} of {lim['Review']})"
+    reviewing = len(cli.counted(by['in-review']))
+    if reviewing >= lim['Review']:
+        stop = f"drain: Review is full ({reviewing} of {lim['Review']})"
     code, line = check(str(cli.project()[0]), cli.machine_config())
     if stop is None and code == EXIT_STOP:
         stop = line
@@ -118,7 +119,9 @@ def plan(cli, gh, repo, cfg):
         size = next((x[5:] for x in cli.label_names(i) if x.startswith('size:')), None)
         path, r = state_path(cfg, repo, n), read_receipt(state_path(cfg, repo, n))
         mark = latest_marker(cli, cfg, i.get('comments', []), me)
-        if not owned:
+        if cli.frees_slot(i):
+            skipped.append((i, next(x for x in cli.belt()['park']['frees_slot'] if x in cli.label_names(i))))
+        elif not owned:
             skipped.append((i, 'missing Owner:'))
         elif size not in sizes:
             skipped.append((i, f"size not allowed: {size or 'no size label'} (allowed {', '.join(sizes)})"))
