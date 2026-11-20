@@ -86,14 +86,14 @@ class Start(DispatchCase):
         self.assertIn('skipped: #1 started: waiting for the worker to claim', out)
 
     def test_the_batch_follows_priority_and_the_free_room(self):
-        self.configure(dispatch={'state_dir': str(self.state), 'build_cap_override': 2})
+        self.configure(dispatch={'state_dir': str(self.state), 'build_cap_override': 3})
         later, now_, nxt = self.item(), self.item(), self.item()
         self.gh.issues[later]['labels'].append({'name': 'prio:later'})
         self.gh.issues[now_]['labels'].append({'name': 'prio:now'})
         self.gh.issues[nxt]['labels'].append({'name': 'prio:next'})
         out = self.dispatch()
         self.assertEqual([c[1].split('\n')[0][:9] for c in self.delegate_calls], [f'# Brief: #{now_}'[:9], f'# Brief: #{nxt}'[:9]])
-        self.assertIn(f'skipped: #{later} cap: Build 2 of 2', out)
+        self.assertIn(f'skipped: #{later} cap: last Build slot kept for prio:now (2 of 3 used)', out)
         self.assertEqual(self.beat(out)['waiting'], '1')
 
     def test_log_gets_the_tick_lines(self):
@@ -103,7 +103,7 @@ class Start(DispatchCase):
 
 
 class Caps(DispatchCase):
-    defaults = '- Lane limits: Build 2 · Review 1 · Investigate 1 · Release 1 train of ≤6 PRs · Sessions 10\n'
+    defaults = '- Lane limits: Build 2 (1 kept free for `prio:now`, at most 1 size M) · Review 1 · Investigate 1 · Release 1 train of ≤6 PRs · Sessions 10\n'
 
     def skipped(self, n, why):
         out = self.dispatch()
@@ -135,6 +135,34 @@ class Caps(DispatchCase):
         b = self.item()
         self.assertIn(f'started: #{b} (build)', self.dispatch())
 
+    def test_the_last_free_build_slot_is_kept_for_prio_now(self):
+        self.at('in-progress')
+        later = self.item()
+        self.skipped(later, 'cap: last Build slot kept for prio:now (1 of 2 used)')
+        urgent = self.item()
+        self.gh.issues[urgent]['labels'].append({'name': 'prio:now'})
+        self.delegate_calls = []
+        self.assertIn(f'started: #{urgent} (build)', self.dispatch())
+
+    def test_the_now_slot_still_applies_under_the_first_week_override(self):
+        self.configure(dispatch={'state_dir': str(self.state), 'build_cap_override': 3, 'sizes_allowed': ['S']})
+        self.at('in-progress'), self.at('in-progress')
+        self.skipped(self.item(), 'cap: last Build slot kept for prio:now (2 of 3 used)')
+
+    def test_size_m_quota_in_build(self):
+        self.configure(dispatch={'state_dir': str(self.state), 'build_cap_override': 5})
+        self.at('in-progress', labels=('size:M',))
+        m = self.item('M')
+        out = self.dispatch()
+        self.assertIn(f'skipped: #{m} cap: size M 1 of 1', out)
+        self.assertEqual(self.delegate_calls, [])
+
+    def test_a_contract_line_without_the_two_rules_is_refused_loudly(self):
+        self.root.joinpath('CLAUDE.md').write_text(self.root.joinpath('CLAUDE.md').read_text().replace(
+            ' (1 kept free for `prio:now`, at most 1 size M)', ''))
+        self.item()
+        self.assertIn('names no `prio:now` reserve', self.dispatch(ok=False))
+
     def test_drain_before_fill(self):
         self.at('in-review')
         self.skipped(self.item(), 'drain: Review is full (1 of 1)')
@@ -148,12 +176,12 @@ class Caps(DispatchCase):
         self.skipped(self.item(), 'test slot: none free (1 of 4, 1 kept for release runs)')
 
     def test_size_filter_from_config_defaults_to_the_lane_sizes(self):
-        self.configure(dispatch={'state_dir': str(self.state), 'sizes_allowed': ['S']})
+        self.configure(dispatch={'state_dir': str(self.state), 'sizes_allowed': ['S'], 'build_cap_override': 5})
         m, s = self.item('M'), self.item('S')
         out = self.dispatch()
         self.assertIn(f'skipped: #{m} size not allowed: M (allowed S)', out)
         self.assertIn(f'started: #{s} (build)', out)
-        self.configure(dispatch={'state_dir': str(self.state)})
+        self.configure(dispatch={'state_dir': str(self.state), 'build_cap_override': 5})
         self.assertIn(f'started: #{m} (build)', self.dispatch())
         large = self.item('L')
         self.assertIn(f'skipped: #{large} size not allowed: L (allowed S, M)', self.dispatch())
@@ -314,6 +342,17 @@ class DryRun(DispatchCase):
         self.assertIn(f'Skipped: #{marked} marker: active session {BUILDER}', out)
         self.assertIn(f'start held: #{held} delegate start outcome unknown', out)
         self.assertNotIn('Tick:', out)
+
+    def test_it_names_the_now_slot_and_the_size_m_quota(self):
+        self.configure(dispatch={'state_dir': str(self.state), 'build_cap_override': 3})
+        self.at('in-progress', labels=('size:M',)), self.at('in-progress', labels=('size:M',))
+        late = self.item()
+        out = self.dispatch('--dry-run')
+        self.assertIn(f'Skipped: #{late} cap: last Build slot kept for prio:now (2 of 3 used)', out)
+        self.gh.issues[late]['labels'].append({'name': 'prio:now'})
+        m = self.item('M')
+        self.gh.issues[m]['labels'].append({'name': 'prio:now'})
+        self.assertIn(f'Skipped: #{m} cap: size M 2 of 2', self.dispatch('--dry-run'))
 
     def test_the_global_dry_run_flag_means_the_same(self):
         n = self.item()

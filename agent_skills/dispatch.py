@@ -52,6 +52,17 @@ def investigate_limit(cli):
     return int(m[1])
 
 
+def build_rules(cli):
+    """(slots kept free for prio:now, most size M items in Build) from contracts.md § Defaults `Lane limits`."""
+    line = cli.defaults().get('Lane limits', '')
+    reserve, m_max = re.search(r'(\d+) kept free for `prio:now`', line), re.search(r'at most (\d+) size M', line)
+    if not reserve:
+        raise cli.Refused('§ Defaults `Lane limits` names no `prio:now` reserve (`<n> kept free for `prio:now``)')
+    if not m_max:
+        raise cli.Refused('§ Defaults `Lane limits` names no size M quota (`at most <n> size M`)')
+    return int(reserve[1]), int(m_max[1])
+
+
 def latest_marker(cli, cfg, comments, me):
     """The signed-in login's newest first-line marker (conveyor.json dispatch.marker), or None."""
     pattern = re.compile(cfg['marker']['pattern'])
@@ -73,7 +84,7 @@ def preflight(cli, by, repo, cfg):
     working = [*by['in-progress'], *claimed]
     inv = len([i for i in working if kind_of(cli, cfg, i) == 'investigate'])
     caps = {'build': cfg['build_cap_override'] or lim['Build'], 'investigate': investigate_limit(cli)}
-    used = {'build': len(working) - inv, 'investigate': inv}
+    used = {'build': len(working) - inv, 'investigate': inv, 'M': len([i for i in working if 'size:M' in cli.label_names(i)])}
     stop = None
     if len(by['in-review']) >= lim['Review']:
         stop = f"drain: Review is full ({len(by['in-review'])} of {lim['Review']})"
@@ -98,6 +109,7 @@ def plan(cli, gh, repo, cfg):
     issues, by = cli.open_belt(gh, repo)
     me, reg, live = gh(['api', 'user', '--jq', '.login']).strip(), cli.registry(issues), live_or_none(cli)
     stop, caps, used = preflight(cli, by, repo, cfg)
+    reserve, m_max = build_rules(cli)
     sizes, batch, skipped, held = sizes_allowed(cli, cfg), [], [], []
     for i in cli.pull_order(by['next']):
         n, kind = i['number'], kind_of(cli, cfg, i)
@@ -122,9 +134,14 @@ def plan(cli, gh, repo, cfg):
             skipped.append((i, stop))
         elif used[kind] >= caps[kind]:
             skipped.append((i, f'cap: {kind.capitalize()} {used[kind]} of {caps[kind]}'))
+        elif kind == 'build' and 'prio:now' not in cli.label_names(i) and used[kind] + reserve >= caps[kind]:
+            skipped.append((i, f'cap: last Build slot kept for prio:now ({used[kind]} of {caps[kind]} used)'))
+        elif kind == 'build' and size == 'M' and used['M'] >= m_max:
+            skipped.append((i, f"cap: size M {used['M']} of {m_max}"))
         else:
             batch.append((i, kind))
             used[kind] += 1
+            used['M'] += kind == 'build' and size == 'M'
     return batch, skipped, held
 
 

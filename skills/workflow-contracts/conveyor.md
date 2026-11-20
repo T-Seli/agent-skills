@@ -52,7 +52,7 @@ A go's kind, id and digest prefix show in the detail and the permission dialog. 
 **Input:** the issue plus the brief `issues-cli brief <n>` renders (body, decisions, the domain's knowledge pages with verified dates). **Output:** the existing `log.md` entry and its tokens (contracts.md § Task log) plus the release id. **Gate:** `issues-cli lane`.
 
 ## Flow
-Limits, time boxes and the train timetable are in contracts.md § Defaults, counted over the registry only. The sweep names the next items by `prio:now`, `next`, `later`, then deadline, then age; `publish` moves them and writes the full spec. Drain before fill: Build pulls nothing while Review is full. `issues-cli dispatch [--dry-run]` starts `next` items that have an `Owner:` ([issues.md](issues.md)).
+Limits, time boxes and the train timetable are in contracts.md § Defaults, counted over the registry only. The sweep names the next items by `prio:now`, `next`, `later`, then deadline, then age; `publish` moves them and writes the full spec. Drain before fill: Build pulls nothing while Review is full. `issues-cli dispatch [--dry-run]` starts owned `next` items ([issues.md](issues.md)).
 
 `issues-cli park <n> --waiting-on <who> --until <date|event>` writes the hand-over, frees the slot and sets `parked`; the sweep un-parks at the front of its priority. Two time boxes without a receipt park the item as `stalled`. L is split before Build; after 2 NO reviews the next step is a choice card.
 
