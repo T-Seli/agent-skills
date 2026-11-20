@@ -54,13 +54,13 @@ A go's kind, id and digest prefix show in the detail and the permission dialog. 
 ## Flow
 Limits, time boxes and the train timetable are in contracts.md § Defaults, counted over the registry only. The sweep names the next items by `prio:now`, `next`, `later`, then deadline, then age; `publish` moves them and writes the full spec. Drain before fill: Build pulls nothing while Review is full. `issues-cli dispatch [--dry-run]` starts owned `next` items ([issues.md](issues.md)).
 
-`issues-cli park <n> --waiting-on <who> --until <date|event>` writes the hand-over, frees the slot and sets `parked`; the sweep un-parks at the front of its priority. Two time boxes without a receipt park the item as `stalled`. L is split before Build; after 2 NO reviews the next step is a choice card.
+`issues-cli park <n> --until <date|event:name> --why <text>` hands over, frees the slot, sets `parked`; sweep un-parks when due. No receipt: one time box asks once, two mark it `stalled`; neither counts to a limit. L is split before Build; after 2 NO reviews the next step is a choice card.
 
 ## Feeds
 Each source is one entry in conveyor.json `feeds.entries`; the project's `feeds.json`, then the machine config's `feeds`, override it by id. A scheduled small-model run fetches and pipes rows to `issues-cli feed <id>`, which keys, dedupes, captures and never closes; a disabled feed refuses.
 
 ## Sweep
-`issues-cli sweep` reads GitHub, git, disk, test slots, the denial log and the registry (a worker is `working` only while a job runs), and prints questions waiting on the user, lane counts against limits, the backlog line, `Coming to you next`, parked items with age, one line per violation, and the weekly batch. It writes only the un-park, spool flush, fallback start (at most one per sweep, none without a free test slot) and knowledge `log`, each with a receipt.
+`issues-cli sweep` reads GitHub, git, disk, test slots, the denial log and the registry (a worker is `working` only while a job runs), and prints questions waiting on the user, lane counts against limits, the backlog line, `Coming to you next`, parked items with age, one line per violation, and the weekly batch. It writes only the un-park, ask, stall, spool flush, fallback start (at most one per sweep, none without a free test slot) and knowledge `log`, each with a receipt.
 
 ## Independent review
 The outside reviewer is asked first (`Review requested:`). With no verdict on the exact head after `Review fallback`, the sweep starts a fresh-context reviewer; its verdict counts. A late NO reopens the item (`needs-human` if released).

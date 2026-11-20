@@ -460,6 +460,18 @@ def review_fallback():
     return timedelta(hours=float(m[1]))
 
 
+def time_boxes():
+    """contracts.md § Defaults `Time boxes`: {'S': (timedelta, '4 h'), 'M': ..., 'card': ...}; units from conveyor.json park."""
+    line, units = defaults().get('Time boxes', ''), belt()['park']['time_units_minutes']
+    out = {}
+    for key, pattern in (('S', r'\bS'), ('M', r'\bM'), ('card', r'\ba card')):
+        m = re.search(rf"{pattern} (\d+(?:\.\d+)?) ({'|'.join(units)})s?\b", line)
+        if not m:
+            raise Refused(f'§ Defaults `Time boxes` names no {key} box (`{key if key != "card" else "a card"} <n> <{"|".join(units)}>`)')
+        out[key] = (timedelta(minutes=float(m[1]) * units[m[2]]), f'{m[1]} {m[2]}')
+    return out
+
+
 def branch_targets_only():
     """conveyor.json receipts.landed.pushed_only_if: § Deploy `Targets` names no target other than branches: `none`,
     or entries (one per line or ` · `-separated) that each say kind `branch`. Any other entry needs `deploy:`."""
@@ -622,9 +634,18 @@ def stage_lines(log_lines, target, on_issue):
                               if line not in have_lines and any(re.search(p, line) for p in patterns)))
 
 
+def frees_slot(i):
+    """conveyor.json park.frees_slot: a parked or stalled item keeps its lane but counts toward no limit."""
+    return bool(set(label_names(i)) & set(belt()['park']['frees_slot']))
+
+
+def counted(issues):
+    return [i for i in issues if not frees_slot(i)]
+
+
 def lane_count(gh, repo, lane):
-    return len(json.loads(gh(['issue', 'list', '-R', repo, '--state', 'open', '--label', f'lane:{lane}',
-                              '--limit', '1000', '--json', 'number'])))
+    return len(counted(json.loads(gh(['issue', 'list', '-R', repo, '--state', 'open', '--label', f'lane:{lane}',
+                                      '--limit', '1000', '--json', 'number,labels']))))
 
 
 def room_missing(gh, repo, target, labels):
@@ -939,7 +960,8 @@ def decide(gh, repo, n, text, question, session, log=None, scope=None):
     line = f'Decision: {text} · {stamp(at)} · question {question} · session {session}'
     if not re.fullmatch(receipt('decision')['pattern'], line):
         raise Refused(f'malformed decision line: {line}')
-    record(gh, repo, n, conveyor_line('decide', cur, cur), log_path, [line])
+    until = belt()['park']['card_until']
+    record(gh, repo, n, conveyor_line('decide', cur, cur), log_path, [line, f"Event: {re.match(belt()['park']['until']['event'], until)['name']}"])
     if k is None:
         return f'#{n} decision recorded; Knowledge: none, so no decision row'
     if k.notice:
@@ -1075,6 +1097,120 @@ def release_marker(gh, repo, n, session):
     """Close hands the issue back: a `released` marker for the session that held the claim, if any."""
     if session:
         gh(['issue', 'comment', str(n), '-R', repo, '--body-file', '-'], marker('released', session) + '\n')
+
+
+def until_kind(until):
+    """'date' or 'event' for a --until value (conveyor.json park.until); anything else is refused."""
+    rules = belt()['park']['until']
+    if re.fullmatch(rules['event'], until or ''):
+        return 'event'
+    if not re.fullmatch(rules['date'], until or ''):
+        raise Refused(f'--until {until!r} is not a date (YYYY-MM-DD, UTC) or event:<name>')
+    try:
+        parse_stamp(f'{until} 00:00Z')
+    except ValueError:
+        raise Refused(f'--until {until!r} is not a date (YYYY-MM-DD, UTC) or event:<name>')
+    return 'date'
+
+
+def park(gh, repo, n, until, why, done=None, left=None, nxt=None, log=None):
+    """Hand the item over and free its slot: one comment with the Parked: receipt, the claimed branch, the PR head and
+    the optional Done/Left/Next lines, the `parked` label, then the released marker for the session that held it. The
+    lane stays. Every value is checked before the first write."""
+    if not why:
+        raise Refused('park needs --why: what the item waits for')
+    if not until:
+        raise Refused('park needs --until <UTC date|event:<name>>')
+    if '\n' in why:
+        raise Refused('--why is one line')
+    kind, t, log_path = until_kind(until), now(), task_log(log)[0]
+    if kind == 'date' and parse_stamp(f'{until} 00:00Z') <= t.replace(hour=0, minute=0, second=0, microsecond=0):
+        raise Refused(f'--until {until} has already passed or is today (now {stamp(t)})')
+    d = load(gh, repo, n)
+    if d['state'] != 'OPEN':
+        raise Refused(f'#{n} is closed')
+    cur = lane_of(d)
+    if not cur:
+        raise Refused(f'#{n} is not on the belt (no lane label)')
+    if 'parked' in label_names(d):
+        raise Refused(f'#{n} is already parked')
+    f = Facts(gh, repo, d)
+    branch = next((m[1] for x in reversed(f.comments) if (m := re.match(r'^Claimed: branch `([^`]+)`', x))), None)
+    body = [f'Parked: {why} · until {until} · {stamp(t)}',
+            *([f'Branch: `{branch}`'] if branch else []), *([f'Head: {f.head[:7]}'] if f.head else []),
+            *[f'{label}: {text}' for label, text in (('Done', done), ('Left', left), ('Next', nxt)) if text]]
+    line = conveyor_line('park', cur, cur, f.head)
+    relabel(gh, repo, n, ['parked'])
+    record(gh, repo, n, line, log_path, before=body)
+    release_marker(gh, repo, n, f.claim)
+    return f'#{n} parked until {until}'
+
+
+def lift(gh, repo, i, how, command, log_path=None):
+    """Remove `parked` (or `stalled`), keep the lane, post the Unparked: receipt and the timeline line."""
+    n, cur = i['number'], lane_of(i)
+    line = conveyor_line(command, cur, cur)
+    relabel(gh, repo, n, remove=[x for x in belt()['park']['frees_slot'] if x in label_names(i)])
+    record(gh, repo, n, line, log_path, before=[f'Unparked: {how} · {stamp(now())}'])
+
+
+def unpark(gh, repo, n, log=None):
+    d = load(gh, repo, n)
+    if d['state'] != 'OPEN':
+        raise Refused(f'#{n} is closed')
+    if not frees_slot(d):
+        raise Refused(f'#{n} is not parked or stalled')
+    lift(gh, repo, d, 'manual', 'unpark', task_log(log)[0])
+    return f"#{n} unparked ({lane_of(d)})"
+
+
+def pending_ask(i):
+    """Time of the last `ask` card the owner has not answered with a `Decision:` since, or None."""
+    lines = comment_lines(i)
+    asked = [x['time'] for x in timeline_of(lines) if x['command'] == 'ask']
+    decided = [m['time'] for line in lines if (m := re.match(receipt('decision')['pattern'], line))]
+    return asked[-1] if asked and (not decided or parse_stamp(asked[-1]) > parse_stamp(decided[-1])) else None
+
+
+def unpark_due(i, t):
+    """How a parked item's wait has ended (`date`, `event:<name>`) or None: the date has come (UTC), or its event receipt
+    appears after the Parked: line."""
+    lines = comment_lines(i)
+    found = [(k, m) for k, x in enumerate(lines) if (m := re.match(receipt('parked')['pattern'], x))]
+    if not found:
+        return None
+    k, m = found[-1]
+    until = m['until']
+    if until_kind(until) == 'date':
+        return 'date' if t >= parse_stamp(f'{until} 00:00Z') else None
+    name = re.match(belt()['park']['until']['event'], until)['name']
+    seen = [x for x in lines[k + 1:] if (e := re.match(receipt('event')['pattern'], x)) and e['name'] == name]
+    return f'event:{name}' if seen else None
+
+
+def last_receipt(i):
+    times = [parse_stamp(x['time']) for x in timeline_of(comment_lines(i))]
+    return max(times) if times else None
+
+
+def size_of(i):
+    return next((x[5:] for x in label_names(i) if x.startswith('size:')), None)
+
+
+def past_box(i, t, boxes):
+    """(boxes passed, last receipt time, box text) when an in-progress or in-review item has gone one or more of its
+    size's time boxes with no newer receipt; None for other lanes, sizes without a box, or items that free their slot."""
+    size, last = size_of(i), last_receipt(i)
+    if lane_of(i) not in belt()['park']['stalled_lanes'] or frees_slot(i) or size not in boxes or last is None:
+        return None
+    span, text = boxes[size]
+    passed = 2 if t - last > 2 * span else 1 if t - last > span else 0
+    return (passed, last, text) if passed else None
+
+
+def asked_for_receipt(i, last):
+    """True when the sweep already asked for a receipt in this silent stretch (since == the last receipt's time)."""
+    return any((m := re.match(receipt('receipt_asked')['pattern'], x)) and m['since'] == stamp(last) for x in comment_lines(i))
 
 
 def close_belt(gh, repo, n, learned, log=None, no_release=None, why=None):
@@ -1368,6 +1504,35 @@ def board(gh, repo, weekly=False, write=True):
     else:
         waiting = [e for e in spool_read(spool_path()) if e['repo'] == repo]
     issues, by = open_belt(gh, repo)
+    boxes = time_boxes()
+    if write:
+        changed = len(wrote)
+        for i in issues:
+            if 'parked' in label_names(i) and (how := unpark_due(i, t)):
+                lift(gh, repo, i, how, 'sweep')
+                wrote.append(f"unparked #{i['number']} ({how})")
+        cfg, carded = belt()['park'], set()
+        for i in issues:
+            if not frees_slot(i) and (asked := pending_ask(i)) and t - parse_stamp(asked) > boxes['card'][0]:
+                park(gh, repo, i['number'], cfg['card_until'], cfg['card_why'])
+                carded.add(i['number'])
+                wrote.append(f"parked #{i['number']} (card unanswered past {boxes['card'][1]})")
+        for i in issues:
+            if i['number'] in carded or not (late := past_box(i, t, boxes)):
+                continue
+            passed, last, text = late
+            quiet = f"no receipt since {stamp(last)} · box {text}"
+            if passed == 2:
+                relabel(gh, repo, i['number'], ['stalled'])
+                record(gh, repo, i['number'], conveyor_line('sweep', lane_of(i), lane_of(i)), None,
+                       before=[f"Stalled: {quiet} · {stamp(t)}"])
+                wrote.append(f"stalled #{i['number']} (no receipt since {stamp(last)})")
+            elif not asked_for_receipt(i, last):
+                comment(gh, repo, i['number'], [f"Receipt asked: {quiet} · session {claim_owner(i.get('comments', [])) or '-'} · {stamp(t)}"])
+                wrote.append(f"asked #{i['number']}'s session for a receipt (no receipt since {stamp(last)})")
+        if len(wrote) > changed:
+            issues, by = open_belt(gh, repo)
+    violations += [f"past its time box: #{i['number']} {lane_of(i)} {size_of(i)}" for i in issues if past_box(i, t, boxes)]
     fallback_reviews(gh, repo, by, t, write, violations, wrote)
     for i in by['ready-to-release']:
         f = Facts(gh, repo, i)
@@ -1378,23 +1543,23 @@ def board(gh, repo, weekly=False, write=True):
         moved = [x for x in timeline_of(comment_lines(i)) if x['to'] == 'monitoring']
         if not moved or len([s for s in moved[-1]['schedules'].split(',') if s != '-']) < 2:
             violations.append(f"monitoring without two schedules: #{i['number']}")
-    free = lim['Build'] - len(by['in-progress'])
+    active = {lane: counted(group) for lane, group in by.items()}  # parked and stalled free their slot
+    free = lim['Build'] - len(active['in-progress'])
     for lane, cap in (('next', free), ('in-progress', lim['Build']), ('in-review', lim['Review']),
                       ('ready-to-release', lim['Train'])):
-        if len(by[lane]) > cap:
-            violations.append(f'lane over limit: {lane} {len(by[lane])} of {cap}')
+        if len(active[lane]) > cap:
+            violations.append(f'lane over limit: {lane} {len(active[lane])} of {cap}')
     late = [i for i in by['inbox'] if t - since(i) > INBOX_LATE]
     violations += [f"inbox unsorted over 24 h: #{i['number']}" for i in late]
     if waiting and t - min(parse_stamp(e['at']) for e in waiting) > SPOOL_LATE:
         violations.append(f'spool over 15 min: {len(waiting)} capture(s) not yet filed')
     for i in issues:
-        lines = comment_lines(i)
-        asked = [x['time'] for x in timeline_of(lines) if x['command'] == 'ask']
-        decided = [m['time'] for line in lines if (m := re.match(receipt('decision')['pattern'], line))]
+        asked = pending_ask(i)
         if 'needs-human' in label_names(i):
             asks.append(f"- #{i['number']} {i['title']} (needs-human)")
-        elif asked and (not decided or parse_stamp(asked[-1]) > parse_stamp(decided[-1])):
-            asks.append(f"- #{i['number']} {i['title']} (asked {asked[-1]})")
+        elif asked:
+            late = f", past its {boxes['card'][1]} box" if t - parse_stamp(asked) > boxes['card'][0] else ''
+            asks.append(f"- #{i['number']} {i['title']} (asked {asked}{late})")
     closed = closed_belt(gh, repo, t)
     if write:
         log_closed(gh, repo, [i for i in closed if lane_of(i) == 'closed'], violations, wrote, notes)
@@ -1421,22 +1586,26 @@ def board(gh, repo, weekly=False, write=True):
               f"Test slots: {slots[0]} of {slots[1]} free{f' ({slots[2]} kept for release runs)' if slots[2] else ''}",
               'Not read: denial log (its belt source is not built yet)']
     backlog, parked = by['backlog'], [i for i in issues if 'parked' in label_names(i)]
+    stalled = [i for i in issues if 'stalled' in label_names(i)]
+    asking = [i for i in issues if not frees_slot(i) and (last := last_receipt(i)) and asked_for_receipt(i, last)]
     count = lambda level: len([i for i in backlog if f'prio:{level}' in label_names(i)])  # noqa: E731
     oldest = f"{int((t - min(since(i) for i in by['inbox'])).total_seconds() // 3600)}h" if by['inbox'] else '-'
     shown = {'next': free, 'in-progress': lim['Build'], 'in-review': lim['Review'], 'ready-to-release': lim['Train']}
     coming = [f"- #{i['number']} {i['title']} ({lane})" for lane in ('in-review', 'ready-to-release') for i in by[lane]]
-    pull = pull_order(backlog)[:max(free - len(by['next']), 0)]
+    pull = pull_order(backlog)[:max(free - len(active['next']), 0)]
     why = {i['number']: m for i in parked for line in comment_lines(i) if (m := re.match(receipt('parked')['pattern'], line))}
     lines = [
         f'Need from you: {len(asks)}', *asks,
-        'Lanes: ' + ' · '.join(f"{lane} {len(by[lane])}{'/' + str(shown[lane]) if lane in shown else ''}"
+        'Lanes: ' + ' · '.join(f"{lane} {len(active[lane])}{'/' + str(shown[lane]) if lane in shown else ''}"
                                for lane in lanes() if lane != 'closed'),
         f"Backlog: {len(backlog)} (now {count('now')} · next {count('next')} · later {count('later')}) · oldest unsorted {oldest}",
         f"Pull next: {', '.join('#' + str(i['number']) for i in pull) or 'none'} (publish moves them)",
         f"Coming to you next: {len(coming)}", *coming,
         f'Parked: {len(parked)}', *[f"- #{i['number']} {i['title']}" + (
-            f" · waiting on {why[i['number']]['who']} until {why[i['number']]['until']} since {why[i['number']]['time']}"
+            f" · {why[i['number']]['why']} until {why[i['number']]['until']} since {why[i['number']]['time']}"
             if i['number'] in why else '') for i in parked],
+        f"Receipt asked: {len(asking)}" + ''.join(f" · #{i['number']} {lane_of(i)}" for i in asking),
+        f"Stalled: {len(stalled)}" + ''.join(f" · #{i['number']} {lane_of(i)}" for i in stalled),
         f'Violations: {len(violations)}', *[f'- {v}' for v in violations],
         *registry_lines([*issues, *closed], live),  # after Violations, so the resume cap cuts sessions first
         *unverified_workers(by['in-progress'], live),
@@ -1548,6 +1717,14 @@ def main(argv=None, gh=None):
         ak.add_argument('--' + field.replace('_', '-'), dest=field)
     ak.add_argument('--record', help='go: the action record JSON inside the working directory')
     ak.add_argument('--more', metavar='QUESTION_LINK', help='"Tell me more": record Asked for more; not a decision')
+    pk = subs.add_parser('park', parents=[log], help='hand an item over and free its slot; the lane stays')
+    pk.add_argument('number', type=int)
+    pk.add_argument('--until', help='UTC date (YYYY-MM-DD) or event:<name>: the sweep un-parks when it comes')
+    pk.add_argument('--why', help='one line: what the item waits for')
+    pk.add_argument('--done'); pk.add_argument('--left'); pk.add_argument('--next', dest='next_action')
+    pk.add_argument('--dry-run', dest='sort_dry_run', action='store_true', help='print the writes; make none')
+    up = subs.add_parser('unpark', parents=[log], help='remove parked (or stalled) by hand; the lane stays')
+    up.add_argument('number', type=int)
     dp = subs.add_parser('dispatch', parents=[log], help='start Owner-ready next items as workers; --dry-run prints the batch and skip reasons')
     dp.add_argument('--dry-run', dest='dispatch_dry_run', action='store_true', help='read only: start nothing, write nothing')
     br = subs.add_parser('brief', parents=[log], help="render the station's brief")
@@ -1600,6 +1777,10 @@ def main(argv=None, gh=None):
         elif args.action == 'feed':
             from . import feeds
             print(feeds.run(sys.modules[__name__], gh, args.repo, args.feed, sys.stdin.read(), args.log))
+        elif args.action == 'park':
+            print(park(gh, args.repo, args.number, args.until, args.why, args.done, args.left, args.next_action, args.log))
+        elif args.action == 'unpark':
+            print(unpark(gh, args.repo, args.number, args.log))
         elif args.action == 'dispatch':
             from . import dispatch
             print(dispatch.run(sys.modules[__name__], gh, args.repo, args.log, args.dry_run or args.dispatch_dry_run))
