@@ -22,7 +22,7 @@ class DispatchCase(BeltCase):
         super().setUp()
         self.state = self.root / 'state'
         self.configure(dispatch={'state_dir': str(self.state)})
-        self.delegate_calls, self.result, self.during = [], (0, ADMITTED + '\n', ''), []
+        self.delegate_calls, self.result, self.during, self.delegate_envs = [], (0, ADMITTED + '\n', ''), [], []
         self.disk, self.slots = (0, 'disk ok: plenty'), (4, 4, 0)
         for patcher in (unittest.mock.patch.object(dispatch, 'run_delegate', side_effect=self.fake_delegate),
                         unittest.mock.patch('agent_skills.disk_check.check', side_effect=lambda *a: self.disk),
@@ -30,8 +30,9 @@ class DispatchCase(BeltCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def fake_delegate(self, argv, stdin, timeout):
+    def fake_delegate(self, argv, stdin, timeout, env=None):
         self.delegate_calls.append((argv, stdin))
+        self.delegate_envs.append(env)
         self.during.append([json.loads(p.read_text())['status'] for p in sorted(self.state.glob('*.json'))])
         if isinstance(self.result, Exception):
             raise self.result
@@ -329,7 +330,7 @@ class UniqueAttempts(DispatchCase):
         self.seen = set()
         real = self.fake_delegate
 
-        def once(argv, stdin, timeout):
+        def once(argv, stdin, timeout, env=None):
             task = argv[argv.index('--task-id') + 1]
             if task in self.seen:
                 return 1, '', 'FileExistsError: task exists'

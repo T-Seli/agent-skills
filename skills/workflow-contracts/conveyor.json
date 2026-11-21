@@ -310,6 +310,12 @@
       "written_by": "the session or person who saw it; an `event:<name>` park waits for the first one after its Parked: line",
       "label": "event seen"
     },
+    "worker_result": {
+      "source": "issue_comment",
+      "pattern": "^Worker result: (?P<task>\\S+) · (?P<outcome>\\S+) · (?P<status>\\S+) · commit (?P<commit>\\S+)$",
+      "written_by": "dispatch, from the finished delegate receipt, once per task (the worker guard blocks a worker's own issue comment)",
+      "label": "worker result"
+    },
     "source_key": {
       "source": "issue_body",
       "pattern": "^Source-key: (?P<feed>[a-z0-9-]+):(?P<key>[0-9a-f]{12,64})$",
@@ -599,6 +605,8 @@
       "pattern": "^<!-- conveyor:v1 (?P<state>active|released) (?P<session>\\S+) -->$",
       "written_by": "claim (active), close (released); read from the signed-in login's comments only, first line"
     },
+    "worker_cli": "scripts/issues-cli",
+    "cli_line": "Use this issues-cli for every belt command, not any other copy: {path}",
     "state_dir": "~/.local/state/agent-skills/conveyor/dispatch",
     "build_cap_override": null,
     "sizes_allowed": null,

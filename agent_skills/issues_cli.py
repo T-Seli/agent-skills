@@ -509,7 +509,7 @@ def task_log(path):
     resolved = Path(path).resolve()
     if not resolved.is_relative_to(Path.cwd().resolve()):
         raise Refused(f'--log {path} is outside the working directory; belt commands take no outside path')
-    return resolved, [line.strip() for line in resolved.read_text().split('\n')]
+    return resolved, [line.strip() for line in resolved.read_text().split('\n')] if resolved.exists() else []  # a new log is created by its first append
 
 
 def load(gh, repo, n):
@@ -1673,6 +1673,19 @@ def resume(gh, repo, session=None):
     return '\n'.join([*out, mark])
 
 
+class _Self:
+    """This file's own globals as an object, for dispatch, feeds and tick to call. `sys.modules[__name__]` is not this
+    file when the installed wrapper runs it with runpy, and importing it again would give them a second `Refused`."""
+    def __getattr__(self, name):
+        try:
+            return globals()[name]
+        except KeyError:
+            raise AttributeError(name)
+
+
+SELF = _Self()
+
+
 def main(argv=None, gh=None):
     parser = argparse.ArgumentParser(prog='issues-cli')
     parser.add_argument('--dry-run', action='store_true', help='print every write instead of making it')
@@ -1779,20 +1792,20 @@ def main(argv=None, gh=None):
             print(sort(gh, args.repo, args.number, args.domain, args.kind, args.size, args.needs_decision, args.log))
         elif args.action == 'feed':
             from . import feeds
-            print(feeds.run(sys.modules[__name__], gh, args.repo, args.feed, sys.stdin.read(), args.log))
+            print(feeds.run(SELF, gh, args.repo, args.feed, sys.stdin.read(), args.log))
         elif args.action == 'park':
             print(park(gh, args.repo, args.number, args.until, args.why, args.done, args.left, args.next_action, args.log))
         elif args.action == 'unpark':
             print(unpark(gh, args.repo, args.number, args.log))
         elif args.action == 'belt-tick':
             from . import tick as belt_tick
-            text, failed = belt_tick.run(sys.modules[__name__], gh, args.repo, args.log, args.dry_run or args.sort_dry_run)
+            text, failed = belt_tick.run(SELF, gh, args.repo, args.log, args.dry_run or args.sort_dry_run)
             print(text)
             if failed:
                 return 1
         elif args.action == 'dispatch':
             from . import dispatch
-            print(dispatch.run(sys.modules[__name__], gh, args.repo, args.log, args.dry_run or args.dispatch_dry_run))
+            print(dispatch.run(SELF, gh, args.repo, args.log, args.dry_run or args.dispatch_dry_run))
         elif args.action == 'lane':
             print(move(gh, args.repo, args.number, args.lane, args.reason, args.log, args.tests, args.learned))
         elif args.action == 'decide':

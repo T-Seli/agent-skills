@@ -5,7 +5,9 @@ Reads preflight limits from config, refuses an issue a live session still holds,
 The caller passes the issues_cli module as `cli`, so its Refused is the one main() catches however it was started."""
 import fcntl
 import hashlib
+import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -19,7 +21,7 @@ from . import layout
 def settings(cli):
     base = cli.belt()['dispatch']
     given = cli.machine_config().get('dispatch') or {}
-    fixed = {'marker', 'heartbeat', 'note', 'receipt', 'refusal_exit', 'prompts'}
+    fixed = {'marker', 'heartbeat', 'note', 'receipt', 'refusal_exit', 'prompts', 'worker_cli', 'cli_line'}
     unknown = [k for k in given if k not in base or k in fixed]
     if unknown:
         raise cli.Refused(f"workers.json dispatch sets {', '.join(unknown)}; the owner may set "
@@ -155,10 +157,20 @@ def plan(cli, gh, repo, cfg):
     return batch, skipped, held
 
 
-def run_delegate(argv, stdin, timeout):
+def worker_cli(cli, cfg):
+    return layout.contract(cfg['worker_cli'])
+
+
+def worker_env(cli, cfg):
+    """The environment delegate (and so the worker) inherits: the scripts directory of this tree first on PATH, so the
+    worker runs the issues-cli of the code that dispatched it, not an older installed copy."""
+    return {**os.environ, 'PATH': os.pathsep.join([str(worker_cli(cli, cfg).parent), os.environ.get('PATH', '')])}
+
+
+def run_delegate(argv, stdin, timeout, env=None):
     """(exit code, stdout, stderr) of one delegate.py call; the seam tests replace."""
     done = subprocess.run([sys.executable, str(layout.ROOT / 'skills' / 'agent-coordination' / 'scripts' / 'delegate.py'), *argv],
-                          input=stdin, capture_output=True, text=True, timeout=timeout)
+                          input=stdin, capture_output=True, text=True, timeout=timeout, env=env)
     return done.returncode, done.stdout, done.stderr
 
 
@@ -209,7 +221,8 @@ def start_one(cli, gh, repo, i, kind, cfg, log):
     task = (read_receipt(path) or {}).get('task_id') or new_task_id(repo, n)  # a crash after `reserved` resumes its id
     write_receipt(path, {'status': 'reserved', 'issue': n, 'repo': repo, 'task_id': task})
     try:
-        prompt = f"{cli.brief(gh, repo, n, log)}\n\n{cfg['prompts'][kind]}\n"
+        prompt = (f"{cli.brief(gh, repo, n, log)}\n\n{cfg['prompts'][kind]}\n"
+                  f"{cfg['cli_line'].format(path=worker_cli(cli, cfg))}\n")
         value = contract(cli, repo, n, i['title'], prompt, kind, task)
     except (cli.Refused, subprocess.CalledProcessError, OSError, ValueError, RuntimeError) as e:
         path.unlink()
@@ -223,7 +236,7 @@ def start_one(cli, gh, repo, i, kind, cfg, log):
             code, out, err = run_delegate(['start', '--prompt-file', '-', '--cwd', str(cli.project()[0]), '--name', f'conveyor-{n}',
                                            '--task-id', task, '--reason', f'conveyor {kind}', '--contract-file', str(cfile),
                                            *(['--files', ','.join(x.strip() for x in files[1].split(','))] if files else [])],
-                                          prompt, cfg['delegate_timeout_seconds'])
+                                          prompt, cfg['delegate_timeout_seconds'], env=worker_env(cli, cfg))
     except (subprocess.SubprocessError, OSError) as e:
         return 'held', f'#{n} delegate start outcome unknown ({type(e).__name__}); receipt submission_pending'
     if code == cfg['refusal_exit']:
@@ -239,12 +252,56 @@ def start_one(cli, gh, repo, i, kind, cfg, log):
     return 'started', f'#{n} ({kind}) session {session}'
 
 
+def coordination_state():
+    """delegate's task state directory, from the same function delegate.py uses."""
+    spec = importlib.util.spec_from_file_location('tasks', layout.ROOT / 'skills' / 'agent-coordination' / 'scripts' / 'tasks.py')
+    tasks = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tasks)
+    return tasks.state_dir()
+
+
+def finished_results(cli, cfg, repo):
+    """[(issue, task id, receipt)] for each started item of this repo whose delegate run has written its receipt."""
+    out = []
+    for path in sorted(state_path(cfg, repo, 0).parent.glob(f"{re.sub(r'[^A-Za-z0-9._-]+', '-', repo)}-*.json")):
+        r = read_receipt(path)
+        if r['status'] != 'verified':
+            continue
+        found = sorted((coordination_state() / 'runs' / r['task_id']).glob('*/receipt.json'))
+        if found:
+            out.append((r['issue'], r['task_id'], json.loads(found[-1].read_text())))
+    return out
+
+
+def post_results(cli, gh, repo, cfg, dry):
+    """The worker guard blocks a worker's own `gh issue comment`, so the parent posts its result: one `Worker result:`
+    line (conveyor.json receipts.worker_result) with the report's summary, tests and need, once per task."""
+    lines = []
+    for n, task, receipt in finished_results(cli, cfg, repo):
+        d = cli.load(gh, repo, n)
+        if d['state'] != 'OPEN' or any(x.startswith(f'Worker result: {task} ·') for x in cli.comment_lines(d)):
+            continue
+        report = receipt.get('report') or {}
+        head = (f"Worker result: {task} · {receipt.get('outcome') or '-'} · {report.get('status') or '-'} · "
+                f"commit {report.get('commit') or '-'}")
+        if not re.match(cli.receipt('worker_result')['pattern'], head):
+            raise cli.Refused(f'malformed worker result line: {head}')
+        if dry:
+            lines.append(f'Would post: #{n} worker result')
+            continue
+        flat = lambda v: ' '.join(str(v).split())  # noqa: E731
+        cli.comment(gh, repo, n, [head, *[f'{label}: {flat(report[key])}' for label, key in
+                                          (('Summary', 'summary'), ('Tests', 'tests'), ('Need', 'need')) if report.get(key)]])
+        lines.append(f'posted: #{n} worker result')
+    return lines
+
+
 def run(cli, gh, repo, log=None, dry=False, beat=True):
     """`beat=False` keeps dispatch's own Tick: line out of the log, for a caller that writes the one heartbeat."""
     cfg = settings(cli)
     if dry:
         batch, skipped, held = plan(cli, gh, repo, cfg)
-        return '\n'.join(['Dry run: nothing started, no receipt or GitHub write.',
+        return '\n'.join(['Dry run: nothing started, no receipt or GitHub write.', *post_results(cli, gh, repo, cfg, True),
                           f"Would start: {', '.join('#%d (%s)' % (i['number'], k) for i, k in batch) or 'none'}",
                           *[f"Skipped: #{i['number']} {why}" for i, why in skipped],
                           *[f"start held: #{i['number']} {why}" for i, why in held]])
@@ -255,6 +312,7 @@ def run(cli, gh, repo, log=None, dry=False, beat=True):
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise cli.Refused('another dispatch is running (state_dir lock); nothing was started')
+        posted = post_results(cli, gh, repo, cfg, False)
         batch, skipped, held = plan(cli, gh, repo, cfg)
         for i, _ in skipped:
             path = state_path(cfg, repo, i['number'])
@@ -268,7 +326,7 @@ def run(cli, gh, repo, log=None, dry=False, beat=True):
     heartbeat = f"Tick: {cli.stamp(cli.now())} · started {len(started)} · waiting {len(skipped) + len(waits)} · held {len(holds)}"
     if not re.match(cfg['heartbeat']['pattern'], heartbeat):
         raise cli.Refused(f'malformed heartbeat line: {heartbeat}')
-    lines = [*[f'started: {x}' for x in started], *waits, *holds, *[f"skipped: #{i['number']} {why}" for i, why in skipped]]
+    lines = [*posted, *[f'started: {x}' for x in started], *waits, *holds, *[f"skipped: #{i['number']} {why}" for i, why in skipped]]
     if log:
         path, _ = cli.task_log(log)
         with path.open('a') as fh:
